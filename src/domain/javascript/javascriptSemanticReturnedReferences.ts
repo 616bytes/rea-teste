@@ -5,6 +5,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  createSemanticModuleInterop,
+  semanticFreshObjectFactsReady,
+} from "./javascriptModuleInterop.js";
+import {
   semanticCallableResultExpressions,
   type SemanticCallableResultExpression,
 } from "./javascriptSemanticCallableResults.js";
@@ -260,23 +264,10 @@ const selectClassTargets = (
   return { values, own };
 };
 
-const definitelyConstructedObject = (expression: t.Node | null): boolean => {
-  if (expression === null) return false;
-  const node = unwrapJavaScriptExpression(expression).node;
-  return (
-    t.isObjectExpression(node) ||
-    t.isArrayExpression(node) ||
-    t.isFunctionExpression(node) ||
-    t.isArrowFunctionExpression(node) ||
-    t.isClassExpression(node) ||
-    t.isNewExpression(node) ||
-    t.isRegExpLiteral(node)
-  );
-};
-
 const constructorReplacesReceiver = (
   constructor: t.ClassMethod | undefined,
   results: readonly SemanticCallableResultExpression[],
+  isDefinitelyObject: (node: t.Node) => boolean,
 ): boolean => {
   const result = results[0];
   return (
@@ -284,7 +275,8 @@ const constructorReplacesReceiver = (
     results.length === 1 &&
     result !== undefined &&
     constructor.body.body.some((statement) => statement === result.site) &&
-    definitelyConstructedObject(result.node)
+    result.node !== null &&
+    isDefinitelyObject(result.node)
   );
 };
 
@@ -292,18 +284,29 @@ const constructorReplacesReceiver = (
 const createSemanticCallableReferences = (
   state: JavaScriptSemanticAnalysisState,
   mode: "callable" | "contents" | "function-values" | "results",
+  definiteObjectProof?: (node: t.Node) => boolean,
 ): ((
   callee: t.Node,
   projection?: readonly (string | number | null)[],
 ) => readonly CallableReference[]) => {
-  const results = new WeakMap<
+  let results = new WeakMap<
     t.Node,
     Map<string, readonly CallableReference[]>
   >();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   const classTargets = new WeakMap<t.Class, ClassTargetIndex>();
   const classLineages = new WeakMap<t.Class, ClassLineage>();
+  const isDefinitelyObject =
+    definiteObjectProof ??
+    createSemanticModuleInterop(state).isDefinitelyObject;
+  let factsReady = semanticFreshObjectFactsReady(state);
   return (callee, projection = []) => {
+    const ready = semanticFreshObjectFactsReady(state);
+    if (factsReady !== ready) {
+      // Provisional global-binding uncertainty is not a final result fact.
+      factsReady = ready;
+      results = new WeakMap();
+    }
     const projectionKey = JSON.stringify(projection);
     const existing = results.get(callee)?.get(projectionKey);
     if (existing !== undefined) return existing;
@@ -510,7 +513,11 @@ const createSemanticCallableReferences = (
               : semanticCallableResultExpressions(constructor);
           for (const result of results)
             if (result.node !== null) value(result.node, item.path);
-          const replaced = constructorReplacesReceiver(constructor, results);
+          const replaced = constructorReplacesReceiver(
+            constructor,
+            results,
+            isDefinitelyObject,
+          );
           if (!replaced && key !== undefined) {
             // Every inherited field is an own slot on the new object, so base
             // fields precede even a derived prototype method or accessor.
@@ -538,6 +545,7 @@ const createSemanticCallableReferences = (
                 constructorReplacesReceiver(
                   constructor,
                   semanticCallableResultExpressions(constructor),
+                  isDefinitelyObject,
                 )
               ) {
                 followBaseResults = false;
@@ -580,8 +588,13 @@ const createSemanticCallableReferences = (
 export const createSemanticCallableTargets = (
   state: JavaScriptSemanticAnalysisState,
   mode: "callable" | "contents" = "callable",
+  isDefinitelyObject?: (node: t.Node) => boolean,
 ) => {
-  const references = createSemanticCallableReferences(state, mode);
+  const references = createSemanticCallableReferences(
+    state,
+    mode,
+    isDefinitelyObject,
+  );
   return (callee: t.Node): readonly t.Function[] =>
     references(callee).flatMap(({ node }) =>
       t.isFunction(node) ? [node] : [],
@@ -591,15 +604,32 @@ export const createSemanticCallableTargets = (
 /** Select a callable once and leave its remaining value projection to its owner. */
 export const createSemanticFunctionValueReferences = (
   state: JavaScriptSemanticAnalysisState,
-) => createSemanticCallableReferences(state, "function-values");
+  isDefinitelyObject?: (node: t.Node) => boolean,
+) =>
+  createSemanticCallableReferences(
+    state,
+    "function-values",
+    isDefinitelyObject,
+  );
 
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
+  isDefinitelyObject?: (node: t.Node) => boolean,
 ): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
-  const targets = createSemanticCallableReferences(state, "results");
-  const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
+  const targets = createSemanticCallableReferences(
+    state,
+    "results",
+    isDefinitelyObject,
+  );
+  let results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
+  let factsReady = semanticFreshObjectFactsReady(state);
   return (callee) => {
+    const ready = semanticFreshObjectFactsReady(state);
+    if (factsReady !== ready) {
+      factsReady = ready;
+      results = new WeakMap();
+    }
     const prior = results.get(callee);
     if (prior !== undefined) return prior;
     const references = targets(callee).flatMap(({ node: callable }) =>

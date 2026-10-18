@@ -4,12 +4,18 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticFreshObjectFactsReady,
+} from "./javascriptModuleInterop.js";
 import {
   createSemanticCallableTargets,
   createSemanticReturnedReferences,
 } from "./javascriptSemanticReturnedReferences.js";
-import { semanticStrictContext } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticStrictContext,
+  type SemanticGlobalBindingFacts,
+} from "./javascriptSemanticOpaqueEffects.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   isUnshadowedGlobal,
@@ -28,8 +34,12 @@ const receiverQueries = new WeakMap<
 /** Possible receiver identity is shared by all ambient-write consumers. */
 export const createSemanticReceiverReferences = (
   state: JavaScriptSemanticAnalysisState,
+  isDefinitelyObject?: (node: t.Node) => boolean,
+  intrinsicWriteFacts?: SemanticGlobalBindingFacts,
 ) => {
-  const prior = receiverQueries.get(state);
+  const customContext =
+    isDefinitelyObject !== undefined || intrinsicWriteFacts !== undefined;
+  const prior = customContext ? undefined : receiverQueries.get(state);
   if (prior !== undefined) return prior;
   const owners = new WeakMap<t.Node, t.Node>();
   const lexicalOwner = (node: t.Node): t.Node => {
@@ -83,11 +93,20 @@ export const createSemanticReceiverReferences = (
     return owner;
   };
   let receivers: WeakMap<t.Function, Set<t.Node>> | undefined;
+  let factsReady = semanticFreshObjectFactsReady(state);
   const indexReceivers = () => {
     const indexed = new WeakMap<t.Function, Set<t.Node>>();
     receivers = indexed;
-    const targets = createSemanticCallableTargets(state);
-    const contents = createSemanticCallableTargets(state, "contents");
+    const targets = createSemanticCallableTargets(
+      state,
+      "callable",
+      isDefinitelyObject,
+    );
+    const contents = createSemanticCallableTargets(
+      state,
+      "contents",
+      isDefinitelyObject,
+    );
     const inactiveDefaults = new WeakSet<t.Node>();
     const defaultSources = new Map<
       t.AssignmentPattern,
@@ -115,6 +134,7 @@ export const createSemanticReceiverReferences = (
       )
         inactiveDefaults.add(selection.right);
     const intrinsics = createSemanticModuleInterop(state);
+    const definiteObject = isDefinitelyObject ?? intrinsics.isDefinitelyObject;
     const groups = new Map<
       string,
       { node: t.Node; targets: readonly t.Function[] }
@@ -151,23 +171,50 @@ export const createSemanticReceiverReferences = (
     const invocations = createSemanticModuleInterop(state, {
       intrinsicPath: localPath,
     });
+    // Only the ambient owner can supply complete canonical mutation facts.
+    // Provisional queries retain uncertainty until that snapshot is available.
+    const constructionInvocations = createSemanticModuleInterop(state, {
+      intrinsicPath: intrinsics.intrinsicPath,
+      intrinsicWriteFacts: intrinsicWriteFacts ?? {
+        ambientWrites: state.ambientWrites,
+        ambientWriteEffects: state.ambientWriteEffects,
+        opaqueGlobalSites: state.opaqueEffects.globalSites,
+        get complete() {
+          return semanticFreshObjectFactsReady(state);
+        },
+      },
+    });
     const retain = (target: t.Function, receiver?: t.Node) => {
       const values = indexed.get(target) ?? new Set<t.Node>();
       if (receiver !== undefined) values.add(receiver);
       indexed.set(target, values);
     };
+    const construct = (callee: t.Node) => {
+      // An explicit returned object does not replace the fresh receiver used
+      // inside a base constructor.
+      for (const target of targets(callee)) retain(target);
+      covered.add(callee);
+    };
     traverseJavaScriptAst(state.program, {
       skip: (node) => inactiveDefaults.has(node),
       enter: (node) => {
         if (t.isNewExpression(node)) {
-          // Constructors receive a fresh instance, regardless of a returned object.
-          for (const target of targets(node.callee)) retain(target);
-          covered.add(node.callee);
+          construct(node.callee);
           return;
         }
         if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
           return;
-        const invocation = invocations.intrinsicInvocation(node);
+        let invocation = invocations.intrinsicInvocation(node);
+        if (invocation?.path.join(".") === "intrinsic.Reflect.construct")
+          invocation = constructionInvocations.intrinsicInvocation(node);
+        if (
+          invocation?.kind === "known" &&
+          invocation.path.join(".") === "intrinsic.Reflect.construct"
+        ) {
+          const target = invocation.arguments?.[0];
+          if (t.isExpression(target)) construct(target);
+          return;
+        }
         if (
           invocation?.path.length !== 3 ||
           invocation.path[1] !== "local-receiver"
@@ -199,8 +246,7 @@ export const createSemanticReceiverReferences = (
               : unwrapJavaScriptExpression(receiver).node;
           const nonNullish =
             value !== undefined &&
-            (intrinsics.isFreshObject(value) ||
-              t.isNewExpression(value) ||
+            (definiteObject(value) ||
               (t.isLiteral(value) && !t.isNullLiteral(value)) ||
               ["globalThis", "global", "window", "self", "module"].some(
                 (name) => isUnshadowedGlobal(value, state, name),
@@ -268,12 +314,35 @@ export const createSemanticReceiverReferences = (
           (t.isVariableDeclarator(parent) &&
             parent.init === current &&
             t.isIdentifier(parent.id)) ||
-          (t.isObjectProperty(parent) && parent.value === current)
+          ((t.isObjectProperty(parent) ||
+            t.isClassProperty(parent) ||
+            t.isClassPrivateProperty(parent) ||
+            t.isClassAccessorProperty(parent)) &&
+            parent.value === current) ||
+          (t.isClass(parent) && parent.superClass === current)
         ) {
           storedSources.push([node, parent]);
           return;
         }
-        for (const target of contents(node)) retain(target, state.program);
+        // Literal invocation arrays can contain a consumed callable selection.
+        // Examine their leaves separately so the target is covered without
+        // hiding any other callable arguments or returned object contents.
+        const values = t.isArrayExpression(node)
+          ? node.elements.flatMap((element) =>
+              element === null
+                ? []
+                : [t.isSpreadElement(element) ? element.argument : element],
+            )
+          : [node];
+        for (const value of values) {
+          if (
+            t.isArrayExpression(node) &&
+            (covered.has(value) ||
+              t.isArrayExpression(unwrapJavaScriptExpression(value).node))
+          )
+            continue;
+          for (const target of contents(value)) retain(target, state.program);
+        }
       },
     });
     // An explicitly unused default is a known non-invocation. Keep independent
@@ -304,7 +373,7 @@ export const createSemanticReceiverReferences = (
         retain(target);
     }
   };
-  const returned = createSemanticReturnedReferences(state);
+  const returned = createSemanticReturnedReferences(state, isDefinitelyObject);
   const inheritedReceiver = (owner: t.Node): readonly t.Node[] => {
     if (
       !(
@@ -324,6 +393,11 @@ export const createSemanticReceiverReferences = (
       : [];
   };
   const query = (node: t.ThisExpression): readonly t.Node[] => {
+    const ready = semanticFreshObjectFactsReady(state);
+    if (!customContext && factsReady !== ready) {
+      factsReady = ready;
+      receivers = undefined;
+    }
     const owner = lexicalOwner(node);
     if (t.isProgram(owner))
       return javaScriptRuntimeContext(owner) === "unknown" ? [owner] : [];
@@ -336,6 +410,6 @@ export const createSemanticReceiverReferences = (
       ? [state.program, ...inheritedReceiver(owner)]
       : [...known, ...inheritedReceiver(owner)];
   };
-  receiverQueries.set(state, query);
+  if (!customContext) receiverQueries.set(state, query);
   return query;
 };

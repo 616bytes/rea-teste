@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
@@ -215,5 +218,86 @@ describe("inherited constructor result receivers", () => {
     "class B{}class C extends B{constructor(){super()}}class D extends C{field=(this.Q=other)}new D();",
   ])("preserves a distinct constructed receiver through %s", (write) => {
     expect(analyze(`${SHIM}${write}${USE}`).electron.ipc).toHaveLength(1);
+  });
+});
+
+describe("constructor replacement aliases", () => {
+  const construct = (body: string) =>
+    `class B{constructor(){return globalThis}}class C extends B{constructor(){${body}}}class D extends C{field=(this.Q=other)}new D();`;
+
+  it.each([
+    "const local={};return local;",
+    "const local={};const alias=local;return alias;",
+    "let local={};const captured=local;local=globalThis;return captured;",
+    "let local=globalThis;local={};return local;",
+    "const local=new class{};return local;",
+  ])("preserves a definite object replacement through %s", (body) => {
+    expect(
+      analyze(`${SHIM}${construct(body)}${USE}`).electron.ipc,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "let local={};local=globalThis;return local;",
+    "let local=globalThis;const captured=local;local={};return captured;",
+    "let local={};if(flag)local=globalThis;return local;",
+    "const local=flag?{}:globalThis;return local;",
+    "let local={};eval('local=globalThis');return local;",
+    "const local=unknown;return local;",
+    "const local=new class{constructor(){return globalThis}};return local;",
+  ])("retains a possible global receiver through %s", (body) => {
+    expect(analyze(`${SHIM}${construct(body)}${USE}`).electron.ipc).toEqual([]);
+  });
+});
+
+describe("outer constructor replacement aliases", () => {
+  it("refreshes a retained result query after ambient facts complete", () => {
+    const parsed = parseJavaScriptSource(
+      "var local={};class B{constructor(){return globalThis}}class C extends B{constructor(){super();return local}}",
+      "bundle.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const derived = parsed.program.body[2];
+    if (derived?.type !== "ClassDeclaration")
+      throw new Error("Expected derived constructor");
+    const results = createSemanticReturnedReferences(index.bindings);
+    const inheritsGlobal = () =>
+      results(derived).some(
+        ({ node }) => node.type === "Identifier" && node.name === "globalThis",
+      );
+    expect(inheritsGlobal()).toBe(true);
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    expect(inheritsGlobal()).toBe(false);
+  });
+
+  it.each([
+    ["var local={};", "return local;"],
+    ["var local={};", "super();return local;"],
+    ["var source={};const local=source;source=globalThis;", "return local;"],
+    [
+      "var source={};const local=source;source=globalThis;",
+      "super();return local;",
+    ],
+  ])("preserves an outer object capture: %s %s", (declaration, body) => {
+    const classes = `class B{constructor(){return globalThis}}class C extends B{constructor(){${body}}}class D extends C{field=(this.Q=other)}new D();`;
+    expect(
+      analyze(`${SHIM}${declaration}${classes}${USE}`).electron.ipc,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "var local={};local=globalThis;",
+    "var local={};globalThis.local=globalThis;",
+    "var local={};if(flag)local=globalThis;",
+    "var local={};(0,eval)('local=globalThis');",
+  ])("retains an outer value that may change: %s", (declaration) => {
+    const classes =
+      "class B{constructor(){return globalThis}}class C extends B{constructor(){super();return local}}class D extends C{field=(this.Q=other)}new D();";
+    expect(
+      analyze(`${SHIM}${declaration}${classes}${USE}`).electron.ipc,
+    ).toEqual([]);
   });
 });

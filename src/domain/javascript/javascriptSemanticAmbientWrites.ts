@@ -127,6 +127,9 @@ interface AmbientReferenceFacts {
   >;
   readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
   readonly freshObject: (node: t.Node) => boolean;
+  /** A completed conservative binding snapshot may refine constructor results. */
+  readonly definiteObject?: (node: t.Node) => boolean;
+  readonly intrinsicWriteFacts?: SemanticGlobalBindingFacts;
 }
 
 /**
@@ -140,9 +143,19 @@ export const createAmbientPathResolver = (
   facts?: AmbientReferenceFacts,
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
-  const returnedReferences = createSemanticReturnedReferences(state);
-  const functionReferences = createSemanticFunctionValueReferences(state);
-  const receiverReferences = createSemanticReceiverReferences(state);
+  const returnedReferences = createSemanticReturnedReferences(
+    state,
+    facts?.definiteObject,
+  );
+  const functionReferences = createSemanticFunctionValueReferences(
+    state,
+    facts?.definiteObject,
+  );
+  const receiverReferences = createSemanticReceiverReferences(
+    state,
+    facts?.definiteObject,
+    facts?.intrinsicWriteFacts,
+  );
   const intrinsics = createSemanticModuleInterop(state);
   const functionGroups = new Map<string, readonly (t.Function | t.Class)[]>();
   const functionPaths = new WeakMap<t.Node, readonly string[]>();
@@ -946,7 +959,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
-  const ambientWrites = createAmbientPathResolver(state, true, {
+  const referenceFacts: AmbientReferenceFacts = {
     stores,
     replacements,
     freshObject: interop.isFreshObject,
@@ -966,8 +979,9 @@ export function* indexJavaScriptAmbientWritesSteps(
         ? target
         : undefined;
     },
-  });
-  const observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
+  };
+  let ambientWrites = createAmbientPathResolver(state, true, referenceFacts);
+  let observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
   const opaqueCalls =
     observeOpaqueInvocation === undefined ? undefined : new Set<t.Node>();
   yield* collectJavaScriptIdentityWritesSteps(
@@ -1196,6 +1210,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     weakBindingFacts = facts;
     return facts;
   };
+  // Complete the weak snapshot before any refined resolver can consult it.
+  // Constructor receiver queries cannot justify their own binding stability.
+  const bindingFacts = completedBindingFacts();
   const proofInterop = createSemanticModuleInterop(state, {
     intrinsicPath: interop.intrinsicPath,
     bindingReadMayHaveChanged: (binding, read) =>
@@ -1205,9 +1222,18 @@ export function* indexJavaScriptAmbientWritesSteps(
           binding,
           read,
           state,
-          completedBindingFacts(),
+          bindingFacts,
         )),
   });
+  // Provisional result/receiver caches retain all possible inherited objects.
+  // Refinement owns fresh caches and consumes the frozen weak proof inputs.
+  ambientWrites = createAmbientPathResolver(state, true, {
+    ...referenceFacts,
+    freshObject: proofInterop.isFreshObject,
+    definiteObject: proofInterop.isDefinitelyObject,
+    intrinsicWriteFacts: bindingFacts,
+  });
+  observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
   // Early recipient candidates remain in weak proof inputs. Refine the parsed
   // invocation once before publishing or interpreting its possible writes.
   const selectedRecipients = new WeakMap<

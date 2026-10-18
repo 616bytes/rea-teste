@@ -17,6 +17,8 @@ class XmlStop {
 
 /** Far deeper than any Process Monitor export; nested fields are not projected. */
 const MAX_ELEMENT_DEPTH = 256;
+/** Exports carry their data in elements; attributes are never read. */
+const MAX_ATTRIBUTES_PER_ELEMENT = 256;
 
 /**
  * Track procmon > eventlist > event > field. Simple fields become event
@@ -30,12 +32,26 @@ class ProcmonXmlEvents {
   #known = new Set<string>();
   #columnSet = new Set<string>();
   #depth = 0;
+  #attributes = 0;
   #inEventList = false;
   #event: Map<string, string> | undefined;
   #eventFields = new Set<string>();
   #field: { name: string; text: string; nested: boolean } | undefined;
 
   constructor(readonly window: ProcmonEventWindow) {}
+
+  /** Count attributes as the parser reads them, before it builds the tag. */
+  startTag(): void {
+    this.#attributes = 0;
+  }
+
+  attribute(): void {
+    this.#attributes += 1;
+    if (this.#attributes > MAX_ATTRIBUTES_PER_ELEMENT)
+      throw new XmlStop(
+        `An XML element has more than ${MAX_ATTRIBUTES_PER_ELEMENT} attributes.`,
+      );
+  }
 
   open(tag: { readonly name: string }): void {
     this.#depth += 1;
@@ -130,6 +146,8 @@ export const readProcmonXml = async (
       "XML exports with a DTD are unsupported.",
     );
   });
+  parser.on("opentagstart", () => events.startTag());
+  parser.on("attribute", () => events.attribute());
   parser.on("opentag", (tag) => events.open(tag));
   parser.on("text", (text) => events.text(text));
   parser.on("cdata", (text) => events.text(text));

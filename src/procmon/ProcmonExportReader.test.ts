@@ -463,3 +463,23 @@ describe("readProcmonExport review of e96f135", () => {
     ).rejects.toThrow("Event 1 alone exceeds");
   });
 });
+
+describe("readProcmonExport review of 27f5d59", () => {
+  it("stops at an element with more attributes than the cap", async () => {
+    const attributes = Array.from({ length: 300 }, (_, at) => `a${at}=""`).join(
+      " ",
+    );
+    const reading = await readProcmonExport(
+      Buffer.from(
+        `<procmon><eventlist><event><Operation>Read</Operation></event><event><Stack ${attributes}/></event></eventlist></procmon>`,
+      ),
+      { ...selection, event_limit: null },
+    );
+    expect(reading.events).toHaveLength(1);
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "malformed",
+      message: "An XML element has more than 256 attributes.",
+    });
+  });
+});

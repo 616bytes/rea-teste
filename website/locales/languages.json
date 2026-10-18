@@ -124,5 +124,11 @@
     "name": "മലയാളം",
     "readme": "docs/readme/README_ml.md",
     "dir": "ltr"
+  },
+  {
+    "code": "az",
+    "name": "Azərbaycanca",
+    "readme": "docs/readme/README_az.md",
+    "dir": "ltr"
   }
 ]

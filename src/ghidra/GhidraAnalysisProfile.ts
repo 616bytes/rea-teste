@@ -42,6 +42,7 @@ import {
   NATIVE_AOT_PROFILE_CONTRACT_REVISION,
 } from "../domain/native/nativeAotPe.js";
 
+const runtimeRecoveryLimitations = "cleanup-qualified-reimport-v1";
 const callRelationshipCoverage = "function-body-call-coverage-v5";
 const functionBoundaryObservations = "ghidra-function-boundary-limitations-v4";
 const instructionReferenceCoverage =
@@ -131,6 +132,7 @@ export const resolveGhidraAnalysisProfile = async (
           architecture: target.architecture,
           available_architectures: [...target.availableArchitectures].sort(),
           import_mode: "ephemeral-source-immutable",
+          runtime_recovery_limitations: runtimeRecoveryLimitations,
           annotation_policy: "atomic-function-entry-metadata-v1",
           load_image_observations: "source-mappings-entry-context-v2",
           function_body_evidence: "complete-inclusive-ranges-v1",
@@ -228,6 +230,7 @@ export const resolveGhidraAnalysisProfile = async (
           ...(target.availableArchitectures ?? []),
         ].sort(),
         import_mode: "ephemeral-source-immutable",
+        runtime_recovery_limitations: runtimeRecoveryLimitations,
         ...(target.format === "pe"
           ? { pdb_observations: "program-info-v5" }
           : {}),

@@ -255,7 +255,7 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
     (tool) => tool.name === "inspect_analysis_view",
   );
   expect(advertised?.description).toContain(
-    'Native function Evidence requires kind native: view: {kind: "native", facet: "procedure"}',
+    "Native function views project completed function-dossier Evidence.",
   );
   const provider = { id: "ghidra", name: "Ghidra", version: "12.1.4" };
   const profile = createAnalysisProfile(provider, { language: "fixture" });
@@ -380,6 +380,168 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
     arguments: { filters: { operation: "analyze_function" } },
   });
   expect(parseMcpToolError(invalid).error.code).toBe("invalid_request");
+});
+
+it("advertises and returns native singleton and unavailable item shapes", async () => {
+  const { client, session } = await connect();
+  const advertised = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_analysis_view",
+  );
+  expect(advertised?.description).toContain(
+    "procedure, native_api and value_flow_summary return singleton items at offset 0",
+  );
+  expect(advertised?.description).toContain(
+    "Unavailable facets (including pseudocode)",
+  );
+  expect(advertised?.description).toContain(
+    "The entire unavailable item, including native_api.residual_unknowns",
+  );
+  const parent = analysisViewNativeEvidence();
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  for (const facet of ["procedure", "native_api", "value_flow_summary"]) {
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: parent.evidence_id,
+    };
+    const singleton = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "native", facet, offset: 0, limit: 32 },
+      },
+    });
+    expect(singleton.isError).not.toBe(true);
+    const projected = toolContract("inspect_analysis_view").outputSchema.parse(
+      singleton.structuredContent,
+    ).normalized_result;
+    expect(
+      Array.isArray(z.object({ item: z.unknown() }).parse(projected).item),
+    ).toBe(false);
+    expect(projected.coverage.next_offset).toBeNull();
+    const invalidPage = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "native", facet, offset: 1, limit: 32 },
+      },
+    });
+    expect(parseMcpToolError(invalidPage).error.code).toBe("invalid_request");
+  }
+  if (parent.subject === null)
+    throw new Error("Native fixture omitted its subject");
+  const unavailable = createEvidence(
+    {
+      path: parent.subject.local_path,
+      sha256: parent.subject.digest.sha256,
+      format: parent.subject.format,
+    },
+    parent.provider,
+    {
+      operation: "analyze_function",
+      parameters: {},
+      result: {
+        ...functionDossierSchema.parse(parent.normalized_result),
+        pseudocode: "",
+        native_api: {
+          available: false,
+          reason: "Controlled external or bodyless procedure",
+          residual_unknowns: [
+            "Return and parameter boundary types are unavailable.",
+            "Jump-table mappings are unavailable.",
+          ],
+        },
+        facet_availability: {
+          pseudocode: {
+            available: false,
+            reason: "Controlled unavailable pseudocode",
+          },
+        },
+      },
+    },
+  );
+  const status = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "inline", evidence: unavailable },
+      view: { kind: "native", facet: "pseudocode", offset: 0, limit: 32 },
+    },
+  });
+  expect(status.isError).not.toBe(true);
+  expect(
+    parseEvidence(status.structuredContent).normalized_result,
+  ).toMatchObject({
+    item: { available: false, reason: "Controlled unavailable pseudocode" },
+    unknowns: expect.arrayContaining(["Controlled unavailable pseudocode"]),
+  });
+  expect(session.recordEvidence(unavailable).ok).toBe(true);
+  for (const source of [
+    { kind: "inline", evidence: unavailable },
+    { kind: "retained-evidence", evidence_id: unavailable.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "native", facet: "native_api", offset: 0, limit: 32 },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const view = parseEvidence(response.structuredContent).normalized_result;
+    const boundary = functionDossierSchema.parse(
+      unavailable.normalized_result,
+    ).native_api;
+    expect(z.object({ item: z.unknown() }).parse(view).item).toEqual(boundary);
+    expect(view).toMatchObject({
+      unknowns: expect.arrayContaining([
+        "native_api unavailable: Controlled external or bodyless procedure",
+        "Return and parameter boundary types are unavailable.",
+        "Jump-table mappings are unavailable.",
+      ]),
+    });
+  }
+});
+
+it("preserves the status-only native API variant through inline and retained MCP views", async () => {
+  const { client, session } = await connect();
+  const parent = createEvidence(
+    {
+      path: "/fixtures/unrecorded-api.exe",
+      format: "pe",
+      sha256: "b".repeat(64),
+    },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "analyze_function",
+      parameters: { address: "0x401000" },
+      result: {
+        ...functionDossierSchema.parse(ghidraFunctionDossier()),
+        native_api: null,
+      },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "native", facet: "native_api", offset: 0, limit: 32 },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const view = parseEvidence(response.structuredContent).normalized_result;
+    expect(z.object({ item: z.unknown() }).parse(view).item).toEqual({
+      available: false,
+      reason: "not recorded",
+    });
+    expect(view).toMatchObject({
+      unknowns: expect.arrayContaining(["native_api was not recorded"]),
+      coverage: { total: 1, next_offset: null, exhausted: true },
+    });
+  }
 });
 
 it("advertises exact schemas and projects one layout section from retained Evidence", async () => {
@@ -900,13 +1062,19 @@ it("reads successive native source pages directly from a completed-result transp
     arguments: { procedure: "0x401000" },
   });
   expect(failed.isError).toBe(true);
+  const deliveryError = parseMcpToolError(failed).error;
+  for (const advice of [
+    deliveryError.message,
+    deliveryError.remediation.action,
+  ])
+    expect(advice).toContain("normalized_result.coverage.next_offset");
   const limits = z
     .object({
       error: z.object({
         details: z.object({ reported_limits: jsonObjectSchema }),
       }),
     })
-    .parse(parseMcpToolError(failed)).error.details.reported_limits;
+    .parse({ error: deliveryError }).error.details.reported_limits;
   const reference = z
     .object({
       kind: z.literal("retained-evidence"),

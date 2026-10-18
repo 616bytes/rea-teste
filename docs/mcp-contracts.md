@@ -215,9 +215,13 @@ See [derived API surfaces](web-network-captures.md#derived-api-surface).
 Evidence. Native views select procedure, pseudocode, assembly, basic blocks,
 comments, callers/callees, references, unresolved calls, referenced strings and
 names, the native API record, and high-pcode facets without starting a provider. Native offset
-and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
-splits surrogate pairs, while other pages count rows. Unavailable facts and
-provider limitations remain explicit. Source is
+and limit default to 0 and 64. Available pseudocode uses UTF-16 code units and
+never splits surrogate pairs; available assembly and recorded collections count
+rows. The `procedure`, `native_api`, and `value_flow_summary` facets return singleton
+items and require offset 0. Unavailable facets and unrecorded optional collections
+return status objects instead of text or rows; preserve the entire item, including
+`native_api.residual_unknowns`. Follow `normalized_result.coverage.next_offset`
+for available pages. Unavailable facts and provider limitations remain explicit. Source is
 an exact same-session retained reference or portable inline Evidence. Views are
 a summary, a layout mitigations or linkage facet, one section/symbol/module, or
 a stable page with a caller-selected positive `limit`. Module pages include
@@ -559,6 +563,95 @@ of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
 pseudocode, retaining uncertainty about execution order and runtime values.
 These operations inspect static evidence and do not execute the target.
 
+## Recovering large native analysis results
+
+A completed `analyze_function` dossier supports native views from retained
+Evidence. Select its Evidence ID, then request a pseudocode page:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "<dossier Evidence ID>"
+  },
+  "view": {
+    "kind": "native",
+    "facet": "pseudocode",
+    "offset": 0,
+    "limit": 4096
+  }
+}
+```
+
+Call `inspect_analysis_view` with that input and first inspect
+`normalized_result.item` in the Evidence envelope. An unavailable facet, including
+pseudocode, returns a singleton status object with at least `available: false`
+and `reason`, instead of text or rows. Unrecorded optional collections return
+that status too. Preserve the entire item as explicit unknowns: recorded unavailable
+`native_api` boundaries carry `residual_unknowns` describing unresolved boundary
+types and jump-table mappings. An unrecorded `native_api` instead returns only
+`available: false` and `reason: "not recorded"`; it has no `residual_unknowns`. For available pseudocode,
+follow `normalized_result.coverage.next_offset`; offsets and limits count UTF-16
+code units. Available assembly and recorded collection data use row pages.
+Singleton facets `procedure`, `native_api`, and `value_flow_summary`
+require offset 0. Paging reads retained evidence and does not
+repeat provider analysis. Keep source coverage and limitations: exhausting text
+does not establish that the analyzed body covers every runtime path.
+
+Standalone `procedure_pseudo_code` strings and `batch_decompile` results are not
+function dossiers and cannot be passed to the native dossier view. Preserve or
+export their complete Evidence instead. `batch_decompile` currently returns full
+per-item pseudocode and does not accept `detail: "summary"`.
+
+Before issuing `analyze_function`, record the matching Evidence IDs from
+`get_evidence_bundle` with `detail: "summary"` as a pre-call baseline. Match the
+selected subject, provider, profile and procedure, and keep any Evidence ID
+returned by this specific request. A client timeout leaves completion unknown:
+analysis may continue, or cancellation may arrive after success. Summary records
+have no request/session revision or chronology. A matching old dossier may predate
+an annotation edit; its presence does not establish completion of the timed request
+or current comments. A newly settled record absent from the baseline is usable as
+that request's result only when isolated requests and unchanged metadata establish
+that correlation; concurrent work or edits leave it ambiguous. Content-derived IDs
+are not request sequence numbers: unchanged repeated results may reuse an ID.
+Without a pre-call baseline or explicit request/result correlation, keep completion
+and metadata freshness unknown. Older Evidence remains a historical observation,
+not proof that a later request completed. Recheck summaries for discovery before
+repeating analysis; do not infer freshness from matching filters alone. Provider
+activity in `binary_session` is optional: Ghidra does not currently expose it,
+so `analysis_activity.status: "not_observed"` means unknown, not idle or failed.
+Neither a matching historical record nor its absence together with
+`not_observed` establishes completion or failure of the timed request. Keep the session open, allow the pending request to settle, and
+recheck for completed Evidence instead of immediately closing or repeating it.
+If closing is necessary, `close_binary` with an absolute `snapshot_path` drains
+earlier requests and saves their immutable snapshot before clearing session
+records; a failed save leaves the session open. Check the save/close result and
+preserve the snapshot for reopening. If saving succeeded but cleanup failed,
+retry plain `close_binary` without `snapshot_path`: the target is already closed,
+so another snapshot save cannot reach the retained cleanup owner. Sessions with metadata edits cannot save an
+immutable snapshot: wait/recheck and export needed Evidence before closing.
+A completed result whose delivery was too large already has a separate retained continuation path.
+When cancellation actually interrupts an active Ghidra request, successful cleanup
+discards its ephemeral database; the next uncached provider query imports the
+selected target again. While the binary session remains open without
+`close_binary`, previously retained successful Evidence and matching snapshot
+entries can still be reused. Incomplete cleanup retains the owned process/runtime
+and blocks fresh import. Preserve needed Evidence with the snapshot-close flow
+above, or wait/recheck and export before a plain close: closing clears
+session-retained Evidence IDs and snapshot cache entries even when cleanup
+fails. After addressing `cleanup_incomplete`, retry plain `close_binary` without
+`snapshot_path` on the same connection, preserving any already written snapshot.
+Check cleanup success before reopening the target; do not reuse the cleared IDs after close. Preserved
+complete dossier Evidence can instead be supplied through the view's inline
+source. The Ghidra profile commits `runtime_recovery_limitations: "cleanup-qualified-reimport-v1"`.
+Snapshots from earlier profiles cannot be replayed under this recovery contract;
+reanalyze with the current profile rather than importing superseded limitations.
+Preserved historical Evidence remains historical and is not silently rewritten.
+New uncached queries can require another import. Do not repeat completed work to
+recover a smaller reply, or treat a client timeout as an empty successful result.
+The [deadline guide](#ghidra-first-query-deadlines-and-recovery) explains which
+settings belong to the client and how to recover after interrupted startup.
+
 ## Ghidra first-query deadlines and recovery
 
 A successful MCP initialize handshake establishes the REA connection.
@@ -638,20 +731,45 @@ tool argument, setup grant, or server-side automatic extension. CLI analysis has
 no MCP client request deadline, but keeps the provider startup deadline and
 SIGINT cancellation.
 
-If the client timed out or cancelled during startup, the pending query may have
-been interrupted. Reissuing `open_binary` for the same active target can reuse
-the current client, so it is not a fresh-start recovery. On the same connection:
+A caller timeout leaves completion unknown: the request may still be running or
+may have completed before cancellation arrived. Reissuing `open_binary` for the
+same active target can reuse the current client, so it is not a fresh-start
+recovery. On the same connection:
 
-1. Keep any useful inline Evidence, or export a bundle before closing if retained
-   records are needed. `binary_session` can show the selected binding and its
-   recorded state; target selection alone does not prove engine readiness.
-2. Call `close_binary` and check its result. It drains owned work, closes the
-   provider, and clears retained session records. A `cleanup_incomplete` result
-   must be addressed according to its reported owned resources before retrying.
-3. Call `open_binary` with the same caller-selected path and
-   `provider_id: "ghidra"`, then retry the first query with an appropriate client
-   deadline. The connection and selected provider do not need to change.
+1. Keep useful inline Evidence and leave the session open while earlier work
+   settles. Compare `get_evidence_bundle` summaries with the pre-call ID baseline
+   and any result ID correlated with that request, as described above. Matching
+   subject/provider/profile/procedure filters alone cannot distinguish a pre-edit
+   dossier from the timed re-analysis. Without a baseline or explicit correlation,
+   keep completion and metadata freshness unknown; concurrent requests or edits
+   can also make a new ID ambiguous. An identical result can reuse an old ID, so
+   no new ID does not prove failure. `binary_session` shows
+   the selected binding and recorded state, but Ghidra does not expose activity;
+   `not_observed` does not prove idle, failed, or completed work.
+2. If closing is necessary while work is pending or its completion is unknown,
+   call `close_binary` with a caller-selected absolute `snapshot_path`. It drains
+   earlier admitted work, saves the immutable snapshot including completed
+   Evidence, and only then clears session records. An earlier bundle export
+   alone cannot preserve work that completes during that drain. A snapshot save
+   failure leaves the session open. Metadata-edited sessions cannot save an
+   immutable snapshot: let earlier work settle, recheck and export the needed
+   completed Evidence, then close without `snapshot_path`.
+3. Check the save and close result and preserve any successfully written
+   snapshot. If cleanup is incomplete, address the reported owned resources and
+   retry plain `close_binary` **without `snapshot_path`** on the same connection
+   before reopening. The active target is already unset, so retrying a snapshot
+   save fails before reaching retained cleanup. Plain close
+   clears retained records even if cleanup fails; saved snapshots and complete
+   exported Evidence are independent of the cleared session IDs.
+4. After cleanup succeeds, call `open_binary` with the same caller-selected path
+   and `provider_id: "ghidra"`. Include the saved `snapshot_path` when available
+   to reuse matching immutable results. For a preserved complete dossier, use
+   `inspect_analysis_view` with its inline source. An uncached query may require a
+   fresh import and an appropriate
+   client deadline. The connection and selected provider do not need to change.
 
+The following historical measurements used plain close after a startup timeout;
+they did not qualify snapshot preservation of work completing during the drain.
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
 analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node

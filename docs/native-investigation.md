@@ -74,17 +74,33 @@ Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
 the regex; successful literal searches retain complete matching strings.
-Cancelling an active request terminates the ephemeral database and discards its
-annotations. REA retains the selected target and imports the original artifact
-again on the next Ghidra query.
+Cancelling an active request attempts to stop its ephemeral database. Successful
+cleanup discards its annotations; the next uncached provider query can then import
+the selected target again. Incomplete cleanup retains owned process/runtime
+resources and blocks fresh import until cleanup succeeds. The selected target
+remains open, and retained successful Evidence or matching snapshots can still
+be reused. Check the reported cleanup outcome before retrying analysis.
+The Ghidra profile commits `runtime_recovery_limitations: "cleanup-qualified-reimport-v1"`;
+earlier-profile snapshots cannot replay superseded cleanup guidance. Reanalyze
+under the current profile; historical Evidence is not rewritten.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.
+Metadata edits invalidate snapshot replay but retain historical Evidence. A summary
+match has no request/session revision or chronology and may describe pre-edit
+comments. Record matching IDs before analysis and correlate the settled result
+with that request; without that baseline or explicit correlation, completion and
+freshness after a client timeout remain unknown. Concurrent work/edits can make
+a new ID ambiguous, and an unchanged repeat can reuse its old content-derived ID.
 Snapshot closes drain earlier provider requests before saving and keep later
 requests waiting until the save and close finish. A concurrent successful edit
-therefore rejects the snapshot save and leaves the edited session open.
+therefore rejects the snapshot save and leaves the edited session open. If the
+save succeeds but close cleanup fails, preserve the written snapshot and retry
+plain `close_binary` without `snapshot_path` on the same connection. The target
+is already unset; another snapshot save cannot reach retained cleanup.
 After metadata edits, snapshot saves and imports remain unavailable in that
-session. Use `export_evidence_bundle` to retain the observations, close without
+session. Let earlier requests settle and recheck needed completed Evidence, then
+use `export_evidence_bundle` to retain those observations. Close without
 `snapshot_path`, and reopen the target before importing or saving a snapshot.
 
 Ghidra checks its private import copy against the artifact digest selected by

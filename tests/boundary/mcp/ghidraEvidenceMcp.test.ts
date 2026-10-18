@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
@@ -187,6 +190,14 @@ it("retains terminal-call qualifications across function views and snapshot repl
         limitations: [limitation],
       });
       expect(evidence.limitations, name).toContain(limitation);
+      expect(evidence.limitations, name).toContainEqual(
+        expect.stringContaining(
+          "only then can the next uncached provider query",
+        ),
+      );
+      expect(evidence.limitations, name).toContainEqual(
+        expect.stringContaining("blocks fresh import until cleanup succeeds"),
+      );
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         function_boundary_observations:
           "ghidra-function-boundary-limitations-v4",
@@ -514,4 +525,118 @@ describe("Ghidra MCP evidence parity", () => {
       await harness.close();
     }
   }, 30_000);
+});
+
+it("keeps historical dossiers discoverable while post-edit analysis is pending", async () => {
+  const initial = functionDossierSchema.parse(ghidraFunctionDossier());
+  const address = initial.procedure.address;
+  const edited = {
+    ...initial,
+    comments: [{ address, kind: "comment" as const, text: "Updated finding" }],
+  };
+  const entered = createDeferred<void>();
+  const release = createDeferred<void>();
+  let hasEdit = false;
+  const harness = await connectGhidraMcp(
+    "ghidra-historical-summary",
+    async (operation) => {
+      if (operation === "annotate_native_function") {
+        hasEdit = true;
+        return ok(
+          jsonValueSchema.parse({
+            annotations: {
+              address,
+              name: initial.procedure.name,
+              comment: "Updated finding",
+              inline_comment: null,
+            },
+            dossier: edited,
+            effects: {
+              scope: "session-analysis-database",
+              source_bytes_modified: false,
+              persists_after_close: false,
+            },
+          }),
+        );
+      }
+      if (operation !== "analyze_function")
+        throw new Error("Unexpected operation " + operation);
+      if (hasEdit) {
+        entered.resolve();
+        await release.promise;
+      }
+      return ok({
+        value: jsonValueSchema.parse(hasEdit ? edited : initial),
+        limitations: [],
+      });
+    },
+  );
+  const summarize = async () => {
+    const response = await harness.mcp.callTool({
+      name: "get_evidence_bundle",
+      arguments: {
+        detail: "summary",
+        filters: { operation: "analyze_function", procedure_address: address },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    return z
+      .object({ result: evidenceBundleSummarySchema })
+      .parse(response.structuredContent).result;
+  };
+  try {
+    const oldReply = await harness.mcp.callTool({
+      name: "analyze_function",
+      arguments: { procedure: address },
+    });
+    expect(oldReply.isError, JSON.stringify(oldReply.content)).not.toBe(true);
+    const old = sessionEvidence(harness.session, oldReply.structuredContent);
+    const mutation = await harness.mcp.callTool({
+      name: "annotate_native_function",
+      arguments: { procedure: address, comment: "Updated finding" },
+    });
+    expect(mutation.isError).not.toBe(true);
+    const baseline = await summarize();
+    expect(baseline.records.map((r) => r.evidence_id)).toEqual([
+      old.evidence_id,
+    ]);
+    const pending = harness.mcp.callTool({
+      name: "analyze_function",
+      arguments: { procedure: address },
+    });
+    await entered.promise;
+    expect(await summarize()).toEqual(baseline);
+    const historical = await harness.mcp.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: old.evidence_id },
+        view: { kind: "native", facet: "comments", offset: 0, limit: 32 },
+      },
+    });
+    expect(historical.isError).not.toBe(true);
+    expect(
+      sessionEvidence(harness.session, historical.structuredContent)
+        .normalized_result,
+    ).toMatchObject({ item: [] });
+    release.resolve();
+    const settled = await pending;
+    expect(settled.isError).not.toBe(true);
+    const current = sessionEvidence(harness.session, settled.structuredContent);
+    expect(current.evidence_id).not.toBe(old.evidence_id);
+    expect(current.normalized_result).toMatchObject({
+      comments: edited.comments,
+    });
+    const after = await summarize();
+    expect(
+      after.records
+        .filter(
+          (r) => !baseline.records.some((b) => b.evidence_id === r.evidence_id),
+        )
+        .map((r) => r.evidence_id),
+    ).toEqual([current.evidence_id]);
+    expect(after.records.map((r) => r.evidence_id)).toContain(old.evidence_id);
+  } finally {
+    release.resolve();
+    await harness.close();
+  }
 });

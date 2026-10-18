@@ -79,6 +79,78 @@ execution or network acquisition is implied, and WAT is decoded representation.
 
 ## Native targets
 
+For a large completed `analyze_function` dossier, retain its Evidence ID and read
+`inspect_analysis_view` with `source: {kind: "retained-evidence", evidence_id: ID}`
+and `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`.
+First inspect the returned Evidence envelope's `normalized_result.item`. An
+unavailable facet, including pseudocode, returns a singleton status object with
+at least `available: false` and `reason`, instead of text or rows. Unrecorded
+optional collections return that status too. Preserve the entire item as explicit
+unknowns: recorded unavailable
+`native_api` boundaries carry `residual_unknowns` describing unresolved boundary
+types and jump-table mappings. An unrecorded `native_api` instead returns only
+`available: false` and `reason: "not recorded"`; it has no `residual_unknowns`. For available pseudocode,
+follow `normalized_result.coverage.next_offset`;
+text offsets and limits count UTF-16 code units, not bytes or lines. Available
+assembly and recorded collection data use row pages. Singleton facets
+`procedure`, `native_api`, and `value_flow_summary` require offset 0. Paging
+reads retained evidence without repeating decompilation.
+
+This native view requires function-dossier Evidence; a standalone
+`procedure_pseudo_code` string or `batch_decompile` result is not interchangeable
+with that dossier. For those results, preserve the complete Evidence or export
+an evidence bundle. Do not repeat successful analysis solely to obtain a smaller
+reply. Current `batch_decompile` returns full per-item pseudocode and has no
+`detail: "summary"` input.
+
+Before issuing `analyze_function`, record the matching Evidence IDs from
+`get_evidence_bundle` with `detail: "summary"` as a pre-call baseline. Match the
+selected subject, provider, profile and procedure, and keep any Evidence ID
+returned by this specific request. A client timeout leaves completion unknown:
+analysis may continue, or cancellation may arrive after success. Summary records
+have no request/session revision or chronology. A matching old dossier may predate
+an annotation edit; its presence does not establish completion of the timed request
+or current comments. A newly settled record absent from the baseline is usable as
+that request's result only when isolated requests and unchanged metadata establish
+that correlation; concurrent work or edits leave it ambiguous. Content-derived IDs
+are not request sequence numbers: unchanged repeated results may reuse an ID.
+Without a pre-call baseline or explicit request/result correlation, keep completion
+and metadata freshness unknown. Older Evidence remains a historical observation,
+not proof that a later request completed. Recheck summaries for discovery before
+repeating analysis; do not infer freshness from matching filters alone. Provider
+activity in `binary_session` is optional: Ghidra does not currently expose it,
+so `analysis_activity.status: "not_observed"` means unknown, not idle or failed.
+Neither a matching historical record nor its absence together with
+`not_observed` establishes completion or failure of the timed request. Keep the session open, allow the pending request to settle, and
+recheck for completed Evidence instead of immediately closing or repeating it.
+If closing is necessary, `close_binary` with an absolute `snapshot_path` drains
+earlier requests and saves their immutable snapshot before clearing session
+records; a failed save leaves the session open. Check the save/close result and
+preserve the snapshot for reopening. If saving succeeded but cleanup failed,
+retry plain `close_binary` without `snapshot_path`: the target is already closed,
+so another snapshot save cannot reach the retained cleanup owner. Sessions with metadata edits cannot save an
+immutable snapshot: wait/recheck and export needed Evidence before closing.
+Distinguish the client's request deadline from Ghidra startup and analysis. When cancellation
+actually interrupts an active Ghidra request,
+successful cleanup discards the ephemeral database; the next uncached provider
+query imports the selected target again. While the binary session remains open
+without `close_binary`, reuse retained successful Evidence and matching snapshot
+entries where available. Incomplete cleanup retains the owned process/runtime
+and blocks fresh import. Preserve needed Evidence with the snapshot-close flow
+above, or wait/recheck and export before a plain close: closing clears
+session-retained Evidence IDs and snapshot cache entries even when cleanup
+fails. After addressing `cleanup_incomplete`, retry plain `close_binary` without
+`snapshot_path` on the same connection, preserving any already written snapshot.
+Check cleanup success before reopening the target; do not reuse cleared IDs after close. Preserved
+complete dossier Evidence can instead be supplied through the view's inline
+source. The Ghidra profile commits `runtime_recovery_limitations: "cleanup-qualified-reimport-v1"`.
+Snapshots from earlier profiles cannot be replayed under this recovery contract;
+reanalyze with the current profile rather than importing superseded limitations.
+Preserved historical Evidence remains historical and is not silently rewritten.
+A new uncached query can still incur cold import. Increasing the
+startup allowance does not extend a client's tool-call deadline. See the
+[deadline and recovery guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+
 After `open_binary`, use focused search, procedure, or function tools directly.
 Use `binary_overview` when target metadata or inventory context helps answer the
 question. Prefer literal search, names, decompilation, callers, callees, and
@@ -92,7 +164,11 @@ and the exact retained Evidence ID to read selected facts without reanalysis.
 Native facets also include procedure, pseudocode, assembly, basic blocks,
 comments, callers/callees, references, unresolved calls, referenced strings and
 names, the native API record, and value-flow summaries. Pseudocode offsets and limits count UTF-16
-code units; use the returned `next_offset` for continuation. Provider limitations
+code units; use `normalized_result.coverage.next_offset` for continuation.
+Available assembly and recorded collections use rows; `procedure`, `native_api`,
+and `value_flow_summary` are singleton items at offset 0. Unavailable facets and
+unrecorded optional collections return status objects, not text or rows; preserve
+the entire item, including `native_api.residual_unknowns`. Provider limitations
 and unavailable facts remain explicit; the complete parent Evidence is retained.
 
 `inspect_macho` on a large framework returns megabytes of imports and exports.

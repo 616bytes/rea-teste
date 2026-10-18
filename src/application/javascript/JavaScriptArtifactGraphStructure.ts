@@ -6,6 +6,7 @@ import {
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
@@ -14,6 +15,7 @@ import type {
   JavaScriptArtifactFile,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
+import { isSkippedJavaScriptAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import {
   addArtifactContainsEdge,
   addUnavailableStaticParseScope,
@@ -144,6 +146,7 @@ export const addJavaScriptArtifactFiles = (
       file,
       analyzed.javascript,
       jsonValue,
+      isSkippedJavaScriptAnalysis(analyzed),
     );
     if (
       analyzed.application_projection_failure !== undefined &&
@@ -211,11 +214,17 @@ export const addJavaScriptArtifactFiles = (
         }),
       });
     }
-    if (!file.text.included && file.text.reason === "outside-analysis-scope")
+    const analysisScope = javascriptArtifactAnalysisScopes[file.kind];
+    if (
+      !file.text.included &&
+      file.text.reason === "outside-analysis-scope" &&
+      analysisScope !== null
+    )
       addUnavailableStaticParseScope(context, {
         file,
         asset: target,
         operation: "select-javascript-sources",
+        authority: analysisScope.authority,
         limitation:
           "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
       });
@@ -223,12 +232,13 @@ export const addJavaScriptArtifactFiles = (
       addUnavailableStaticParseScope(context, {
         file,
         asset: target,
-        operation: "analyze-javascript-source",
+        ...analyzed.analysis_failure.scope,
         limitation: analyzed.analysis_failure.reason,
         failure: analyzed.analysis_failure.error,
         limits: javaScriptAnalysisCoverageLimits(
           analyzed.analysis_failure.limits,
         ),
+        details: { analysis_status: analyzed.analysis_failure.status },
       });
     else if (
       file.kind === "javascript" &&
@@ -239,6 +249,7 @@ export const addJavaScriptArtifactFiles = (
         file,
         asset: target,
         operation: "parse-javascript",
+        authority: javascriptArtifactAnalysisScopes.javascript.authority,
         limitation: file.text.included
           ? "JavaScript syntax could not be parsed."
           : `JavaScript text was unavailable: ${file.text.reason}.`,
@@ -248,6 +259,7 @@ export const addJavaScriptArtifactFiles = (
         file,
         asset: target,
         operation: "project-javascript-application",
+        authority: javascriptArtifactAnalysisScopes.javascript.authority,
         limitation: analyzed.application_projection_failure.reason,
         failure: analyzed.application_projection_failure.error,
         limits: javaScriptAnalysisCoverageLimits(
@@ -259,14 +271,14 @@ export const addJavaScriptArtifactFiles = (
       addUnavailableStaticParseScope(context, {
         file,
         asset: target,
-        operation: "parse-package-json",
+        ...javascriptArtifactAnalysisScopes["package-json"],
         limitation: packageValue.limitation,
       });
     if (jsonValue !== undefined && jsonValue.status !== "included")
       addUnavailableStaticParseScope(context, {
         file,
         asset: target,
-        operation: "parse-json-module",
+        ...javascriptArtifactAnalysisScopes.json,
         limitation: jsonValue.limitation,
       });
     const sourceMap = sourceMapsByPath.get(file.path);
@@ -274,7 +286,7 @@ export const addJavaScriptArtifactFiles = (
       addUnavailableStaticParseScope(context, {
         file,
         asset: target,
-        operation: "parse-local-source-map",
+        ...javascriptArtifactAnalysisScopes["source-map"],
         limitation: sourceMap.limitation,
       });
     const inlineScripts = inlineScriptsByPath.get(file.path);
@@ -283,6 +295,7 @@ export const addJavaScriptArtifactFiles = (
         file,
         asset: target,
         operation: "parse-html-inline-scripts",
+        authority: javascriptArtifactAnalysisScopes.javascript.authority,
         limitation: htmlInlineScriptLimitation(inlineScripts),
         limits:
           inlineScripts.script_count > inlineScripts.scripts.length
@@ -542,6 +555,7 @@ const createFileTarget = (
   file: JavaScriptArtifactFile,
   javascript: JavaScriptModuleArtifactAnalysis["files"][number]["javascript"],
   json: JavaScriptModuleArtifactAnalysis["json_modules"][number] | undefined,
+  skipped: boolean,
 ): ApplicationNode => {
   const kind = artifactFileNodeKind(file.kind);
   return context.accumulator.addNode({
@@ -561,7 +575,8 @@ const createFileTarget = (
           unpacked: file.unpacked,
           file_kind: file.kind,
           text_status: file.text.included ? "included" : file.text.reason,
-          parse_status: javascript?.parse_status ?? null,
+          parse_status:
+            javascript?.parse_status ?? (skipped ? "skipped" : null),
           json_parse_status: json?.status ?? null,
           json_top_level_keys: json?.top_level_keys ?? [],
           omitted_json_top_level_keys: json?.omitted_top_level_keys ?? 0,

@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · **Hinglish**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Hinglish**
 
 # REA: Reverse Engineer Anything
 
@@ -117,6 +117,10 @@ REA tezi se badalta hai, aur naye releases mein aksar bug fixes aate hain. Apna 
 rea update
 ```
 
+`rea --update` isi verified workflow ka alias hai aur wahi global output flags accept karta hai. Doosre command controls ke saath combine karte waqt `rea update` use kijiye.
+
+Updater commands stdout aur stderr milakar zyada se zyada 4 MiB rakhte hain. Bahut bade metadata replies command khatam hone ke baad reject ho jaate hain; verbose installs limited diagnostics ke saath chalte rehte hain. Human progress output terminal backpressure ka dhyan rakhta hai aur submitted writes poore hone ka intezaar karta hai.
+
 Bun global updates ke liye Bun 1.2.17 ya usse naya version chahiye. Purane Bun release par `rea update` chalane se pehle Bun ko manually upgrade kijiye.
 
 Apne agent registrations aur skill ko refresh karne ke liye woh setup command chalaiye jo update print karta hai.
@@ -175,7 +179,7 @@ Offline native-binary inspection ke liye REA caller ke diye hue GNU objdump aur 
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native formats aur host support har provider mein alag hote hain. [Hopper aur Ghidra setup](../installation.md#hopper), [IDA guide](../ida-provider.md) (jisme ek optional native MCP bridge bhi shaamil hai) aur [experimental Windows Ghidra support](../windows-ghidra-p0.md) dekhiye. Ghidra [16-bit DOS analysis](../ghidra-dos.md) bhi support karta hai. Badi binaries ke liye provider ki startup deadline `REA_GHIDRA_STARTUP_TIMEOUT_MS` ya `REA_HOPPER_STARTUP_TIMEOUT_MS` se badhaiye. Provider selection ke liye [CLI guide](../cli.md#choose-a-provider) dekhiye. Latest npm release ke baad add hue features ke liye [release availability](../installation.md#released-package-and-main) check kijiye.
+Native formats aur host support har provider mein alag hote hain. [Hopper aur Ghidra setup](../installation.md#hopper), [IDA guide](../ida-provider.md) (jisme ek optional native MCP bridge bhi shaamil hai), [Kuna decompiler guide](../kuna-provider.md) aur [experimental Windows Ghidra support](../windows-ghidra-p0.md) dekhiye. Ghidra [16-bit DOS analysis](../ghidra-dos.md) bhi support karta hai. Badi binaries ke liye provider ki startup deadline `REA_GHIDRA_STARTUP_TIMEOUT_MS` ya `REA_HOPPER_STARTUP_TIMEOUT_MS` se badhaiye. Provider selection ke liye [CLI guide](../cli.md#choose-a-provider) dekhiye. Latest npm release ke baad add hue features ke liye [release availability](../installation.md#released-package-and-main) check kijiye.
 
 ## Showcases
 
@@ -283,7 +287,7 @@ Vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report kijiye.
 
 ## Star history
 
-🎉 **200,000 GitHub stars — bahut bahut shukriya!**
+🎉 **300,000 GitHub stars — bahut bahut shukriya!**
 
 REA use karne, bugs report karne, features request karne, builds test karne aur fixes contribute karne wale sabhi logon ka shukriya.
 

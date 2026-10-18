@@ -259,6 +259,26 @@ describe("configured Linux Hopper selection", () => {
     });
     expect(discovery.installHopper).toBe(true);
   });
+
+  it("does not reinstall Hopper when embedded Python readiness is unknown", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "arch",
+      packageFamily: "arch",
+      hopperSetupSupported: true,
+    };
+    host.hopper = "/opt/hopper/bin/Hopper";
+    host.linuxEmbeddedPythonRuntimeUnknown = true;
+    const initial = await host.initialSetupState();
+    const discovery = await discoverSetupState({
+      host,
+      providerConfigured: initial.providerConfigured,
+      forceHopperInstall: false,
+      proposeHopper: true,
+      initialDoctor: initial.doctor,
+    });
+    expect(discovery.installHopper).toBe(false);
+  });
 });
 
 describe("setup workflow action selection", () => {

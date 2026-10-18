@@ -48,10 +48,11 @@ export const discoverSetupState = async (input: {
   const linuxHopperRepairNeeded =
     input.hopperLauncherConfigured !== true &&
     initialDoctor.checks.some(
-      ({ name, ok, detail }) =>
+      ({ name, ok, classification, detail }) =>
         !ok &&
         (name === "hopper-demo-runtime" ||
-          name === "hopper-embedded-python" ||
+          (name === "hopper-embedded-python" &&
+            classification === "missing_dependency") ||
           (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
     );
   const linuxDistribution =

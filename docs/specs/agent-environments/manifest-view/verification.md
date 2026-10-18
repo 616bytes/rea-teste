@@ -121,6 +121,4 @@ RSS; the full `acceptance` project 960.25 seconds elapsed, 1520.91 user and
 the `cli-boundary` project was executing, and the clean 18aa9af2 export's
 `npm ci`, build and test preparation overlapped the `mcp-boundary` and
 `acceptance` runs, so those elapsed figures include host contention. Token usage and full process-family peak are
-unmeasured. Real-tool verification covers macOS arm64 only;
-`scripts/verify-web-network-captures.mjs` gained a manifest block that was not
-executed on a hosted lane.
+unmeasured. Local real-tool verification ran on macOS arm64; the hosted Linux lane result is recorded above.

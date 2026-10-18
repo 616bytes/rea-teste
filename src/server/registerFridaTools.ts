@@ -2,7 +2,10 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import {
+  FridaInstrumentationService,
+  fridaDeviceListOutput,
+} from "../application/frida/FridaInstrumentationService.js";
 import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
 import type { FridaRemoteConnection } from "../application/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -46,14 +49,7 @@ export const registerFridaTools = (
         ? delivery.toCallToolResult(
             {
               ok: true,
-              value: jsonValueSchema.parse({
-                devices: result.value.devices.map((device) => ({
-                  device_id: device.deviceId,
-                  name: device.name,
-                  type: device.type,
-                })),
-                cleanup_error: result.value.cleanupError,
-              }),
+              value: fridaDeviceListOutput(result.value),
             },
             listDevices,
           )

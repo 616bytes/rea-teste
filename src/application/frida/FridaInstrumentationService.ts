@@ -455,6 +455,21 @@ export const withRecoveredFridaCleanup = (
       )
     : error;
 
+/** Canonical device-discovery result shared by CLI and MCP. */
+export const fridaDeviceListOutput = (
+  observation: Extract<
+    Awaited<ReturnType<FridaInstrumentationPort["listDevices"]>>,
+    { ok: true }
+  >["value"],
+) => ({
+  devices: observation.devices.map(({ deviceId, name, type }) => ({
+    device_id: deviceId,
+    name,
+    type,
+  })),
+  cleanup_error: observation.cleanupError,
+});
+
 const scriptOutput = (script: FridaScriptObservation) => ({
   script_id: script.scriptId,
   source_kind: script.sourceKind,

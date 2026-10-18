@@ -1,5 +1,23 @@
 # Changelog
 
+## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-18)
+
+
+### Bug Fixes
+
+* **tests:** preserve temporary fixture ownership ([093ce69](https://github.com/morluto/rea/commit/093ce695f0a7c3407c7fde520ed8b20c0981b408))
+* **tests:** restore Android prerequisite verification ([23f984b](https://github.com/morluto/rea/commit/23f984b1a884baefc3c44e4ab697f6eff61dffb6))
+
+
+### Performance Improvements
+
+* **hopper:** reuse decoded records for literal string matches ([#5017](https://github.com/morluto/rea/issues/5017)) ([63c9708](https://github.com/morluto/rea/commit/63c970812b8b5c6664400c9360e22c427844820c))
+
+
+### Documentation
+
+* **jeb:** qualify Linux CE native workflows ([#5002](https://github.com/morluto/rea/issues/5002)) ([c12d9ed](https://github.com/morluto/rea/commit/c12d9eda87aa5a022ee7e18ea96d8d03bfd12e96)), closes [#4996](https://github.com/morluto/rea/issues/4996)
+
 ## [6.7.0](https://github.com/morluto/rea/compare/rea-agents-6.6.0...rea-agents-6.7.0) (2026-10-18)
 
 ### Highlights

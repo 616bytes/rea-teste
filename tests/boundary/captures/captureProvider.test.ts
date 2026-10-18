@@ -12,6 +12,7 @@ import {
   truncate,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { TLS_KEY_LOG_MAX_BYTES } from "../../../src/domain/captures/tlsKeyLog.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
@@ -54,7 +55,11 @@ const keyLogFields = [
   "http.cookie",
 ];
 const expectNoKeyLogOrCredentialText = (value: unknown) => {
-  const serialized = JSON.stringify(value).toLowerCase();
+  const serialized = inspect(value, {
+    depth: null,
+    maxArrayLength: null,
+    maxStringLength: null,
+  }).toLowerCase();
   for (const token of [...Object.values(keyLogTokens), ...decryptedCredentials])
     expect(serialized).not.toContain(token.toLowerCase());
   expect(serialized).not.toContain("not_a_label");
@@ -441,7 +446,10 @@ it.each([
       expect(result.error).toMatchObject({
         path: expect.stringMatching(/decoder-.*[/\\]tls-key-log$/u),
       });
-    expectNoKeyLogOrCredentialText(projectAnalysisError(result.error));
+    expectNoKeyLogOrCredentialText({
+      error: result.error,
+      projection: projectAnalysisError(result.error),
+    });
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(
       (await readdir(f.directory)).filter((name) =>
@@ -467,7 +475,10 @@ it("removes the key-log copy even when workspace cleanup fails and ownership is 
   expect(await readdir(join(f.directory, retained[0] ?? ""))).not.toContain(
     "tls-key-log",
   );
-  expectNoKeyLogOrCredentialText(projectAnalysisError(result.error));
+  expectNoKeyLogOrCredentialText({
+    error: result.error,
+    projection: projectAnalysisError(result.error),
+  });
   f.allowCleanup();
   await f.service.close();
 });

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { inspect } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
@@ -12,7 +13,7 @@ import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 
-const completedProcess = (text: string) => {
+const completedProcess = (text: string, stderr = "", processError?: Error) => {
   const child = Object.assign(new EventEmitter(), {
     stdout: new PassThrough(),
     stderr: new PassThrough(),
@@ -22,7 +23,8 @@ const completedProcess = (text: string) => {
   });
   setImmediate(() => {
     child.stdout.end(text);
-    child.stderr.end();
+    child.stderr.end(stderr);
+    if (processError !== undefined) child.emit("error", processError);
     child.exitCode = 0;
     child.emit("exit", 0, null);
     child.emit("close", 0, null);
@@ -32,7 +34,16 @@ const completedProcess = (text: string) => {
 
 // Exercise the real adapter and failure projection with an injected command
 // outcome. No native process or installed TShark is required for this boundary.
-const inspectFailure = async (failure: OwnedCommandFailure) => {
+const inspectFailure = async (
+  failure:
+    | OwnedCommandFailure
+    | {
+        stdout: string;
+        stderr: string;
+        processError?: Error;
+        failCleanup?: boolean;
+      },
+) => {
   const directory = await createTestTempDirectory("rea-tls-command-failure-");
   const tool = join(directory, "producer");
   const path = join(directory, "capture.pcap");
@@ -41,6 +52,7 @@ const inspectFailure = async (failure: OwnedCommandFailure) => {
   await writeFile(path, "fixture capture");
   await writeFile(keyLog, "# fixture key log\n");
   let privateKeyLog: string | undefined;
+  let allowCleanup = false;
   const provider = new TsharkCaptureProvider(
     { REA_TSHARK_COMMAND: tool, REA_TSHARK_PRLIMIT_COMMAND: tool },
     async (input) => {
@@ -50,16 +62,30 @@ const inspectFailure = async (failure: OwnedCommandFailure) => {
           ?.slice("tls.keylog_file:".length);
         expect(privateKeyLog).toBeDefined();
         expect(existsSync(privateKeyLog!)).toBe(true);
-        throw failure;
+        if (failure instanceof OwnedCommandFailure) throw failure;
       }
       return {
-        process: completedProcess("TShark (Wireshark) 4.6.9 (fixture)\n"),
+        process:
+          input.arguments.includes("--version") ||
+          failure instanceof OwnedCommandFailure
+            ? completedProcess("TShark (Wireshark) 4.6.9 (fixture)\n")
+            : completedProcess(
+                failure.stdout,
+                failure.stderr,
+                failure.processError,
+              ),
         ownership: {
           runId: input.runId,
           leaderPid: 41234,
           processGroupId: 41234,
         },
-        cleanup: async () => ({ cleaned: true, signaled: false }),
+        cleanup: async () =>
+          !input.arguments.includes("--version") &&
+          !(failure instanceof OwnedCommandFailure) &&
+          failure.failCleanup &&
+          !allowCleanup
+            ? { cleaned: false, reason: "fixture process cleanup blocked" }
+            : { cleaned: true, signaled: false },
       };
     },
     () => PrivateRuntimeRoot.create({ parent: directory, prefix: "decoder-" }),
@@ -67,7 +93,10 @@ const inspectFailure = async (failure: OwnedCommandFailure) => {
     readStableArtifact,
     async (limits) => limits,
   );
-  onTestFinished(() => provider.close());
+  onTestFinished(async () => {
+    allowCleanup = true;
+    await provider.close();
+  });
   const result = await new PacketCaptureService(provider).inspect({
     path,
     fields: ["http.request.uri"],
@@ -76,16 +105,31 @@ const inspectFailure = async (failure: OwnedCommandFailure) => {
   if (result.ok) throw new Error("Expected injected command failure");
   expect(privateKeyLog).toBeDefined();
   expect(existsSync(privateKeyLog!)).toBe(false);
-  expect(result.error.capturedOutput).toMatchObject({
-    stdout: "",
-    stderr: "",
-    stdout_bytes: 5000,
-    stderr_bytes: 17,
-  });
+  const observed =
+    failure instanceof OwnedCommandFailure
+      ? failure.snapshot
+      : {
+          stdout: { observedBytes: Buffer.byteLength(failure.stdout) },
+          stderr: { observedBytes: Buffer.byteLength(failure.stderr) },
+        };
+  if (observed === null) expect(result.error.capturedOutput).toBeUndefined();
+  else
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: "",
+      stderr: "",
+      stdout_bytes: observed.stdout.observedBytes,
+      stderr_bytes: observed.stderr.observedBytes,
+    });
   expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
     "fixture-credential",
   );
-  return result.error;
+  return {
+    error: result.error,
+    retry: async () => {
+      allowCleanup = true;
+      await provider.close();
+    },
+  };
 };
 
 const snapshot = {
@@ -98,7 +142,7 @@ const snapshot = {
 it.each(["opaque reason", { request: "cancel decrypting command" }])(
   "preserves the owner's exact cancellation reason while withholding output: %j",
   async (reason) => {
-    const error = await inspectFailure(
+    const { error } = await inspectFailure(
       new OwnedCommandFailure(
         "cancelled",
         "Command cancelled.",
@@ -118,7 +162,7 @@ it("preserves the physical process error while withholding decrypted output", as
   const processError = Object.assign(new Error("fixture stream read failure"), {
     code: "EIO",
   });
-  const error = await inspectFailure(
+  const { error } = await inspectFailure(
     new OwnedCommandFailure(
       "process",
       "Output collection failed.",
@@ -134,6 +178,72 @@ it("preserves the physical process error while withholding decrypted output", as
   expect(error.cause).toBeInstanceOf(OwnedCommandFailure);
   expect(error.cause).toMatchObject({ processError, collectionFailure: true });
   expect((error.cause as OwnedCommandFailure).processError).toBe(processError);
+});
+
+it.each(["collection", "output-limit", "cleanup"] as const)(
+  "withholds nested snapshots from real command %s failures",
+  async (failure) => {
+    const processError = new Error("fixture physical stream failure");
+    const { error, retry } = await inspectFailure({
+      stdout:
+        "fixture-credential" +
+        (failure === "output-limit" ? "x".repeat(4 * 1024 * 1024) : ""),
+      stderr: "fixture-cookie",
+      ...(failure === "output-limit" ? {} : { processError }),
+      failCleanup: failure === "cleanup",
+    });
+    const primary = error.cleanupPrimary ?? error;
+    expect(primary._tag).toBe(
+      failure === "output-limit"
+        ? "AnalysisResourceConstraintError"
+        : "AnalysisOutputError",
+    );
+    expect(primary.cause).toBeInstanceOf(OwnedCommandFailure);
+    const command = primary.cause as OwnedCommandFailure;
+    if (failure !== "output-limit") {
+      expect(command.processError).toBe(processError);
+      expect(command.collectionFailure).toBe(true);
+    }
+    if (failure === "cleanup") {
+      expect(error.cleanupIncomplete).toBe(true);
+      expect(error.cleanupResources).toEqual(
+        expect.arrayContaining(["pid:41234", "process-group:41234"]),
+      );
+      // A returned supervisor exposes its private output via snapshot(), even
+      // though util.inspect cannot see those private buffers.
+      expect(command.cleanupOwner === undefined).toBe(true);
+      await retry();
+      expect(error.cleanupIncomplete).toBe(false);
+      expect(error.cleanupResources).toEqual([]);
+    }
+    // Error.cause is non-enumerable and omitted by JSON.stringify. Inspect the
+    // actual returned error, including all nested command wrappers.
+    const diagnostic = inspect(error, { depth: null, maxStringLength: null });
+    expect(diagnostic.includes("fixture-credential")).toBe(false);
+    expect(diagnostic.includes("fixture-cookie")).toBe(false);
+  },
+);
+
+it("withholds nested command output when the outer failure has no snapshot", async () => {
+  const { error } = await inspectFailure(
+    new OwnedCommandFailure(
+      "timeout",
+      "Command deadline elapsed.",
+      null,
+      null,
+      {
+        cause: new OwnedCommandFailure(
+          "timeout",
+          "Command deadline elapsed.",
+          snapshot,
+        ),
+      },
+    ),
+  );
+  expect(error._tag).toBe("AnalysisTimeoutError");
+  expect(inspect(error, { depth: null }).includes("fixture-credential")).toBe(
+    false,
+  );
 });
 
 const completedInspection = async (options: {

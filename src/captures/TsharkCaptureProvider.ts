@@ -75,14 +75,14 @@ type Phase =
   | "producer"
   | "integrity";
 
-/** Keep process facts but drop output text that may contain decrypted values. */
+/** Keep modeled process facts; raw causes and supervisors retain earlier output. */
 const withholdOutput = (failure: OwnedCommandFailure): OwnedCommandFailure =>
-  failure.snapshot === null
-    ? failure
-    : new OwnedCommandFailure(
-        failure.reason,
-        failure.message,
-        {
+  new OwnedCommandFailure(
+    failure.reason,
+    failure.message,
+    failure.snapshot === null
+      ? null
+      : {
           ...failure.snapshot,
           stdout: {
             text: "",
@@ -95,22 +95,20 @@ const withholdOutput = (failure: OwnedCommandFailure): OwnedCommandFailure =>
             observedBytes: failure.snapshot.stderr.observedBytes,
           },
         },
-        failure.cleanupFailure,
-        {
-          ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-          cancellation: failure.cancellation,
-          processError: failure.processError,
-          ...(failure.cleanupResult === undefined
-            ? {}
-            : { cleanupResult: failure.cleanupResult }),
-          collectionFailure: failure.collectionFailure,
-          ...(failure.preparationFailure === undefined
-            ? {}
-            : { preparationFailure: failure.preparationFailure }),
-        },
-        failure.resources,
-        failure.cleanupOwner,
-      );
+    failure.cleanupFailure,
+    {
+      cancellation: failure.cancellation,
+      processError: failure.processError,
+      ...(failure.cleanupResult === undefined
+        ? {}
+        : { cleanupResult: failure.cleanupResult }),
+      collectionFailure: failure.collectionFailure,
+      ...(failure.preparationFailure === undefined
+        ? {}
+        : { preparationFailure: failure.preparationFailure }),
+    },
+    failure.resources,
+  );
 export const TSHARK_PROVIDER_IDENTITY = {
   id: "tshark-capture",
   name: "REA TShark capture adapter",
@@ -284,10 +282,9 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         ).catch((cause: unknown) => {
-          if (!decrypting || !(cause instanceof OwnedCommandFailure))
-            throw cause;
-          outputWithheld = true;
-          throw withholdOutput(cause);
+          if (decrypting && cause instanceof OwnedCommandFailure)
+            outputWithheld = true;
+          throw cause;
         });
         // Decrypting output can carry credentials; keep only its sizes.
         const text = decrypting
@@ -574,7 +571,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         this.#resources.retain(root, cause.cleanupOwner);
       result = err(
         this.#failure(
-          cause,
+          // Retain the exact supervisor privately before removing its public
+          // snapshot capability and raw cause wrappers from returned errors.
+          outputWithheld && cause instanceof OwnedCommandFailure
+            ? withholdOutput(cause)
+            : cause,
           phase,
           resourcePath,
           root?.path ?? null,

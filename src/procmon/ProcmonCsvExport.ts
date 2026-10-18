@@ -26,6 +26,7 @@ class CsvSyntaxStop {
 
 interface CsvRecord {
   readonly fields: string[];
+  /** Line where the record's last field ends, which is where reading stops. */
   readonly line: number;
   readonly terminated: boolean;
   /** Source offset after the record, for yielding on characters read. */
@@ -185,17 +186,17 @@ function* csvRecords(
       continue;
     }
     started = true;
-    const line = cursor.line;
     const fields: string[] = [];
     do {
       if (fields.length === width.maximum)
         throw new CsvSyntaxStop(
           "malformed",
           `Row has more than ${width.maximum} fields.`,
-          line,
+          cursor.line,
         );
       fields.push(cursor.field());
     } while (cursor.comma());
+    const line = cursor.line;
     const terminated = cursor.lineEnding();
     yield { fields, line, terminated, end: cursor.index };
   }

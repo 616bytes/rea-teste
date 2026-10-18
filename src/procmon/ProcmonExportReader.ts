@@ -228,7 +228,10 @@ const isIncompleteCharacter = (
     );
   }
   // UTF-16: an odd final byte, a high surrogate, or a high surrogate and one byte.
-  if (tail.length === 1) return true;
+  // A lone UTF-16BE byte is a unit's high byte; a low surrogate cannot start
+  // a character, so that byte is invalid rather than cut off.
+  if (tail.length === 1)
+    return encoding === "utf-16le" || !isLowSurrogateHighByte(tail[0]);
   const high = encoding === "utf-16le" ? tail[1] : tail[0];
   if (high === undefined || high < 0xd8 || high > 0xdb) return false;
   // A byte after the high surrogate must start a low surrogate. In UTF-16BE
@@ -237,9 +240,12 @@ const isIncompleteCharacter = (
   return (
     next === undefined ||
     encoding === "utf-16le" ||
-    (next >= 0xdc && next <= 0xdf)
+    isLowSurrogateHighByte(next)
   );
 };
+
+const isLowSurrogateHighByte = (byte: number | undefined): boolean =>
+  byte !== undefined && byte >= 0xdc && byte <= 0xdf;
 
 const decodeText = (bytes: Uint8Array, encoding: Encoding): DecodedExport => {
   try {

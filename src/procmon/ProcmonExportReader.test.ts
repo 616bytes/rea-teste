@@ -405,3 +405,29 @@ describe("readProcmonExport review of 0c36ba2", () => {
     expect(reading.coverage).toEqual({ status: "complete" });
   });
 });
+
+describe("readProcmonExport review of 1630664", () => {
+  const all = { ...selection, event_limit: null };
+
+  it("rejects a final UTF-16BE byte that would start a low surrogate", async () => {
+    const body = Buffer.from(`${header}"a.exe","Read"\n`, "utf16le").swap16();
+    await expect(
+      readProcmonExport(
+        Buffer.concat([Buffer.from([0xfe, 0xff]), body, Buffer.from([0xdc])]),
+        all,
+      ),
+    ).rejects.toThrow("not valid utf-16be");
+  });
+
+  it("reports the line where a multiline row with the wrong width ends", async () => {
+    const reading = await readProcmonExport(
+      Buffer.from(`${header}"a.exe","Re\nad","extra"\n`),
+      all,
+    );
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "malformed",
+      line: 3,
+    });
+  });
+});

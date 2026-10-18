@@ -445,7 +445,14 @@ are still retained. Function declarations are available before their textual
 position; variable and class initializers must precede use.
 Direct and destructuring assignment, loop, update, and delete targets are checked
 through namespace aliases; unrelated member writes do not discard observed API
-identity. This static check does
+identity. The canonical Webpack default-export getter is also invalidated by
+visible writes through lexical aliases of its loader. Alias reads retain their
+captured value across later reassignments; writing an unrelated loader property
+or a different object does not invalidate the getter. An unused destructuring
+default is excluded when its source is self-contained literal data; defaults
+from mutable container references remain conservative. These checks follow local
+identifier chains and conditional alternatives, not arbitrary returned objects
+or runtime calls. This static check does
 not evaluate arbitrary call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
 

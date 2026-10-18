@@ -936,6 +936,31 @@ async function inspect(mode, input, errorCategory) {
           value.normalized_result.records.length,
         );
       }
+      const manifest = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: { kind: "retained-evidence", evidence_id: value.evidence_id },
+          view: { kind: "environment-manifest" },
+        },
+      });
+      if ((input.sensitive_values ?? []).length > 0) {
+        assert.equal(manifest.isError, true);
+        for (const literal of input.sensitive_values)
+          assert.ok(!JSON.stringify(manifest).includes(literal));
+      } else {
+        assert.notEqual(manifest.isError, true, mcpTextValue(manifest));
+        const projected = JSON.parse(mcpTextValue(manifest));
+        assert.equal(projected.normalized_result.kind, "environment-manifest");
+        assert.equal(projected.normalized_result.unknowns.length, 3);
+        for (const record of projected.normalized_result.records)
+          assert.deepEqual(Object.keys(record).sort(), [
+            "content_type",
+            "method",
+            "ordinal",
+            "path",
+            "status",
+          ]);
+      }
     }
     return value.normalized_result;
   }

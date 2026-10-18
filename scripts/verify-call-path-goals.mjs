@@ -74,6 +74,8 @@ try {
     "-O0",
     "-g",
     "-fno-inline",
+    // Keep internal calls direct on ELF; the fixture explicitly exports its entry points.
+    "-fvisibility=hidden",
     ...(process.platform === "darwin" ? ["-dynamiclib"] : ["-shared", "-fPIC"]),
     source,
     "-o",

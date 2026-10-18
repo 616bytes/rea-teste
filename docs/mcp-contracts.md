@@ -106,6 +106,13 @@ return an empty list. Roots describe the expansions actually read, so an early
 single-goal stop need not find any. Static direct-call absence never proves
 runtime unreachability: unresolved indirect calls remain a limitation.
 
+Roots belong to the provider's observed graph, not necessarily the whole program.
+For example, an ELF library may route calls through a Procedure Linkage Table
+(PLT) jump stub. If the provider keeps the stub and function body separate, the
+body can appear as a root while callers reach the stub. Use exact procedure
+addresses when stub and body names are ambiguous; tracing the body does not
+automatically include the stub's callers.
+
 For example, `{"start":"sink","goals":["export_a","export_b"],"direction":"backward"}`
 answers both selected exports with one traversal and reports any confirmed roots.
 
@@ -454,6 +461,9 @@ Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
+Once those owners confirm cleanup, composed failures recover their original
+typed primary outcome and recovery guidance. Historical composition diagnostics
+remain in `details.cleanup_history`, separate from the primary diagnostics.
 An atomic Evidence bundle or snapshot write can publish its complete output
 before staging cleanup fails. In that case, `details.published: true`,
 `details.published_path`, and `details.bytes` retain the publication receipt.
@@ -540,6 +550,12 @@ analysis runtime. These failures are reported at the operation that needs
 them. A configured provider or an endpoint alone does not establish that a
 target is supported.
 
+Composite Hopper regex searches report failures against the accepted
+`search_strings` or `search_procedures` operation. The underlying inventory
+method and request ID remain in `details.diagnostics.provider_request`, with
+the bridge error code and diagnostic type when available. Reattribution
+preserves the failure class, captured output, and live cleanup ownership.
+
 Evidence bundles, snapshots, and extraction use the paths and output behavior
 declared by their tools. Artifact extraction materializes the selected regular
 files into a fresh REA-chosen temporary directory and reports its path.
@@ -549,6 +565,25 @@ and returns its result and Evidence inline. Its owned analysis worker and privat
 temporary source files are declared as `launchesProcess` and `writesFilesystem`,
 including for a single JavaScript source. This internal analysis does not execute
 the supplied application code.
+
+## Static Ghidra bytes and source mappings
+
+`read_bytes` returns initialized analysis memory, including loader fixups, rather
+than live process memory. Check `returned_bytes` and `complete` before decoding:
+reads stop at unmapped or uninitialized bytes. Missing bytes are unknown; do not
+pad an incomplete read with zeros and treat the result as an observation.
+
+`list_segments` reports memory-block initialization and address-space facts.
+`address_to_file_offset` maps one address through the provider's source-byte
+mapping. A successful start-address mapping does not establish that an entire
+range is contiguous in the original file, or that its bytes equal analysis
+memory after loader fixups. Uninitialized, missing, and ambiguous mappings fail
+explicitly; preserve the reported failure rather than guessing an offset.
+
+For constructor-populated pointer or resource slots, a static zero is not proof
+of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
+pseudocode, retaining uncertainty about execution order and runtime values.
+These operations inspect static evidence and do not execute the target.
 
 ## Ghidra first-query deadlines and recovery
 

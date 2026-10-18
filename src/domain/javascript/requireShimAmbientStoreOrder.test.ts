@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
+import * as t from "@babel/types";
 
+import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
@@ -55,6 +57,18 @@ it.each([
   [
     "a reference stored in an ordinary data property",
     'const box={run:noop};box.run=eval;const target={box:null};target.box=box;box.run=noop;box.run("Q=other");',
+  ],
+  [
+    "an unchanged script var alias",
+    'const box={run:noop};var alias=box;box.run=eval;alias.run=noop;(0,box.run)("Q=other");',
+  ],
+  [
+    "a script var alias read before a later global rebind",
+    'const box={run:noop};var alias=box;box.run=eval;alias.run=noop;globalThis.alias={};(0,box.run)("Q=other");',
+  ],
+  [
+    "a captured script var alias before its global rebind",
+    'const box={run:noop};var alias=box;const saved=alias;box.run=eval;globalThis.alias={};saved.run=noop;(0,box.run)("Q=other");',
   ],
 ])("selects the latest definite write to %s", (_name, setup) => {
   expect(ipcAfter(setup)).toMatchObject([{ channel: "kept" }]);
@@ -157,6 +171,14 @@ it.each([
     "a store receiver reached by a subsequently discovered setter escape",
     'const box={run:noop};box.run=eval;const target={box:null};const sink={set value(value){Object.defineProperty(value,"box",{set(item){Object.freeze(item)}})}};target.box=(sink.value=target,box);box.run=noop;box.run("Q=other");',
   ],
+  [
+    "a script var receiver rebound through its global property",
+    'const box={run:noop};var alias=box;box.run=eval;globalThis.alias={};alias.run=noop;(0,box.run)("Q=other");',
+  ],
+  [
+    "a script var receiver rebound through a captured global object",
+    'const box={run:noop};var alias=box;const host=globalThis;box.run=eval;host.alias={};alias.run=noop;(0,box.run)("Q=other");',
+  ],
 ])("retains possible eval from %s", (_name, setup) => {
   expect(ipcAfter(setup)).toEqual([]);
 });
@@ -181,4 +203,36 @@ it("exports a stored ambient escape when no receiver supports replacement proofs
   expect(state.ambientEscapes.covers(["commonjs-module", "require"])).toBe(
     true,
   );
+});
+
+it.each([
+  {
+    name: "an indirect eval before the lexical capture",
+    source:
+      'let root={};(0,eval)("root=globalThis");const captured=root;captured;',
+    fresh: false,
+  },
+  {
+    name: "an indirect eval after the lexical capture",
+    source:
+      'let root={};const captured=root;(0,eval)("root=globalThis");captured;',
+    fresh: true,
+  },
+  {
+    name: "an indirect eval with unknown activation order",
+    source:
+      'let root={};replace();const captured=root;function replace(){(0,eval)("root=globalThis")}captured;',
+    fresh: false,
+  },
+])("preserves freshness timing for $name", ({ source, fresh }) => {
+  const parsed = parseJavaScriptSource(source, "bundle.js");
+  if (parsed === null) throw new Error("Expected parsed source");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const read = parsed.program.body.at(-1);
+  if (!t.isExpressionStatement(read)) throw new Error("Expected captured read");
+  expect(
+    createSemanticModuleInterop(state).isFreshObject(read.expression),
+  ).toBe(fresh);
 });

@@ -30,6 +30,10 @@ import {
   runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  semanticGlobalBindingReadMayHaveChanged,
+  semanticOpaqueBindingReadMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -76,13 +80,40 @@ interface InteropHelper {
   readonly identity: boolean;
 }
 
+const completedFreshObjectFacts =
+  new WeakSet<JavaScriptSemanticAnalysisState>();
+
+/** Derived mutation caches must distinguish provisional and final proofs. */
+export const semanticFreshObjectFactsReady = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => completedFreshObjectFacts.has(state);
+
+/** Ambient writes and deferred opaque calls must both be indexed first. */
+export const completeSemanticFreshObjectFacts = (
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  completedFreshObjectFacts.add(state);
+};
+
 /** Prove one inert namespace conversion without relaxing general assignment semantics. */
 export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
     readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+    /** A producer may supply complete provisional facts before publication. */
+    readonly bindingReadMayHaveChanged?: (
+      binding: JavaScriptSemanticBindingState,
+      read: t.Node,
+    ) => boolean;
   },
 ) => {
+  const globalBindingFacts = {
+    ambientWrites: state.ambientWrites,
+    ambientWriteEffects: state.ambientWriteEffects,
+    get complete() {
+      return completedFreshObjectFacts.has(state);
+    },
+  };
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
@@ -373,6 +404,18 @@ export const createSemanticModuleInterop = (
         return true;
       if (!t.isIdentifier(current)) return false;
       const binding = resolveSemanticBindingState(state, current, current.name);
+      if (
+        binding !== undefined &&
+        (options?.bindingReadMayHaveChanged?.(binding, current) ??
+          (semanticOpaqueBindingReadMayHaveChanged(binding, current, state) ||
+            semanticGlobalBindingReadMayHaveChanged(
+              binding,
+              current,
+              state,
+              globalBindingFacts,
+            )))
+      )
+        return false;
       const selected =
         binding === undefined
           ? undefined

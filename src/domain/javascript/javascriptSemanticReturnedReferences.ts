@@ -4,7 +4,10 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import {
+  semanticCallableResultExpressions,
+  type SemanticCallableResultExpression,
+} from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
@@ -271,10 +274,24 @@ const definitelyConstructedObject = (expression: t.Node | null): boolean => {
   );
 };
 
+const constructorReplacesReceiver = (
+  constructor: t.ClassMethod | undefined,
+  results: readonly SemanticCallableResultExpression[],
+): boolean => {
+  const result = results[0];
+  return (
+    constructor !== undefined &&
+    results.length === 1 &&
+    result !== undefined &&
+    constructor.body.body.some((statement) => statement === result.site) &&
+    definitelyConstructedObject(result.node)
+  );
+};
+
 /** Resolve possible local callable identities without claiming call execution. */
 const createSemanticCallableReferences = (
   state: JavaScriptSemanticAnalysisState,
-  mode: "callable" | "contents" | "function-values",
+  mode: "callable" | "contents" | "function-values" | "results",
 ): ((
   callee: t.Node,
   projection?: readonly (string | number | null)[],
@@ -493,13 +510,7 @@ const createSemanticCallableReferences = (
               : semanticCallableResultExpressions(constructor);
           for (const result of results)
             if (result.node !== null) value(result.node, item.path);
-          const replaced =
-            constructor !== undefined &&
-            results.length === 1 &&
-            constructor.body.body.some(
-              (statement) => statement === results[0]!.site,
-            ) &&
-            definitelyConstructedObject(results[0]!.node);
+          const replaced = constructorReplacesReceiver(constructor, results);
           if (!replaced && key !== undefined) {
             // Every inherited field is an own slot on the new object, so base
             // fields precede even a derived prototype method or accessor.
@@ -510,7 +521,8 @@ const createSemanticCallableReferences = (
             }
           }
         } else if (key === undefined) {
-          if (!prototype)
+          if (!prototype) {
+            let followBaseResults = mode === "results";
             for (const owner of lineage.classes) {
               const constructor = classTargetIndex(
                 owner,
@@ -518,8 +530,23 @@ const createSemanticCallableReferences = (
               ).constructorMethod;
               if (constructor === undefined) continue;
               value(constructor, []);
-              break;
+              // Invocation selects the first constructor, but normal derived
+              // completion preserves the object supplied by super(). Only a
+              // definite replacement can hide a possible inherited result.
+              if (!followBaseResults) break;
+              if (
+                constructorReplacesReceiver(
+                  constructor,
+                  semanticCallableResultExpressions(constructor),
+                )
+              ) {
+                followBaseResults = false;
+                break;
+              }
             }
+            if (followBaseResults && lineage.unknownBase !== undefined)
+              pending.push({ ...item, node: lineage.unknownBase });
+          }
         } else if (!select(prototype ? "prototype" : "static")) {
           if (!prototype && key === "__proto__" && node.superClass != null)
             pending.push({ ...item, node: node.superClass, path });
@@ -570,12 +597,12 @@ export const createSemanticFunctionValueReferences = (
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
 ): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
-  const targets = createSemanticCallableTargets(state);
+  const targets = createSemanticCallableReferences(state, "results");
   const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
   return (callee) => {
     const prior = results.get(callee);
     if (prior !== undefined) return prior;
-    const references = targets(callee).flatMap((callable) =>
+    const references = targets(callee).flatMap(({ node: callable }) =>
       semanticCallableResultExpressions(callable).flatMap(
         ({ node, delegated }) =>
           node === null ? [] : [{ node, projection: delegated ? [null] : [] }],

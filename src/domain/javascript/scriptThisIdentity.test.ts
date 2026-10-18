@@ -197,3 +197,23 @@ describe("source-visible function receivers", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("inherited constructor result receivers", () => {
+  it.each([
+    "class B{constructor(){return globalThis}}class C extends B{constructor(){super()}}class D extends C{field=(this.Q=other)}new D();",
+    "class B{constructor(){return globalThis}}class C extends B{constructor(){super()}}class D extends C{constructor(){super();this.Q=other}}new D();",
+    "class B{constructor(){return globalThis}}class C extends B{constructor(){return super()}}class D extends C{field=(this.Q=other)}new D();",
+    "class B{constructor(){return globalThis}}class C extends B{constructor(){super();if(flag)return {}}}class D extends C{field=(this.Q=other)}new D();",
+    "class B{constructor(){return globalThis}}const Base=flag?B:class{};class C extends Base{constructor(){super()}}class D extends C{field=(this.Q=other)}new D();",
+  ])("retains a possible superclass object through %s", (write) => {
+    expect(analyze(`${SHIM}${write}${USE}`).electron.ipc).toEqual([]);
+  });
+
+  it.each([
+    "class B{constructor(){return globalThis}}class C extends B{constructor(){super();return {}}}class D extends C{field=(this.Q=other)}new D();",
+    "class B{constructor(){return globalThis}}class C extends B{constructor(){return {}}}class D extends C{field=(this.Q=other)}new D();",
+    "class B{}class C extends B{constructor(){super()}}class D extends C{field=(this.Q=other)}new D();",
+  ])("preserves a distinct constructed receiver through %s", (write) => {
+    expect(analyze(`${SHIM}${write}${USE}`).electron.ipc).toHaveLength(1);
+  });
+});

@@ -1,6 +1,7 @@
 import {
   createSemanticOpaqueGlobalObserver,
   indexSemanticOpaqueEffects,
+  indexSemanticPossibleGlobalEvalRoot,
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
   semanticOpaqueGlobalMayHaveChanged,
@@ -179,7 +180,8 @@ function* indexSemanticAmbientWritesSteps(
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
-    (ambientPaths) => createSemanticOpaqueGlobalObserver(state, ambientPaths),
+    (ambientPaths, retainGlobal) =>
+      createSemanticOpaqueGlobalObserver(state, ambientPaths, retainGlobal),
   );
   if (state.opaqueEffects.globalSites.length > 0)
     clearSemanticValueCaches(state);
@@ -1100,14 +1102,6 @@ const createState = (
   };
 };
 
-const globalEvalRoots = new Set([
-  "eval",
-  "globalThis",
-  "global",
-  "window",
-  "self",
-]);
-
 function* collectDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -1204,10 +1198,7 @@ function* collectDefinitionsSteps(
         state,
       });
       bindInnerDeclaration(node, parent, scope, state);
-      // Every supported global eval origin starts with one of these decoded
-      // identifiers, including computed properties and destructured aliases.
-      if (t.isIdentifier(node) && globalEvalRoots.has(node.name))
-        state.opaqueEffects.mayReferenceGlobalEval = true;
+      indexSemanticPossibleGlobalEvalRoot(node, state);
       if (
         t.isCallExpression(node) &&
         t.isIdentifier(unwrapJavaScriptExpression(node.callee).node, {

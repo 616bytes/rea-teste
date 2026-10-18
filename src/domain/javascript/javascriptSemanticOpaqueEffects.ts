@@ -67,6 +67,30 @@ export interface JavaScriptOpaqueScopeEffects {
   readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
 }
 
+const globalEvalRoots = new Set([
+  "eval",
+  "globalThis",
+  "global",
+  "window",
+  "self",
+]);
+const possibleGlobalEvalRoots = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  t.Node[]
+>();
+
+/** Retain cheap origins in the declaration pass for capture-aware phase checks. */
+export const indexSemanticPossibleGlobalEvalRoot = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  if (!t.isIdentifier(node) || !globalEvalRoots.has(node.name)) return;
+  state.opaqueEffects.mayReferenceGlobalEval = true;
+  const roots = possibleGlobalEvalRoots.get(state) ?? [];
+  roots.push(node);
+  possibleGlobalEvalRoots.set(state, roots);
+};
+
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
     node: t.CallExpression;
@@ -102,6 +126,11 @@ export const indexSemanticOpaqueEffects = (
 export const createSemanticOpaqueGlobalObserver = (
   state: JavaScriptSemanticAnalysisState,
   ambientPaths: ReturnType<typeof createAmbientPathResolver>,
+  retainGlobal: (node: t.CallExpression | t.OptionalCallExpression) => void = (
+    node,
+  ) => {
+    state.opaqueEffects.globalSites.push(node);
+  },
 ): ((node: t.Node) => void) | undefined => {
   if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
   let invocationSite: t.Node | undefined;
@@ -122,7 +151,7 @@ export const createSemanticOpaqueGlobalObserver = (
     invocationSite = node;
     const invocation = interop.intrinsicInvocation(node);
     if (invocation?.path.join(".") === "intrinsic.global.eval")
-      state.opaqueEffects.globalSites.push(node);
+      retainGlobal(node);
   };
 };
 
@@ -262,10 +291,20 @@ export const semanticOpaqueBindingReadMayHaveChanged = (
 /** Global eval can rebind mutable script bindings, including lexical lets.
  * Script vars also share storage with own global properties. Consume the
  * ambient owner's canonical writes; CommonJS and module bindings are local. */
+export type SemanticGlobalBindingFacts = Pick<
+  JavaScriptSemanticAnalysisState,
+  "ambientWrites" | "ambientWriteEffects"
+> & {
+  /** False while global writes or deferred global eval are still unexamined. */
+  readonly complete?: boolean;
+  readonly opaqueGlobalSites?: readonly t.Node[];
+};
+
 export const semanticGlobalBindingReadMayHaveChanged = (
   binding: JavaScriptSemanticBindingState,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  facts: SemanticGlobalBindingFacts = state,
 ): boolean => {
   if (
     !semanticBindingCanBeRebound(binding) ||
@@ -273,10 +312,24 @@ export const semanticGlobalBindingReadMayHaveChanged = (
     javaScriptRuntimeContext(state.program) !== "unknown"
   )
     return false;
-  if (semanticOpaqueGlobalMayHaveChanged(read, state)) return true;
+  if (
+    facts.complete === false &&
+    (binding.declarationKinds.has("var") ||
+      (possibleGlobalEvalRoots
+        .get(state)
+        ?.some((root) => semanticEffectTiming(read, root, state) !== "after") ??
+        state.opaqueEffects.mayReferenceGlobalEval))
+  )
+    return true;
+  if (
+    (facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
+      (effect) => semanticEffectTiming(read, effect, state) !== "after",
+    )
+  )
+    return true;
   if (
     !binding.declarationKinds.has("var") ||
-    !state.ambientWrites.covers(["global", binding.name])
+    !facts.ambientWrites.covers(["global", binding.name])
   )
     return false;
   const initializer =
@@ -284,7 +337,7 @@ export const semanticGlobalBindingReadMayHaveChanged = (
       ? binding.initializers[0]?.node
       : undefined;
   const bindingPath = ["global", binding.name];
-  return state.ambientWriteEffects.some(
+  return facts.ambientWriteEffects.some(
     ({ path, node }) =>
       path.length <= 2 &&
       path.every((key, index) =>

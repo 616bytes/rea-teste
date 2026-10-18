@@ -166,6 +166,27 @@ const ordinary = (path: Path, ownsPrototype = true): FunctionValue => ({
   external: path[0] === "global" || path[0] === "commonjs-module",
 });
 
+const MODULE_CONSTRUCTOR = ordinary(["commonjs-module", "constructor"]);
+const MODULE_REQUIRE = ordinary(["commonjs-module", "__proto__", "require"]);
+
+// Main can be absent or belong to another wrapper. Its instance identity stays
+// separate; only selected inherited constructor/prototype values are shared.
+const MAIN_MODULE: FunctionValue = {
+  path: ["global", "require", "main"],
+  kind: "object-instance",
+  owner: MODULE_CONSTRUCTOR,
+};
+
+// Typed slots and inherited aliases are not ordinary functions at their nominal
+// path. Exact and wildcard selections consume this same member inventory.
+const VALUE_MEMBERS: Readonly<
+  Record<string, Readonly<Record<string, FunctionValue>>>
+> = {
+  "global.require": { main: MAIN_MODULE },
+  "global.require.main": { require: MODULE_REQUIRE },
+  "commonjs-module.constructor.prototype": { require: MODULE_REQUIRE },
+};
+
 const hasFunctionHelpers = (value: FunctionValue): boolean =>
   [
     "function",
@@ -205,6 +226,8 @@ const propertyValue = (
   value: FunctionValue,
   key: string,
 ): FunctionValue | undefined => {
+  const members = VALUE_MEMBERS[value.path.join(".")];
+  if (members !== undefined && Object.hasOwn(members, key)) return members[key];
   if (INVOCATION_HELPERS.includes(key) && hasFunctionHelpers(value))
     return ordinary(["global", "Function", "prototype", key], false);
   if (hasFunctionHelpers(value) && (key === "name" || key === "length"))
@@ -329,7 +352,7 @@ const rootValue = (
       };
     if (path[end] === "constructor" && end <= 2)
       return {
-        value: ordinary(["commonjs-module", "constructor"]),
+        value: MODULE_CONSTRUCTOR,
         length: end + 1,
       };
     if (path[end] === "constructor" && end === 3)
@@ -355,6 +378,7 @@ const selectedValues = (
               "__proto__",
               "prototype",
               ...(FUNCTION_MEMBERS[value.path.join(".")] ?? []),
+              ...Object.keys(VALUE_MEMBERS[value.path.join(".")] ?? {}),
             ]
           : [key];
       if (key === null && hasOpenMembers(value))

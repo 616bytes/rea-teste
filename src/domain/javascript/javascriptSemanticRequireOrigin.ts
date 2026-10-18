@@ -15,6 +15,7 @@ import {
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
+  semanticIntrinsicMutationTargets,
 } from "./javascriptElectronMemberWrites.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
@@ -40,9 +41,13 @@ import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
+  semanticEffectFollowsInitialCapture,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticFreshObjectFactsReady,
+} from "./javascriptModuleInterop.js";
 import {
   INVOCATION_HELPERS,
   semanticFunctionValueIdentity,
@@ -85,7 +90,7 @@ export const semanticRequireLoaderAt = (
   if (binding === undefined) {
     if (semanticResolutionBlocked(state, loader, "require")) return "unknown";
     return (state.ambientBindingWrites.get("require") ?? []).some(
-      (write) => semanticEffectTiming(node, write, state) !== "after",
+      (write) => !semanticEffectFollowsInitialCapture(node, write, state),
     )
       ? "unknown"
       : "commonjs-loader";
@@ -145,11 +150,11 @@ const commonJsWrapperBindingHasPriorWrite = (
     );
   return (
     writes.some(
-      (write) => semanticEffectTiming(site, write, state) !== "after",
+      (write) => !semanticEffectFollowsInitialCapture(site, write, state),
     ) ||
     declarationInitializers.some(
       (initializer) =>
-        semanticEffectTiming(site, initializer, state) !== "after",
+        !semanticEffectFollowsInitialCapture(site, initializer, state),
     )
   );
 };
@@ -293,6 +298,7 @@ const moduleRequireWrites = new WeakMap<
   {
     readonly ambientCount: number;
     readonly ambientSourcesReady: boolean;
+    readonly freshObjectFactsReady: boolean;
     readonly opaqueScopeCount: number;
     readonly writes: readonly ModuleDelegateWrite[];
   }
@@ -316,10 +322,12 @@ const writesModuleRequire = (
   const cached = moduleRequireWrites.get(state);
   const ambientCount = state.ambientWriteEffects.length;
   const ambientSourcesReady = semanticAmbientIdentitySourcesReady(state);
+  const freshObjectFactsReady = semanticFreshObjectFactsReady(state);
   const opaqueScopeCount = state.opaqueEffects.byScope.size;
   if (
     cached?.ambientCount === ambientCount &&
     cached.ambientSourcesReady === ambientSourcesReady &&
+    cached.freshObjectFactsReady === freshObjectFactsReady &&
     cached.opaqueScopeCount === opaqueScopeCount
   )
     return cached.writes;
@@ -328,6 +336,7 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, {
     ambientCount,
     ambientSourcesReady,
+    freshObjectFactsReady,
     opaqueScopeCount,
     writes: [],
   });
@@ -504,15 +513,16 @@ const writesModuleRequire = (
         const method = invocation?.path?.at(-1);
         const args = invocation?.arguments;
         if (
+          invocation !== undefined &&
           ((owner === "Object" && method === "defineProperty") ||
             (owner === "Reflect" &&
               ["defineProperty", "set", "deleteProperty"].includes(
                 method ?? "",
               ))) &&
-          (isModuleObject(args?.[0] ?? t.nullLiteral()) ||
-            (owner === "Reflect" &&
-              method === "set" &&
-              isModuleObject(args?.[3] ?? t.nullLiteral())))
+          semanticIntrinsicMutationTargets(
+            invocation,
+            interop.isFreshObject,
+          ).some((target) => target !== undefined && isModuleObject(target))
         ) {
           const key = interop.staticString(args?.[1]);
           if (
@@ -553,6 +563,7 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, {
     ambientCount,
     ambientSourcesReady,
+    freshObjectFactsReady,
     opaqueScopeCount,
     writes,
   });
@@ -738,11 +749,7 @@ export const semanticHostRequireModuleWritesIntact = (
 ): boolean =>
   !writesModuleRequire(state).some(
     ({ node: write }) =>
-      !semanticTopLevelEffectFollowsCapture(
-        capture,
-        write,
-        state.parentsByNode,
-      ),
+      !semanticEffectFollowsInitialCapture(capture, write, state),
   );
 
 const isModuleDelegateWrite = (
@@ -797,12 +804,7 @@ export const semanticHostRequireWritesIntact = (
 ): boolean =>
   semanticHostRequireModuleWritesIntact(capture, state) &&
   !(state.ambientBindingWrites.get("require") ?? []).some(
-    (write) =>
-      !semanticTopLevelEffectFollowsCapture(
-        capture,
-        write,
-        state.parentsByNode,
-      ),
+    (write) => !semanticEffectFollowsInitialCapture(capture, write, state),
   );
 
 /**
@@ -869,11 +871,11 @@ const hostLoaderPath = (
         normalized.every((key, index) =>
           semanticPropertyPathKeyMatches(key, path[index]!),
         ) &&
-        semanticEffectTiming(
+        !semanticEffectFollowsInitialCapture(
           captures[Math.min(normalized.length - 1, captures.length - 1)]!,
           effect.node,
           state,
-        ) !== "after"
+        )
       );
     });
   };
@@ -986,7 +988,7 @@ const hostLoaderPath = (
             undefined &&
             !commonJsWrapperBindingHasPriorWrite(root, binding, state))) &&
         !(state.ambientBindingWrites.get("module") ?? []).some(
-          (write) => semanticEffectTiming(root, write, state) !== "after",
+          (write) => !semanticEffectFollowsInitialCapture(root, write, state),
         )
       ) {
         if (selected.length === 0) return [HOST_MODULE];
@@ -1023,11 +1025,11 @@ const hostLoaderPath = (
             effect.path.every((key, index) =>
               semanticPropertyPathKeyMatches(key, String(selected[index]!.key)),
             ) &&
-            semanticEffectTiming(
+            !semanticEffectFollowsInitialCapture(
               selected[Math.max(0, effect.path.length - 1)]?.capture ?? root,
               effect.node,
               state,
-            ) !== "after",
+            ),
         )
       )
         return invalid;
@@ -1041,7 +1043,7 @@ const hostLoaderPath = (
       ) {
         if (
           (state.bindingWrites.get(binding.bindingId) ?? []).some(
-            (write) => semanticEffectTiming(root, write, state) !== "after",
+            (write) => !semanticEffectFollowsInitialCapture(root, write, state),
           )
         )
           return undefined;
@@ -1190,7 +1192,7 @@ export const semanticRequireOrigin = (
       writesModuleRequire(state).some(
         ({ node: write, delegate }) =>
           delegate === "_load" &&
-          semanticEffectTiming(current, write, state) !== "after",
+          !semanticEffectFollowsInitialCapture(current, write, state),
       )
     )
       return undefined;
@@ -1198,7 +1200,7 @@ export const semanticRequireOrigin = (
     writesModuleRequire(state).some(
       ({ node: write, shared }) =>
         (kind === "wrapper" || shared) &&
-        semanticEffectTiming(current, write, state) !== "after",
+        !semanticEffectFollowsInitialCapture(current, write, state),
     )
   )
     return undefined;

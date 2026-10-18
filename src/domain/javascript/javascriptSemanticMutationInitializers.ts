@@ -10,11 +10,14 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import type {
-  JavaScriptSemanticBindingState,
-  JavaScriptSemanticAnalysisState,
-  JavaScriptSemanticEffectTiming,
+import {
+  resolveSemanticBindingState,
+  semanticResolutionBlocked,
+  type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticEffectTiming,
 } from "./javascriptSemanticState.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 interface StatementPosition {
   readonly body: readonly t.Statement[];
@@ -248,6 +251,124 @@ export const semanticEffectTiming = (
   if (semanticEffectFollowsReference(effect, site, state.parentsByNode))
     return "before";
   return "unknown";
+};
+
+const initialCapturePrefixes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakSet<t.Node>
+>();
+
+/** Values selected before the first potentially invoking operation. A call is
+ * included only after its operands; property reads, destructuring, coercions,
+ * control flow and unknown syntax stop the proof. Function bodies stay deferred. */
+const initialCapturePrefix = (
+  state: JavaScriptSemanticAnalysisState,
+): WeakSet<t.Node> => {
+  const cached = initialCapturePrefixes.get(state);
+  if (cached !== undefined) return cached;
+  const completed = new WeakSet<t.Node>();
+  initialCapturePrefixes.set(state, completed);
+  // Module dependencies can reenter exported callables before the body starts.
+  if (state.program.sourceType !== "script") return completed;
+  type Task =
+    | { readonly kind: "visit"; readonly node: t.Node }
+    | { readonly kind: "complete"; readonly node: t.Node; readonly stop?: true }
+    | { readonly kind: "stop" };
+  const pending: Task[] = state.program.body.toReversed().map((node) => ({
+    kind: "visit",
+    node,
+  }));
+  while (pending.length > 0) {
+    const task = pending.pop()!;
+    if (task.kind === "stop") break;
+    if (task.kind === "complete") {
+      completed.add(task.node);
+      if (task.stop === true) break;
+      continue;
+    }
+    const { node } = task;
+    const unwrapped = unwrapJavaScriptExpression(node).node;
+    if (unwrapped !== node) {
+      pending.push(
+        { kind: "complete", node },
+        { kind: "visit", node: unwrapped },
+      );
+      continue;
+    }
+    if (
+      (t.isLiteral(node) &&
+        (!t.isTemplateLiteral(node) || node.expressions.length === 0)) ||
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node) ||
+      t.isEmptyStatement(node)
+    ) {
+      completed.add(node);
+      continue;
+    }
+    if (t.isIdentifier(node)) {
+      const local = resolveSemanticBindingState(state, node, node.name);
+      const wrapper =
+        javaScriptRuntimeContext(state.program) === "commonjs" &&
+        [
+          "require",
+          "module",
+          "exports",
+          "__filename",
+          "__dirname",
+          "arguments",
+        ].includes(node.name);
+      if (
+        (local === undefined && !wrapper) ||
+        semanticResolutionBlocked(state, node, node.name)
+      )
+        break;
+      completed.add(node);
+      continue;
+    }
+    if (t.isVariableDeclaration(node)) {
+      if (!["var", "let", "const"].includes(node.kind)) break;
+      for (const declaration of node.declarations.toReversed())
+        pending.push({ kind: "visit", node: declaration });
+    } else if (t.isVariableDeclarator(node)) {
+      if (!t.isIdentifier(node.id)) pending.push({ kind: "stop" });
+      if (node.init != null) pending.push({ kind: "visit", node: node.init });
+    } else if (t.isExpressionStatement(node))
+      pending.push({ kind: "visit", node: node.expression });
+    else if (t.isSequenceExpression(node))
+      for (const expression of node.expressions.toReversed())
+        pending.push({ kind: "visit", node: expression });
+    else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+      pending.push({ kind: "complete", node, stop: true });
+      for (const argument of node.arguments.toReversed())
+        pending.push({ kind: "visit", node: argument });
+      pending.push({ kind: "visit", node: node.callee });
+    } else break;
+  }
+  return completed;
+};
+
+/** Extend ordinary order only for captures before local code can first run.
+ * This does not infer invocation order from a function declaration's position. */
+export const semanticEffectFollowsInitialCapture = (
+  capture: t.Node,
+  effect: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (semanticEffectTiming(capture, effect, state) === "after") return true;
+  let child = effect;
+  while (child !== undefined) {
+    if (t.isDecorator(child)) return false;
+    const parent = state.parentsByNode.get(child);
+    if (
+      t.isFunction(parent) &&
+      (parent.body === child ||
+        parent.params.some((parameter) => parameter === child))
+    )
+      return initialCapturePrefix(state).has(capture);
+    child = parent;
+  }
+  return false;
 };
 
 const semanticEnclosingIteration = (

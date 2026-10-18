@@ -9,8 +9,13 @@ import {
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
+  semanticIntrinsicMutationTargets,
+  type JavaScriptIntrinsicMutationRecipient,
 } from "./javascriptElectronMemberWrites.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  completeSemanticFreshObjectFacts,
+  createSemanticModuleInterop,
+} from "./javascriptModuleInterop.js";
 import {
   isUnshadowedGlobal,
   resolveSemanticBindingState,
@@ -49,7 +54,16 @@ import {
   createSemanticReturnedReferences,
 } from "./javascriptSemanticReturnedReferences.js";
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
-import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticArrayIndex,
+  SemanticPropertyPathCoverage,
+} from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticBindingCanBeRebound,
+  semanticGlobalBindingReadMayHaveChanged,
+  semanticOpaqueBindingReadMayHaveChanged,
+  type SemanticGlobalBindingFacts,
+} from "./javascriptSemanticOpaqueEffects.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -896,6 +910,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
   createOpaqueObserver?: (
     paths: ReturnType<typeof createAmbientPathResolver>,
+    retainGlobal?: (node: t.CallExpression | t.OptionalCallExpression) => void,
   ) => ((node: t.Node) => void) | undefined,
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
@@ -907,7 +922,11 @@ export function* indexJavaScriptAmbientWritesSteps(
     t.Node,
     Map<string, SemanticIterationSource[]>
   >();
-  const writes: { node: t.Node; path: AmbientPath }[] = [];
+  const writes: {
+    node: t.Node;
+    path: AmbientPath;
+    recipient?: JavaScriptIntrinsicMutationRecipient;
+  }[] = [];
   const targets: { node: t.Node; capture: t.Node }[] = [];
   const escapes: {
     node: t.Node;
@@ -977,8 +996,7 @@ export function* indexJavaScriptAmbientWritesSteps(
             semanticStaticPropertyKey(
               source.target.property,
               source.target.computed,
-            ) !== null &&
-            interop.isFreshObject(source.target.object)
+            ) !== null
           )
             replacementSources.push(source);
           // Direct primitive values cannot retain an ambient object identity.
@@ -1000,8 +1018,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     interop.intrinsicInvocation,
     interop.staticString,
     interop.isFreshObject,
-    (node, path) => {
-      writes.push({ node, path });
+    (node, path, recipient) => {
+      writes.push({
+        node,
+        path,
+        ...(recipient === undefined ? {} : { recipient }),
+      });
     },
     (node, invocation) => {
       opaqueCalls?.add(node);
@@ -1087,6 +1109,16 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
+  // Possible eval sites are proof inputs before pruning, not published facts.
+  // The observer reuses its invocation owner and resolves final sites below.
+  const weakGlobalSites = [...state.opaqueEffects.globalSites];
+  const observeWeakOpaqueInvocation = createOpaqueObserver?.(
+    ambientWrites,
+    (node) => {
+      weakGlobalSites.push(node);
+    },
+  );
+  for (const node of opaqueCalls ?? []) observeWeakOpaqueInvocation?.(node);
   type DataSlot = "own" | "missing" | "unknown";
   const ordinaryContainers = new WeakMap<t.Node, boolean>();
   const dataSlots = new WeakMap<t.Node, Map<string, DataSlot>>();
@@ -1137,6 +1169,70 @@ export function* indexJavaScriptAmbientWritesSteps(
     });
   let weakTargets: ReturnType<typeof resolveWeakTargets> | undefined;
   const completedTargets = () => (weakTargets ??= resolveWeakTargets());
+  let weakBindingFacts: SemanticGlobalBindingFacts | undefined;
+  const completedBindingFacts = (): SemanticGlobalBindingFacts => {
+    if (weakBindingFacts !== undefined) return weakBindingFacts;
+    const facts: SemanticGlobalBindingFacts = {
+      ambientWrites: new SemanticPropertyPathCoverage(),
+      ambientWriteEffects: [],
+      opaqueGlobalSites: weakGlobalSites,
+      complete:
+        observeWeakOpaqueInvocation !== undefined ||
+        !state.opaqueEffects.mayReferenceGlobalEval,
+    };
+    const resolved = completedTargets();
+    for (const { node, path } of writes) {
+      const target =
+        path[0] === "pending-target" ? resolved[Number(path[1])] : undefined;
+      const paths =
+        target === undefined
+          ? [path]
+          : target.paths.map((identity) => [...identity, ...path.slice(2)]);
+      for (const identity of paths) {
+        facts.ambientWrites.retain(identity);
+        facts.ambientWriteEffects.push({ path: identity, node });
+      }
+    }
+    weakBindingFacts = facts;
+    return facts;
+  };
+  const proofInterop = createSemanticModuleInterop(state, {
+    intrinsicPath: interop.intrinsicPath,
+    bindingReadMayHaveChanged: (binding, read) =>
+      semanticOpaqueBindingReadMayHaveChanged(binding, read, state) ||
+      (semanticBindingCanBeRebound(binding) &&
+        semanticGlobalBindingReadMayHaveChanged(
+          binding,
+          read,
+          state,
+          completedBindingFacts(),
+        )),
+  });
+  // Early recipient candidates remain in weak proof inputs. Refine the parsed
+  // invocation once before publishing or interpreting its possible writes.
+  const selectedRecipients = new WeakMap<
+    JavaScriptIntrinsicMutationRecipient["invocation"],
+    ReadonlySet<t.Node | undefined>
+  >();
+  const activeWrites = writes.filter(({ recipient }) => {
+    if (recipient === undefined) return true;
+    let selected = selectedRecipients.get(recipient.invocation);
+    if (selected === undefined) {
+      selected = new Set(
+        semanticIntrinsicMutationTargets(
+          recipient.invocation,
+          proofInterop.isFreshObject,
+        ),
+      );
+      selectedRecipients.set(recipient.invocation, selected);
+    }
+    return selected.has(recipient.target);
+  });
+  const activeTargetIds = new Set(
+    activeWrites.flatMap(({ path }) =>
+      path[0] === "pending-target" ? [Number(path[1])] : [],
+    ),
+  );
   let memberWrites:
     | WeakMap<t.Node, Map<string | null, Set<t.Node>>>
     | undefined;
@@ -1144,7 +1240,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     if (memberWrites === undefined) {
       memberWrites = new WeakMap();
       const resolved = completedTargets();
-      for (const { node, path } of writes) {
+      for (const { node, path } of activeWrites) {
         if (path[0] !== "pending-target") continue;
         for (const [owner, projection] of resolved[Number(path[1])]?.local ??
           []) {
@@ -1175,7 +1271,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     readonly guards: readonly ReceiverSlot[];
   }
   const freshRoot = (node: t.Node, capture: t.Node): t.Node | null => {
-    if (!interop.isFreshObject(node)) return null;
+    if (!proofInterop.isFreshObject(node)) return null;
     const identities = new Map<t.Node, AmbientProjection>();
     const ambient = ambientWrites(node, capture, false, [], (root, path) => {
       identities.set(
@@ -1353,11 +1449,13 @@ export function* indexJavaScriptAmbientWritesSteps(
     // Existing write targets also own delete/prototype evidence. Resolve each
     // target once here, rather than scanning all writes for every stored slot.
     const weakTargets = completedTargets();
-    for (const [index, target] of weakTargets.entries())
+    for (const [index, target] of weakTargets.entries()) {
+      if (!activeTargetIds.has(index)) continue;
       for (const path of target.local.values())
         if (path === undefined || path.includes("__proto__"))
           retainPrototypeEffect(targets[index]!.capture);
-    for (const { node, path } of writes) {
+    }
+    for (const { node, path } of activeWrites) {
       const target =
         path[0] === "pending-target" ? weakTargets[Number(path[1])] : undefined;
       const paths =
@@ -1438,7 +1536,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   const targetPaths = targets.map(({ node, capture }) =>
     ambientWrites(node, capture),
   );
-  for (const { node, path } of writes) {
+  for (const { node, path } of activeWrites) {
     const resolvedTargets =
       path[0] === "pending-target" ? targetPaths[Number(path[1])] : undefined;
     const paths =
@@ -1465,6 +1563,11 @@ export function* indexJavaScriptAmbientWritesSteps(
   // Opaque callees can be stored after container creation. Resolve them with
   // the completed store facts instead of a second resolver without those facts.
   for (const node of opaqueCalls ?? []) observeOpaqueInvocation?.(node);
+  if (
+    observeOpaqueInvocation !== undefined ||
+    !state.opaqueEffects.mayReferenceGlobalEval
+  )
+    completeSemanticFreshObjectFacts(state);
 }
 
 /**

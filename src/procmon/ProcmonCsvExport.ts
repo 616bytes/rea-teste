@@ -87,12 +87,28 @@ class CsvCursor {
 
   #quoted(): string {
     // Join bounded batches of segments: appending once per doubled quote
-    // would allocate many times the cell's size before any budget check.
+    // would allocate many times the cell's size. A cell longer than the
+    // output budget can never be reported, so keep only one character past
+    // it: the event window still rejects it, and unselected cells cost no
+    // more than the budget.
     const start = this.index + 1;
+    const keep = PROCMON_EXPORT_LIMITS.output_bytes + 1;
     let at = start;
     let value = "";
     let parts: string[] = [];
+    let kept = 0;
     let close: number;
+    const append = (segment: string): void => {
+      if (kept >= keep) return;
+      const piece =
+        segment.length > keep - kept ? segment.slice(0, keep - kept) : segment;
+      parts.push(piece);
+      kept += piece.length;
+      if (parts.length === SEGMENTS_PER_JOIN) {
+        value += parts.join("");
+        parts = [];
+      }
+    };
     for (;;) {
       close = this.text.indexOf('"', at);
       // Reading stops at the end of the export, not where the row began.
@@ -103,14 +119,10 @@ class CsvCursor {
           this.line + countLineBreaks(this.text.slice(start)),
         );
       if (this.text[close + 1] !== '"') break;
-      parts.push(this.text.slice(at, close + 1));
+      append(this.text.slice(at, close + 1));
       at = close + 2;
-      if (parts.length === SEGMENTS_PER_JOIN) {
-        value += parts.join("");
-        parts = [];
-      }
     }
-    parts.push(this.text.slice(at, close));
+    append(this.text.slice(at, close));
     value += parts.join("");
     this.line += countLineBreaks(this.text.slice(start, close));
     this.index = close + 1;

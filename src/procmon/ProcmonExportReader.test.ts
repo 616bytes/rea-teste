@@ -384,3 +384,24 @@ describe("readProcmonExport review of a212505", () => {
     expect(reading.events[0]?.operation).toBe('"'.repeat(quotes));
   });
 });
+
+describe("readProcmonExport review of 0c36ba2", () => {
+  // Nine Mi doubled quotes unescape to more characters than the budget allows.
+  const cell = '""'.repeat(9 * 1024 * 1024);
+  const bytes = Buffer.from(`${header}"a.exe","${cell}"\n"b.exe","Read"\n`);
+
+  it("still rejects an over-budget quoted cell on the selected page", async () => {
+    await expect(readProcmonExport(bytes, selection)).rejects.toThrow(
+      "Event 1 alone exceeds",
+    );
+  });
+
+  it("skips an over-budget quoted cell outside the selected page", async () => {
+    const reading = await readProcmonExport(bytes, {
+      ...selection,
+      event_offset: 1,
+    });
+    expect(reading.events.map((event) => event.operation)).toEqual(["Read"]);
+    expect(reading.coverage).toEqual({ status: "complete" });
+  });
+});

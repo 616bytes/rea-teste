@@ -208,6 +208,43 @@ describe("JebProvider observations and failures", () => {
     expect(result.error.message).toContain("does not reference an existing");
   });
 
+  it("derives partial coverage only from a full engine page", async () => {
+    const provider = providerWith(
+      scriptedConnection({
+        get_client_information: {
+          success: true,
+          version: "5.48.0",
+          gui_client: false,
+        },
+        list_units: {
+          success: true,
+          units: Array.from({ length: 3 }, (_, index) => ({
+            unit_path: `a/class${index}.dex`,
+            unit_type: "dex",
+          })),
+        },
+      }),
+    );
+    const full = await provider.execute({
+      operation: "list_jeb_units",
+      input: { count: 3, index: 0 },
+    });
+    if (!full.ok) throw full.error;
+    expect(
+      jebResultSchemas.list_jeb_units.parse(full.value.result).coverage,
+    ).toBe("partial");
+    const last = await provider.execute({
+      operation: "list_jeb_units",
+      input: { count: 4, index: 0 },
+    });
+    if (!last.ok) throw last.error;
+    expect(
+      jebResultSchemas.list_jeb_units.parse(last.value.result).coverage,
+    ).toBe("complete");
+  });
+});
+
+describe("JebProvider project open refusal error handling", () => {
   it("preserves caller-selected artifact path on open_jeb_project refusal", async () => {
     const provider = providerWith(
       scriptedConnection({
@@ -261,41 +298,6 @@ describe("JebProvider observations and failures", () => {
     const error = result.error as AnalysisUnsupportedTargetError;
     expect(error.path).toBe("/targets/Other.apk");
     expect(error.message).toContain("/targets/Other.apk");
-  });
-
-  it("derives partial coverage only from a full engine page", async () => {
-    const provider = providerWith(
-      scriptedConnection({
-        get_client_information: {
-          success: true,
-          version: "5.48.0",
-          gui_client: false,
-        },
-        list_units: {
-          success: true,
-          units: Array.from({ length: 3 }, (_, index) => ({
-            unit_path: `a/class${index}.dex`,
-            unit_type: "dex",
-          })),
-        },
-      }),
-    );
-    const full = await provider.execute({
-      operation: "list_jeb_units",
-      input: { count: 3, index: 0 },
-    });
-    if (!full.ok) throw full.error;
-    expect(
-      jebResultSchemas.list_jeb_units.parse(full.value.result).coverage,
-    ).toBe("partial");
-    const last = await provider.execute({
-      operation: "list_jeb_units",
-      input: { count: 4, index: 0 },
-    });
-    if (!last.ok) throw last.error;
-    expect(
-      jebResultSchemas.list_jeb_units.parse(last.value.result).coverage,
-    ).toBe("complete");
   });
 });
 

@@ -71,12 +71,22 @@ export const registerCacheCommands = (
         .describe("Remove entries whose manifest or digest is corrupt"),
     }),
     run: ({ options }) =>
-      logCliCommand(logger, CLI_COMMANDS.cacheVerify, async () => {
-        const resolved = resolve("Cache verification failed");
-        return "error" in resolved
-          ? resolved
-          : await verifyCache(resolved, options.repair);
-      }),
+      logCliCommand(
+        logger,
+        CLI_COMMANDS.cacheVerify,
+        async () => {
+          const resolved = resolve("Cache verification failed");
+          return "error" in resolved
+            ? resolved
+            : await verifyCache(resolved, options.repair);
+        },
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          "failed_repairs" in value &&
+          Array.isArray(value.failed_repairs) &&
+          value.failed_repairs.length > 0,
+      ),
   });
 };
 
@@ -215,10 +225,15 @@ const verifyCache = async (
   const results = verified.value;
   const invalid = results.filter((entry) => !entry.ok);
   const repaired: string[] = [];
+  const failed: {
+    readonly key: string;
+    readonly error: GhidraProjectCacheError;
+  }[] = [];
   if (repair)
     for (const entry of invalid) {
       const removed = await store.remove(entry.key);
-      if (removed.ok && removed.value) repaired.push(entry.key);
+      if (!removed.ok) failed.push({ key: entry.key, error: removed.error });
+      else if (removed.value) repaired.push(entry.key);
     }
   return {
     cache_directory: config.directory,
@@ -229,5 +244,11 @@ const verifyCache = async (
       issues: entry.issues,
     })),
     repaired,
+    failed_repairs: failed.map(({ key, error }) => ({
+      key,
+      reason: error.reason,
+      message: error.message,
+      ...(error.path === undefined ? {} : { path: error.path }),
+    })),
   };
 };

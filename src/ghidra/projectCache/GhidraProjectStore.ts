@@ -246,7 +246,8 @@ export class GhidraProjectStore {
             { flag: "wx", mode: 0o600 },
           );
           await rename(stagingPath, input.reservation.entryPath);
-          await this.prune(input.signal);
+          const pruned = await this.prune(input.signal);
+          if (!pruned.ok) return err(pruned.error);
           return ok({ published: true });
         },
       );
@@ -418,23 +419,51 @@ export class GhidraProjectStore {
   /**
    * Remove stale entries and abandoned staging copies, then the oldest entries
    * until the store fits its ceiling. Entries a hit recently leased for its
-   * runtime copy are protected from removal.
+   * runtime copy are protected from removal. An entry whose manifest cannot be
+   * read is damaged, so it contributes no listed size; it is removed here
+   * instead of escaping the ceiling forever.
    */
   async prune(
     signal?: AbortSignal,
   ): Promise<Result<GhidraProjectPruneResult, GhidraProjectCacheError>> {
-    const listed = await this.list(signal);
-    if (!listed.ok) return listed;
+    try {
+      return await this.#prune(signal);
+    } catch (cause: unknown) {
+      if (signal?.aborted === true) throw cause;
+      if (cause instanceof GhidraProjectCacheError) return err(cause);
+      return err(
+        this.#io("Ghidra project cache prune failed", this.#root, cause),
+      );
+    }
+  }
+
+  async #prune(
+    signal?: AbortSignal,
+  ): Promise<Result<GhidraProjectPruneResult, GhidraProjectCacheError>> {
+    const keys = await this.#entryKeys(signal);
+    if (!keys.ok) return keys;
     await this.#pruneStaging(signal);
     const protectedKeys = await this.#protectedKeys(signal);
-    const manifests = [...listed.value];
     const removed: string[] = [];
     let freed = 0;
-    const drop = async (manifest: GhidraProjectManifest): Promise<void> => {
-      await this.#discard(this.#entryPath(manifest.key));
-      removed.push(manifest.key);
-      freed += manifest.size_bytes;
+    const drop = async (key: string, bytes: number): Promise<void> => {
+      await this.#discard(this.#entryPath(key));
+      removed.push(key);
+      freed += bytes;
     };
+    const manifests: GhidraProjectManifest[] = [];
+    for (const key of keys.value) {
+      const manifest = await this.#readManifest(this.#entryPath(key));
+      if (manifest.ok) {
+        manifests.push(manifest.value);
+        continue;
+      }
+      // A damaged entry cannot be discovered or counted through `list()`, and
+      // its recorded size is untrustworthy. Measure it before removing so the
+      // freed total stays useful without re-reading project contents.
+      if (protectedKeys.has(key)) continue;
+      await drop(key, await this.#directoryBytes(this.#entryPath(key)));
+    }
     const nowMs = Date.now();
     const fresh: GhidraProjectManifest[] = [];
     for (const manifest of manifests) {
@@ -448,7 +477,7 @@ export class GhidraProjectStore {
         Number.isFinite(ageMs) &&
         ageMs > this.#maxAgeDays * 86_400_000
       )
-        await drop(manifest);
+        await drop(manifest.key, manifest.size_bytes);
       else fresh.push(manifest);
     }
     let total = fresh.reduce((sum, entry) => sum + entry.size_bytes, 0);
@@ -465,7 +494,7 @@ export class GhidraProjectStore {
     for (const manifest of fresh) {
       if (total <= this.#maxBytes) break;
       if (protectedKeys.has(manifest.key)) continue;
-      await drop(manifest);
+      await drop(manifest.key, manifest.size_bytes);
       total -= manifest.size_bytes;
     }
     return ok({ removed, bytes: freed });
@@ -663,6 +692,18 @@ export class GhidraProjectStore {
         await rm(lockPath, { recursive: true, force: true });
       }
     }
+  }
+
+  /** Best-effort stored bytes for a damaged entry that has no usable manifest. */
+  async #directoryBytes(path: string): Promise<number> {
+    const entry = await lstat(path).catch(() => undefined);
+    if (entry === undefined) return 0;
+    if (entry.isFile()) return entry.size;
+    if (!entry.isDirectory() || entry.isSymbolicLink()) return 0;
+    let total = 0;
+    for (const name of await readdir(path).catch(() => []))
+      total += await this.#directoryBytes(join(path, name));
+    return total;
   }
 
   async #discard(path: string): Promise<void> {

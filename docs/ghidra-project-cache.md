@@ -81,7 +81,11 @@ stored program name, target digest, provider version, size, and creation time.
 `cache-verify` re-admits each entry and re-hashes its files against the recorded
 project digest, reporting any mismatch. Add `--format json` for machine-readable
 output. Listing and verification are read-only; prune, remove, and
-`--repair` are the only cache mutations, and none of them opens a target.
+`--repair` are the only cache mutations, and none of them opens a target. A
+corrupt entry that `--repair` cannot remove (for example while another session
+holds a recent lease) is reported under `failed_repairs`, and the command exits
+unsuccessfully. Prune also removes entries whose manifest is unreadable, so a
+damaged directory cannot escape the size ceiling.
 
 ## Limitations
 

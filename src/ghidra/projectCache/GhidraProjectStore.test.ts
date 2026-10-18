@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdtemp,
   mkdir,
   readFile,
@@ -334,6 +335,53 @@ describe("GhidraProjectStore maintenance", () => {
   });
 });
 
+describe("GhidraProjectStore damaged entries", () => {
+  it("prunes entries that have no readable manifest", async () => {
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const malformed = "a".repeat(64);
+    const missing = "b".repeat(64);
+    await mkdir(join(root, malformed), { recursive: true });
+    await writeFile(join(root, malformed, "manifest.json"), "{");
+    await writeFile(
+      join(root, malformed, "rea-project.gpr"),
+      Buffer.alloc(4096),
+    );
+    await mkdir(join(root, missing), { recursive: true });
+    await writeFile(join(root, missing, "rea-project.gpr"), Buffer.alloc(2048));
+
+    const pruned = await store.prune();
+    if (!pruned.ok) throw new Error(`prune failed: ${pruned.error.message}`);
+    expect([...pruned.value.removed].sort()).toEqual(
+      [malformed, missing].sort(),
+    );
+    expect(pruned.value.bytes).toBe(4096 + 1 + 2048);
+    await expect(stat(join(root, malformed))).rejects.toThrow();
+    await expect(stat(join(root, missing))).rejects.toThrow();
+  });
+
+  it("keeps a damaged entry leased by a recent hit until the lease lapses", async () => {
+    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const key = "c".repeat(64);
+    await mkdir(join(root, key), { recursive: true });
+    await writeFile(join(root, key, "manifest.json"), "{");
+    const lease = join(root, "leases", `${key}.lease`);
+    await mkdir(join(root, "leases"), { recursive: true });
+    await writeFile(lease, new Date().toISOString());
+
+    const leased = await store.prune();
+    if (!leased.ok) throw new Error("prune failed");
+    expect(leased.value.removed).toEqual([]);
+    await expect(stat(join(root, key))).resolves.toBeDefined();
+
+    const stale = new Date(Date.now() - 31 * 60 * 1000);
+    await utimes(lease, stale, stale);
+    const pruned = await store.prune();
+    if (!pruned.ok) throw new Error("prune failed");
+    expect(pruned.value.removed).toEqual([key]);
+    await expect(stat(join(root, key))).rejects.toThrow();
+  });
+});
+
 describe("GhidraProjectStore resilience", () => {
   it("reports an unreadable cache root instead of an empty store", async () => {
     const container = await mkdtemp(join(tmpdir(), "rea-ghidra-cache-file-"));
@@ -344,6 +392,31 @@ describe("GhidraProjectStore resilience", () => {
     expect(listed.ok).toBe(false);
     expect(!listed.ok && listed.error.reason).toBe("io");
   });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "returns a typed prune failure when a damaged entry cannot be removed",
+    async () => {
+      const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+      const key = "d".repeat(64);
+      await mkdir(join(root, key), { recursive: true });
+      await writeFile(join(root, key, "manifest.json"), "{");
+      await chmod(root, 0o500);
+      try {
+        const pruned = await store.prune();
+        expect(pruned.ok).toBe(false);
+        if (!pruned.ok) {
+          expect(pruned.error.reason).toBe("io");
+          expect(pruned.error.message).toBe(
+            "Ghidra project cache prune failed",
+          );
+          expect(pruned.error.path).toBe(root);
+        }
+      } finally {
+        await chmod(root, 0o700);
+      }
+      await expect(stat(join(root, key))).rejects.toThrow();
+    },
+  );
 
   it("reaps an abandoned staging copy but keeps a current one", async () => {
     const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });

@@ -63,6 +63,7 @@ rea inspect-apktool-client
 rea decode-android-resources /targets/Example.apk
 rea decode-android-resources /targets/Example.apk --locale de
 rea decode-android-resources /targets/Example.apk --locales de --locales pt-BR
+rea decode-android-resources /targets/Example.apk --locales de --locales pt-BR --string-tables-only
 rea decode-android-resources /targets/Example.apk --no-strings
 ```
 
@@ -73,6 +74,15 @@ table), `locales` (repeatable array of additional localized string tables to pro
 from the same single decode pass), and `include_strings` (default true). Regional locales such as `pt-BR`
 select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
 `b+zh+Hans+CN` may also be supplied directly.
+
+Set `string_tables_only: true` (CLI `--string-tables-only`) to return string
+entries only inside `string_tables`, including when selecting a single table.
+The top-level `strings` array is then empty by request; it does not establish
+that the primary table is empty. Table status, counts and coverage still describe
+the examined source. This avoids repeating primary entries in multi-locale
+responses and charges the aggregate output budget for one copy per table.
+Omitting the option preserves existing responses. `include_strings: false`
+still suppresses all string projection, including in this mode.
 
 ## Interpret the result
 
@@ -108,7 +118,8 @@ select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
   each projected table with its locale, status (`present`, `missing`,
   `oversized`, `malformed`, or `skipped`), entry counts, and coverage,
   bounded at an aggregate budget of 10,000 strings and 32 MiB XML. When `locales`
-  is omitted, legacy single-table payloads are preserved without adding `string_tables`.
+  is omitted and `string_tables_only` is not true, legacy single-table payloads are preserved
+  without adding `string_tables`.
 - **Smali is skipped by design** (`apktool d --no-src`): Java-source
   recovery belongs to the JADX family. Resource smali edits and rebuild are
   a follow-up lane with mutation authority.

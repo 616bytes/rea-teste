@@ -129,6 +129,29 @@ assert.match(report.receipt_failures[0],/stdout:.*broken pipe/);
 assert.deepEqual(await saved(),report);assert.deepEqual(report.failure,originalFailure);
 ''')
 
+    def test_partial_retry_after_stdout_failure_preserves_the_prior_receipt(self):
+        self.run_finalization('''
+const fs=await import('node:fs/promises');
+const {syncBuiltinESMExports}=await import('node:module');
+const originalWrite=fs.default.writeFile;let writes=0;let before;
+fs.default.writeFile=async(...args)=>{
+  if(++writes===2){await originalWrite(args[0],'partial',args[2]);throw new Error('disk quota');}
+  return originalWrite(...args);
+};
+syncBuiltinESMExports();
+try {
+  const failedStdout=new Writable({async write(chunk,encoding,done){
+    before=await readFile(join(output,'report.json'),'utf8');done(new Error('broken pipe'));
+  }});
+  assert.equal(await finalizeRetainedQueryReceipt({...input,stdout:failedStdout}),false);
+  assert.equal(writes,2);assert.equal(report.receipt_failures.length,2);
+  assert.match(report.receipt_failures[1],/report-file-retry:.*disk quota/);
+  assert.equal(await readFile(join(output,'report.json'),'utf8'),before);
+  assert.deepEqual((await saved()).failure,originalFailure);
+  assert.equal((await saved()).calls[0].elapsed_ms,17);
+} finally {fs.default.writeFile=originalWrite;syncBuiltinESMExports();}
+''')
+
     def test_failed_client_close_keeps_ownership_and_attempts_peer_cleanup(self):
         self.run_finalization('''
 const closed=[];

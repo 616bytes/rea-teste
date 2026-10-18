@@ -193,6 +193,9 @@ Finalization independently attempts client/transport close, log completion and
 both receipt outputs. Cleanup failures preserve the original task failure and
 call costs, record the failing phase and retain the workspace for retry. A file
 receipt refusal still permits stdout; a broken stdout write is recorded in a
-file retry. Cleanup or receipt-output failures make the command fail. Five
-additional regressions exercise actual stream/file errors and peer cleanup;
-these are harness failure checks, not real-provider evidence.
+file retry. Files publish through a sibling temporary file and rename; an
+interrupted retry preserves the previous receipt. Failed publication files stay
+in the owned output directory. Cleanup or receipt-output failures make the
+command fail. Six additional regressions exercise stream/file errors, partial
+publication and peer cleanup; these are harness failure checks, not real-provider
+evidence.

@@ -610,8 +610,8 @@
       "scope": "Rejected SDK call, protocol error, receipt-write failure, simultaneous call/write failure; not real-provider evidence"
     },
     "cleanup_receipt_regressions": {
-      "passed": 5,
-      "scope": "Real log/stdio Writable errors, filesystem workspace-removal and report-file refusals, and independent peer close. Original failure and call costs survive; failed cleanup retains workspace ownership. Harness failure checks, not real-provider evidence.",
+      "passed": 6,
+      "scope": "Real stream/file refusals, independent peer close, and injected partial publication at the filesystem boundary. Original failure and call costs survive; failed cleanup retains workspace ownership. Harness failure checks, not real-provider evidence.",
       "baseline_reproduction": {
         "revision": "b025a919b36ec091ca888339df6b24e78e89b79b",
         "method": "Execute the prior committed finalization block with deterministic workspace or log rejection; not a production-provider reproduction.",
@@ -623,6 +623,12 @@
           "file_receipt_attempts": 0,
           "stdout_receipt_attempts": 0
         }
+      },
+      "partial_retry_baseline": {
+        "revision": "5d6259e658ee54fc9829b9143a8721a2ab426e80",
+        "regression_exit_code": 1,
+        "observed_saved_report": "partial",
+        "method": "Run the unchanged partial-write regression against the prior committed finalizer with deterministic filesystem-boundary failure injection."
       }
     }
   }

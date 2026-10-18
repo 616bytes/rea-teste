@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const attempt = async (failures, phase, action) => {
@@ -58,11 +58,16 @@ export const finalizeRetainedQueryReceipt = async ({
   if (report.cleanup_failures.length > 0) report.retained_workspace = account;
 
   report.receipt_failures = [];
-  const saveReport = () =>
-    writeFile(
-      join(output, "report.json"),
-      JSON.stringify(report, null, 2) + "\n",
-    );
+  let publication = 0;
+  const saveReport = async () => {
+    // Keep failed publications in the owned output directory for inspection.
+    // A partial retry must never truncate an already published cost receipt.
+    const pending = join(output, `.report-${++publication}.json.pending`);
+    await writeFile(pending, JSON.stringify(report, null, 2) + "\n", {
+      flag: "wx",
+    });
+    await rename(pending, join(output, "report.json"));
+  };
   await attempt(report.receipt_failures, "report-file", saveReport);
   const stdoutWritten = await attempt(report.receipt_failures, "stdout", () =>
     writeReceipt(stdout, JSON.stringify(report) + "\n"),

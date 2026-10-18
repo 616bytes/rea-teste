@@ -14,7 +14,9 @@ const C_WHITESPACE = new Set([" ", "\t", "\n", "\v", "\f", "\r"]);
 // CFPropertyList skips non-alphabet characters and emits only completed
 // quartets; atob would pad or refuse data the native reader accepts.
 const decodePlistData = (text: string): Uint8Array => {
-  const bytes: number[] = [];
+  // Each completed quartet consumes at least four characters.
+  const bytes = new Uint8Array(Math.floor(text.length / 4) * 3);
+  let length = 0;
   let quartet = 0;
   let digits = 0;
   let padding = 0;
@@ -26,11 +28,11 @@ const decodePlistData = (text: string): Uint8Array => {
     quartet = ((quartet << 6) | digit) & 0xffffff;
     digits += 1;
     if (digits % 4 !== 0) continue;
-    bytes.push(quartet >> 16);
-    if (padding < 2) bytes.push((quartet >> 8) & 0xff);
-    if (padding < 1) bytes.push(quartet & 0xff);
+    bytes[length++] = quartet >> 16;
+    if (padding < 2) bytes[length++] = quartet >> 8;
+    if (padding < 1) bytes[length++] = quartet;
   }
-  return Uint8Array.from(bytes);
+  return length === bytes.length ? bytes : bytes.slice(0, length);
 };
 
 /** Interpret an already validated, depth-bounded DOM, owning values and number facts together. */

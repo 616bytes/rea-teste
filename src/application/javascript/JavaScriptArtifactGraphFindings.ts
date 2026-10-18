@@ -14,6 +14,7 @@ import {
   moduleLookupKey,
   selfReferenceOmissions,
   sourceNodeFor,
+  sourceIsCandidateBundlerModule,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
@@ -84,6 +85,22 @@ const addReference = (
   input: FindingInput<StaticReference>,
   omissions: { selfReferences: number },
 ): void => {
+  const candidateModule = sourceIsCandidateBundlerModule(
+    context,
+    input.file.path,
+    input.value.module_key,
+    input.value.module_runtime,
+  );
+  const candidateTarget =
+    input.value.specifier !== null &&
+    sourceIsCandidateBundlerModule(
+      context,
+      input.file.path,
+      input.value.specifier,
+      input.value.module_runtime,
+    );
+  const candidateLimitation =
+    "The esbuild-shaped wrapper has unproven helper origin; attributing this reference to a bundled module is only a candidate.";
   const source =
     sourceNodeFor(
       context,
@@ -95,6 +112,13 @@ const addReference = (
     input.value.specifier === null
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
+  const candidateAssociation =
+    candidateModule ||
+    candidateTarget ||
+    (resolved?.node?.observations.some(
+      ({ properties }) => properties.interpretation === "candidate",
+    ) ??
+      false);
   if (input.value.kind === "worker" || input.value.kind === "service-worker") {
     const worker = context.accumulator.addNode({
       kind: input.value.kind === "worker" ? "worker" : "service-worker",
@@ -112,6 +136,7 @@ const addReference = (
             resolved_path: resolved?.path ?? null,
             resolution_status: resolved?.resolutionStatus ?? null,
             ...artifactPathResolutionProperties(resolved?.resolution),
+            ...(candidateAssociation ? { interpretation: "candidate" } : {}),
           },
           evidence: staticInferenceEvidence({
             sha256: input.file.sha256,
@@ -120,6 +145,15 @@ const addReference = (
             operation: "discover-worker",
             coverage: input.coverage,
             limitations: resolved?.limitations ?? [],
+            ...(candidateAssociation
+              ? {
+                  confidence: "low" as const,
+                  limitations: [
+                    candidateLimitation,
+                    ...(resolved?.limitations ?? []),
+                  ],
+                }
+              : {}),
           }),
         },
       ],
@@ -135,8 +169,18 @@ const addReference = (
         kind: input.value.kind,
         resolution_status: resolved?.resolutionStatus ?? null,
         ...artifactPathResolutionProperties(resolved?.resolution),
+        ...(candidateAssociation ? { interpretation: "candidate" } : {}),
       },
       limitations: resolved?.limitations ?? [],
+      ...(candidateAssociation
+        ? {
+            confidence: "low" as const,
+            limitations: [
+              candidateLimitation,
+              ...(resolved?.limitations ?? []),
+            ],
+          }
+        : {}),
     });
     if (resolved !== null && resolved.path !== null && resolved.node !== null)
       addStaticInferenceEdge(context, {
@@ -146,8 +190,17 @@ const addReference = (
         range: input.value.location,
         coverage: input.coverage,
         relation: "maps_to",
-        properties: { resolved_path: resolved.path },
+        properties: {
+          resolved_path: resolved.path,
+          ...(candidateAssociation ? { interpretation: "candidate" } : {}),
+        },
         limitations: resolved.limitations,
+        ...(candidateAssociation
+          ? {
+              confidence: "low" as const,
+              limitations: [candidateLimitation, ...resolved.limitations],
+            }
+          : {}),
       });
     return;
   }
@@ -184,8 +237,16 @@ const addReference = (
       resolved_path: resolved?.path ?? null,
       resolution_status: resolved?.resolutionStatus ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
+      ...(candidateAssociation ? { interpretation: "candidate" } : {}),
     },
-    ...(resolved === null ? {} : { limitations: resolved.limitations }),
+    ...(candidateAssociation
+      ? {
+          confidence: "low" as const,
+          limitations: [candidateLimitation, ...(resolved?.limitations ?? [])],
+        }
+      : resolved === null
+        ? {}
+        : { limitations: resolved.limitations }),
   });
 };
 
@@ -202,11 +263,19 @@ const addEndpoint = (
     ) ?? input.asset;
   const key = compactStringIdentityKey(input.value.value);
   const candidate = input.value.interpretation === "candidate";
+  const candidateModule = sourceIsCandidateBundlerModule(
+    context,
+    input.file.path,
+    input.value.module_key,
+    input.value.module_runtime,
+  );
   const partial = input.value.resolution === "partial";
   const candidateLimitation =
     "The unbound method-like argument is only a candidate; its receiver does not establish a network call.";
   const partialLimitation =
     "The request target is not an exact literal; the endpoint value retains the unresolved source expression.";
+  const moduleLimitation =
+    "The source's esbuild-shaped wrapper has unproven helper origin; the endpoint's module attribution is only a candidate.";
   const label = `${input.value.kind} ${candidate ? "endpoint candidate" : "endpoint"}`;
   const node = context.accumulator.addNode({
     kind: "endpoint",
@@ -261,16 +330,26 @@ const addEndpoint = (
     properties: {
       mechanism: input.value.mechanism,
       ...(candidate ? { interpretation: input.value.interpretation } : {}),
+      ...(candidateModule ? { module_interpretation: "candidate" } : {}),
       ...(partial ? { resolution: input.value.resolution } : {}),
     },
-    ...(candidate
+    ...(candidateModule
       ? {
           confidence: "low" as const,
-          limitations: [candidateLimitation],
+          limitations: [
+            moduleLimitation,
+            ...(candidate ? [candidateLimitation] : []),
+            ...(partial ? [partialLimitation] : []),
+          ],
         }
-      : partial
-        ? { limitations: [partialLimitation] }
-        : {}),
+      : candidate
+        ? {
+            confidence: "low" as const,
+            limitations: [candidateLimitation],
+          }
+        : partial
+          ? { limitations: [partialLimitation] }
+          : {}),
   });
 };
 
@@ -279,6 +358,12 @@ const addStorage = (
   input: FindingInput<StaticStorage>,
 ): void => {
   const candidate = input.value.interpretation === "candidate";
+  const candidateModule = sourceIsCandidateBundlerModule(
+    context,
+    input.file.path,
+    input.value.module_key,
+    input.value.module_runtime,
+  );
   const limitation =
     "The constructor name is only a candidate; an unchanged SQLite module API origin is unproven.";
   const source =
@@ -334,9 +419,20 @@ const addStorage = (
     properties: {
       mechanism: input.value.mechanism,
       ...(candidate ? { interpretation: "candidate" } : {}),
+      ...(candidateModule ? { module_interpretation: "candidate" } : {}),
     },
-    ...(candidate
-      ? { confidence: "low" as const, limitations: [limitation] }
+    ...(candidate || candidateModule
+      ? {
+          confidence: "low" as const,
+          limitations: [
+            ...(candidate ? [limitation] : []),
+            ...(candidateModule
+              ? [
+                  "The source's esbuild-shaped wrapper has unproven helper origin; the storage operation's module attribution is only a candidate.",
+                ]
+              : []),
+          ],
+        }
       : {}),
   });
 };
@@ -384,7 +480,30 @@ const addDiscoveredRole = (
     range: input.value.location,
     coverage: input.coverage,
     relation: "loads",
-    properties: { mechanism: input.value.mechanism },
+    properties: {
+      mechanism: input.value.mechanism,
+      ...(sourceIsCandidateBundlerModule(
+        context,
+        input.file.path,
+        input.value.module_key,
+        input.value.module_runtime,
+      )
+        ? { module_interpretation: "candidate" }
+        : {}),
+    },
+    ...(sourceIsCandidateBundlerModule(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    )
+      ? {
+          confidence: "low" as const,
+          limitations: [
+            "The source's esbuild-shaped wrapper has unproven helper origin; the Electron role's module attribution is only a candidate.",
+          ],
+        }
+      : {}),
   });
   linkElectronRoleToAsset(context, {
     role,

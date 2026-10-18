@@ -234,6 +234,13 @@ Selected bounded text is then parsed as inert data to recover:
 - local HTML script entrypoints;
 - Webpack and Rspack chunk registrations and module factories represented as
   AST literals;
+- esbuild-shaped `__commonJS` and `__esm` calls with literal tables as
+  **candidate** chunk and module interpretations; the helper's origin is not
+  proven from its name. Their graph nodes, containment and module-derived
+  relationships carry inferred, low-confidence evidence and the explicit
+  helper-origin limitation, including for older retained records without the
+  candidate field. The literal syntax and source ranges remain observable;
+
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
   service workers (only `new Worker(new URL(path, import.meta.url))` resolves
   relative to the calling module; string worker and service-worker paths use
@@ -252,6 +259,11 @@ Selected bounded text is then parsed as inert data to recover:
   visible check enforces a complete policy;
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
+
+The reconstruction `modules` statistic includes esbuild-shaped candidate
+structures; the graph's limitations disclose their unproven helper origin even
+in summary views. Inspect each module's `interpretation` and Evidence before
+treating the count as confirmed bundled modules.
 
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,

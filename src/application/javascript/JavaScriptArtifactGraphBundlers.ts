@@ -1,5 +1,8 @@
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
-import type { JavaScriptBundlerRegistration } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import {
+  isCandidateBundlerRegistration,
+  type JavaScriptBundlerRegistration,
+} from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
@@ -18,10 +21,24 @@ import {
 } from "./JavaScriptArtifactGraphEvidence.js";
 
 /** Project Webpack/Rspack AST literals and disclose unrepresentable relationships. */
+const ESBUILD_HELPER_LIMITATION =
+  "The __commonJS/__esm spelling and literal table are visible, but the callee's esbuild helper origin and module execution semantics are unproven.";
+
+const candidateProperties = (registration: JavaScriptBundlerRegistration) =>
+  isCandidateBundlerRegistration(registration)
+    ? { interpretation: "candidate" }
+    : {};
+
+const candidateLimitations = (registration: JavaScriptBundlerRegistration) =>
+  isCandidateBundlerRegistration(registration)
+    ? [ESBUILD_HELPER_LIMITATION]
+    : [];
+
 export const addJavaScriptBundlerNodes = (
   context: JavaScriptArtifactGraphContext,
 ): readonly string[] => {
   let selfAsyncChunks = 0;
+  let hasCandidateRegistration = false;
   for (const analyzed of context.analysis.files) {
     const { file, javascript } = analyzed;
     const asset = context.assetNodes.get(file.path);
@@ -29,6 +46,8 @@ export const addJavaScriptBundlerNodes = (
     const coverage = javascriptAnalysisCoverage(javascript);
     const records: BundlerGraphRecord[] = [];
     for (const registration of javascript.bundler_registrations) {
+      if (isCandidateBundlerRegistration(registration))
+        hasCandidateRegistration = true;
       const input = {
         file,
         registration,
@@ -36,14 +55,26 @@ export const addJavaScriptBundlerNodes = (
         limitations: javascript.limitations,
       };
       const chunk = createBundlerChunkNode(context, input);
-      addAstContainsEdge(context, {
-        source: asset,
-        target: chunk,
-        file,
-        range: registration.location,
-        coverage,
-        properties: { bundler: registration.bundler },
-      });
+      if (isCandidateBundlerRegistration(registration))
+        addCandidateContainsEdge(
+          context,
+          asset,
+          chunk,
+          input,
+          registration.location,
+          {
+            bundler: registration.bundler,
+          },
+        );
+      else
+        addAstContainsEdge(context, {
+          source: asset,
+          target: chunk,
+          file,
+          range: registration.location,
+          coverage,
+          properties: { bundler: registration.bundler },
+        });
       for (const key of registration.chunk_keys)
         context.chunkNodes.set(
           chunkLookupKey(file.path, registration.runtime, key),
@@ -55,11 +86,14 @@ export const addJavaScriptBundlerNodes = (
     for (const record of records)
       selfAsyncChunks += addBundlerRuntimeEdges(context, record);
   }
-  return selfReferenceOmissions(
-    selfAsyncChunks,
-    ["bundler async-chunk reference", "bundler async-chunk references"],
-    "the requesting chunk",
-  );
+  return [
+    ...(hasCandidateRegistration ? [ESBUILD_HELPER_LIMITATION] : []),
+    ...selfReferenceOmissions(
+      selfAsyncChunks,
+      ["bundler async-chunk reference", "bundler async-chunk references"],
+      "the requesting chunk",
+    ),
+  ];
 };
 
 interface BundlerProjectionInput {
@@ -72,6 +106,31 @@ interface BundlerProjectionInput {
 interface BundlerModuleProjectionInput extends BundlerProjectionInput {
   readonly chunk: ApplicationNode;
 }
+
+const addCandidateContainsEdge = (
+  context: JavaScriptArtifactGraphContext,
+  source: ApplicationNode,
+  target: ApplicationNode,
+  input: BundlerProjectionInput,
+  range: JavaScriptBundlerRegistration["location"],
+  properties: Readonly<Record<string, unknown>>,
+): void => {
+  context.accumulator.addEdge({
+    source_node_id: source.node_id,
+    target_node_id: target.node_id,
+    relation: "contains",
+    properties: { ...properties, ...candidateProperties(input.registration) },
+    evidence: staticInferenceEvidence({
+      sha256: input.file.sha256,
+      path: input.file.path,
+      range,
+      operation: "map-bundler-candidate-structure",
+      coverage: input.coverage,
+      confidence: "low",
+      limitations: candidateLimitations(input.registration),
+    }),
+  });
+};
 
 const createBundlerChunkNode = (
   context: JavaScriptArtifactGraphContext,
@@ -93,6 +152,7 @@ const createBundlerChunkNode = (
           path: file.path,
           bundler: registration.bundler,
           runtime: registration.runtime,
+          ...candidateProperties(registration),
           chunk_keys: registration.chunk_keys,
           unknown_chunk_keys: registration.unknown_chunk_keys,
           runtime_require_name: registration.runtime_require_name,
@@ -103,13 +163,18 @@ const createBundlerChunkNode = (
           unknown_async_chunk_keys: registration.unknown_async_chunk_keys,
           module_count: registration.modules.length,
         },
-        evidence: astObservationEvidence({
+        evidence: (isCandidateBundlerRegistration(registration)
+          ? staticInferenceEvidence
+          : astObservationEvidence)({
           sha256: file.sha256,
           path: file.path,
           range: registration.location,
           operation: "extract-bundler-registration",
           coverage,
-          limitations,
+          limitations: [...limitations, ...candidateLimitations(registration)],
+          ...(isCandidateBundlerRegistration(registration)
+            ? { confidence: "low" as const }
+            : {}),
         }),
       },
     ],
@@ -136,6 +201,7 @@ const addBundlerModuleNodes = (
             path: file.path,
             bundler: registration.bundler,
             runtime: registration.runtime,
+            ...candidateProperties(registration),
             chunk_keys: registration.chunk_keys,
             module_key: moduleValue.module_key,
             factory_require_name: moduleValue.factory_require_name,
@@ -149,13 +215,21 @@ const addBundlerModuleNodes = (
               moduleValue.structural_fingerprint_algorithm,
             exports: moduleValue.exports,
           },
-          evidence: astObservationEvidence({
+          evidence: (isCandidateBundlerRegistration(registration)
+            ? staticInferenceEvidence
+            : astObservationEvidence)({
             sha256: file.sha256,
             path: file.path,
             range: moduleValue.location,
             operation: "extract-bundler-module",
             coverage,
-            limitations,
+            limitations: [
+              ...limitations,
+              ...candidateLimitations(registration),
+            ],
+            ...(isCandidateBundlerRegistration(registration)
+              ? { confidence: "low" as const }
+              : {}),
           }),
         },
       ],
@@ -164,19 +238,34 @@ const addBundlerModuleNodes = (
       moduleLookupKey(file.path, registration.runtime, moduleValue.module_key),
       module,
     );
-    addAstContainsEdge(context, {
-      source: chunk,
-      target: module,
-      file,
-      range: moduleValue.location,
-      coverage,
-      properties: {
-        bundler: registration.bundler,
-        runtime: registration.runtime,
-        chunk_keys: registration.chunk_keys,
-        module_key: moduleValue.module_key,
-      },
-    });
+    if (isCandidateBundlerRegistration(registration))
+      addCandidateContainsEdge(
+        context,
+        chunk,
+        module,
+        input,
+        moduleValue.location,
+        {
+          bundler: registration.bundler,
+          runtime: registration.runtime,
+          chunk_keys: registration.chunk_keys,
+          module_key: moduleValue.module_key,
+        },
+      );
+    else
+      addAstContainsEdge(context, {
+        source: chunk,
+        target: module,
+        file,
+        range: moduleValue.location,
+        coverage,
+        properties: {
+          bundler: registration.bundler,
+          runtime: registration.runtime,
+          chunk_keys: registration.chunk_keys,
+          module_key: moduleValue.module_key,
+        },
+      });
   }
 };
 
@@ -209,6 +298,7 @@ const addBundlerRuntimeEdges = (
         runtime: registration.runtime,
         module_key: moduleKey,
         resolution_status: resolved === undefined ? "not-found" : "resolved",
+        ...candidateProperties(registration),
       },
       evidence: staticInferenceEvidence({
         sha256: file.sha256,
@@ -216,7 +306,11 @@ const addBundlerRuntimeEdges = (
         range: registration.location,
         operation: "resolve-bundler-entry-module",
         coverage,
-        confidence: resolved === undefined ? "low" : "high",
+        confidence:
+          isCandidateBundlerRegistration(registration) || resolved === undefined
+            ? "low"
+            : "high",
+        limitations: candidateLimitations(registration),
       }),
     });
   }
@@ -239,6 +333,7 @@ const addBundlerRuntimeEdges = (
         runtime: registration.runtime,
         chunk_key: chunkKey,
         resolution_status: resolved === undefined ? "not-found" : "resolved",
+        ...candidateProperties(registration),
       },
       evidence: staticInferenceEvidence({
         sha256: file.sha256,
@@ -246,7 +341,11 @@ const addBundlerRuntimeEdges = (
         range: registration.location,
         operation: "resolve-bundler-async-chunk",
         coverage,
-        confidence: resolved === undefined ? "low" : "high",
+        confidence:
+          isCandidateBundlerRegistration(registration) || resolved === undefined
+            ? "low"
+            : "high",
+        limitations: candidateLimitations(registration),
       }),
     });
   }
@@ -274,6 +373,7 @@ const unresolvedBundlerModuleNode = (
           runtime: record.registration.runtime,
           module_key: moduleKey,
           resolution_status: "not-found",
+          ...candidateProperties(record.registration),
         },
         evidence: staticInferenceEvidence({
           sha256: record.file.sha256,
@@ -282,6 +382,7 @@ const unresolvedBundlerModuleNode = (
           operation: "retain-unresolved-bundler-entry-module",
           coverage: record.coverage,
           confidence: "low",
+          limitations: candidateLimitations(record.registration),
         }),
       },
     ],
@@ -308,6 +409,7 @@ const unresolvedBundlerChunkNode = (
           runtime: record.registration.runtime,
           chunk_key: chunkKey,
           resolution_status: "not-found",
+          ...candidateProperties(record.registration),
         },
         evidence: staticInferenceEvidence({
           sha256: record.file.sha256,
@@ -316,6 +418,7 @@ const unresolvedBundlerChunkNode = (
           operation: "retain-unresolved-bundler-async-chunk",
           coverage: record.coverage,
           confidence: "low",
+          limitations: candidateLimitations(record.registration),
         }),
       },
     ],

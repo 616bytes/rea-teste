@@ -89,6 +89,8 @@ export interface JavaScriptBundlerModule extends JavaScriptBundlerModuleState {
 /** One statically recognized bundler chunk or module registration. */
 export interface JavaScriptBundlerRegistration {
   readonly bundler: "webpack" | "rspack" | "esbuild";
+  /** A matching wrapper spelling does not establish the esbuild helper's origin. */
+  readonly interpretation?: "candidate";
   readonly runtime: string;
   readonly chunk_keys: readonly string[];
   readonly unknown_chunk_keys: number;
@@ -101,6 +103,13 @@ export interface JavaScriptBundlerRegistration {
   readonly modules: readonly JavaScriptBundlerModule[];
   readonly location: JavaScriptSourceRange;
 }
+
+/** Older records also lack helper provenance; absence is not a proof. */
+export const isCandidateBundlerRegistration = (
+  registration: JavaScriptBundlerRegistration,
+): boolean =>
+  registration.interpretation === "candidate" ||
+  registration.bundler === "esbuild";
 
 /** Static Electron role paths discovered from package or JavaScript syntax. */
 export interface JavaScriptRolePath {

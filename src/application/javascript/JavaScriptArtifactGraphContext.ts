@@ -422,3 +422,19 @@ export const sourceNodeFor = (
     : runtime === undefined
       ? undefined
       : context.moduleNodes.get(moduleLookupKey(path, runtime, moduleKey));
+
+/** Preserve the producer's uncertainty when a finding is attributed to a wrapper module. */
+export const sourceIsCandidateBundlerModule = (
+  context: JavaScriptArtifactGraphContext,
+  path: string,
+  moduleKey: string | null,
+  runtime?: string,
+): boolean =>
+  moduleKey !== null &&
+  runtime !== undefined &&
+  (context.moduleNodes
+    .get(moduleLookupKey(path, runtime, moduleKey))
+    ?.observations.some(
+      ({ properties }) => properties.interpretation === "candidate",
+    ) ??
+    false);

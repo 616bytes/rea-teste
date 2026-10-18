@@ -179,6 +179,7 @@ export const inspectEsbuildWrapper = (
   accumulator.unknownFindings += recovered.unknownAsyncChunkKeys;
   const registration: JavaScriptBundlerRegistration = {
     bundler: "esbuild",
+    interpretation: "candidate",
     runtime,
     chunk_keys: [`${wrapperKind}@${String(call.start ?? 0)}`],
     unknown_chunk_keys: 0,

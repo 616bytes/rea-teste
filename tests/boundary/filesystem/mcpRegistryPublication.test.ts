@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { registryPublicationState } from "../../../.github/actions/publish-mcp/registry-state.mjs";
+import {
+  classifyReadFailure,
+  registryPublicationState,
+} from "../../../.github/actions/publish-mcp/registry-state.mjs";
 
 const server = {
   name: "io.github.fixture/rea",
@@ -12,6 +15,9 @@ const record = {
 };
 const page = (servers: unknown[], metadata = {}) =>
   Response.json({ servers, metadata });
+const noSleep = async () => {};
+const timeoutError = () =>
+  new DOMException("The operation was aborted due to timeout", "TimeoutError");
 
 it("finds an identical existing version after paging past substring matches", async () => {
   const urls: URL[] = [];
@@ -38,6 +44,7 @@ it("permits publication only after a complete successful lookup finds no exact m
     registryPublicationState(
       server,
       async () => new Response("unavailable", { status: 503 }),
+      { sleep: noSleep },
     ),
   ).rejects.toThrow("HTTP 503");
   await expect(
@@ -73,4 +80,75 @@ it("refuses changed, inactive or ambiguous published metadata", async () => {
   await expect(
     registryPublicationState(server, async () => page([record, record])),
   ).rejects.toThrow("ambiguous");
+});
+
+it("retries a timed-out lookup with bounded backoff and then succeeds", async () => {
+  const delays: number[] = [];
+  let calls = 0;
+  const result = await registryPublicationState(
+    server,
+    async () => {
+      calls += 1;
+      if (calls <= 2) throw timeoutError();
+      return page([]);
+    },
+    {
+      sleep: async (ms: number) => {
+        delays.push(ms);
+      },
+    },
+  );
+  expect(result).toBe("absent");
+  expect(calls).toBe(3);
+  expect(delays).toEqual([5_000, 15_000]);
+});
+
+it("keeps the state unknown when every attempt times out", async () => {
+  let calls = 0;
+  await expect(
+    registryPublicationState(
+      server,
+      async () => {
+        calls += 1;
+        throw timeoutError();
+      },
+      { sleep: noSleep },
+    ),
+  ).rejects.toMatchObject({ name: "TimeoutError" });
+  expect(calls).toBe(3);
+});
+
+it("does not retry a 404 response", async () => {
+  let calls = 0;
+  await expect(
+    registryPublicationState(
+      server,
+      async () => {
+        calls += 1;
+        return new Response("missing", { status: 404 });
+      },
+      { sleep: noSleep },
+    ),
+  ).rejects.toThrow("HTTP 404");
+  expect(calls).toBe(1);
+});
+
+it("classifies registry read failures", async () => {
+  expect(classifyReadFailure(timeoutError())).toBe("timeout");
+  expect(classifyReadFailure(new TypeError("fetch failed"))).toBe(
+    "network_error",
+  );
+  expect(classifyReadFailure(new Error("other"))).toBe("other");
+  const serverError = await registryPublicationState(
+    server,
+    async () => new Response("down", { status: 503 }),
+    { sleep: noSleep },
+  ).catch((error: unknown) => error);
+  expect(classifyReadFailure(serverError)).toBe("server_error");
+  const notFound = await registryPublicationState(
+    server,
+    async () => new Response("missing", { status: 404 }),
+    { sleep: noSleep },
+  ).catch((error: unknown) => error);
+  expect(classifyReadFailure(notFound)).toBe("not_found");
 });

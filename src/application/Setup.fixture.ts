@@ -170,6 +170,11 @@ export class FakeSetupHost implements SetupHost {
               ok: false,
               classification: "missing_dependency",
             },
+            {
+              name: "hopper-embedded-python",
+              ok: false,
+              classification: "missing_dependency",
+            },
           ] as const)
         : []),
       ...(this.unsupportedHopperVersion

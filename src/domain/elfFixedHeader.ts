@@ -80,6 +80,8 @@ const elfArchitecture = (
       return "powerpc";
     case 40:
       return "arm";
+    case 43: // EM_SPARCV9: SPARC V9 is the only 64-bit SPARC ISA.
+      return "sparc";
     case 164: // EM_HEXAGON: Qualcomm Hexagon DSP (QDSP6).
       return "hexagon";
     case 183:

@@ -17,7 +17,7 @@ import type {
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
 import {
-  isElfMetadataArchitecture,
+  isGhidraOnlyArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -130,10 +130,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (
-      isElfMetadataArchitecture(target.architecture) ||
-      target.architecture === "hexagon"
-    )
+    if (isGhidraOnlyArchitecture(target.architecture))
       return {
         status: "unsupported",
         code: "architecture_unsupported",

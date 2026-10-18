@@ -8,9 +8,10 @@ import type {
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
-  isElfMetadataArchitecture,
+  ghidraOnlyArchitectureLabel,
+  isGhidraOnlyArchitecture,
   type BinaryTarget,
-  type ElfMetadataArchitecture,
+  type GhidraOnlyArchitecture,
   type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
@@ -105,20 +106,12 @@ export const resolveHopperAnalysisProfile = async (
 };
 
 /** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
-const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
-  ElfMetadataArchitecture | "hexagon",
-  string
-> = {
-  mips: "MIPS",
-  riscv: "RISC-V",
-  powerpc: "PowerPC",
-  hexagon: "Hexagon",
-};
-
 export const hopperDeclinedArchitectureReason = (
-  architecture: ElfMetadataArchitecture | "hexagon",
-): string =>
-  `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`;
+  architecture: GhidraOnlyArchitecture,
+): string => {
+  const label = ghidraOnlyArchitectureLabel(architecture);
+  return `REA's Hopper adapter does not admit ${label} targets. Select a verified Ghidra ${label} profile instead.`;
+};
 
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (
@@ -134,7 +127,7 @@ export const hopperLoaderArgsForTarget = (
   if (target.format === "raw-binary")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
-  if (isElfMetadataArchitecture(architecture) || architecture === "hexagon")
+  if (isGhidraOnlyArchitecture(architecture))
     return err(
       new AnalysisCapabilityUnavailableError(
         "hopper",

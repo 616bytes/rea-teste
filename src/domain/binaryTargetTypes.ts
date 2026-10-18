@@ -12,6 +12,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "sparc",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -60,10 +61,39 @@ export const isElfMetadataArchitecture = (
 ): architecture is ElfMetadataArchitecture =>
   (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
 
+/** Families REA admits only through a Ghidra analysis lane, whatever the adapter. */
+export const GHIDRA_ONLY_ARCHITECTURES = [
+  "mips",
+  "riscv",
+  "powerpc",
+  "hexagon",
+  "sparc",
+] as const satisfies readonly BinaryArchitecture[];
+export type GhidraOnlyArchitecture = (typeof GHIDRA_ONLY_ARCHITECTURES)[number];
+
+const GHIDRA_ONLY_ARCHITECTURE_LABELS = {
+  mips: "MIPS",
+  riscv: "RISC-V",
+  powerpc: "PowerPC",
+  hexagon: "Hexagon",
+  sparc: "SPARC",
+} as const satisfies Record<GhidraOnlyArchitecture, string>;
+
+/** Name the family the way adapters and documents refer to it. */
+export const ghidraOnlyArchitectureLabel = (
+  architecture: GhidraOnlyArchitecture,
+): string => GHIDRA_ONLY_ARCHITECTURE_LABELS[architecture];
+
+/** Families REA admits only through a Ghidra lane; other adapters decline them. */
+export const isGhidraOnlyArchitecture = (
+  architecture: BinaryArchitecture,
+): architecture is GhidraOnlyArchitecture =>
+  (GHIDRA_ONLY_ARCHITECTURES as readonly string[]).includes(architecture);
+
 /** Recognized family with no ELF metadata member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon"
+  GhidraOnlyArchitecture | RawOnlyArchitecture
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
@@ -181,6 +211,14 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "sparc";
+      readonly availableArchitectures: readonly "sparc"[];
       readonly executableRole?: never;
       readonly managed?: never;
     })

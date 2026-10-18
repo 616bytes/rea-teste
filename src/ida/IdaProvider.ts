@@ -2,7 +2,8 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
-  isElfMetadataArchitecture,
+  ghidraOnlyArchitectureLabel,
+  isGhidraOnlyArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
@@ -111,21 +112,14 @@ export class IdaProvider implements AnalysisProviderCandidate {
     };
     if (
       target.kind === "executable" &&
-      (isElfMetadataArchitecture(target.architecture) ||
-        target.architecture === "hexagon")
+      isGhidraOnlyArchitecture(target.architecture)
     )
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: `REA's IDA adapter has no verified ${
-          target.architecture === "mips"
-            ? "MIPS"
-            : target.architecture === "riscv"
-              ? "RISC-V"
-              : target.architecture === "powerpc"
-                ? "PowerPC"
-                : "Hexagon"
-        } lane. Select a supported Ghidra profile instead.`,
+        reason: `REA's IDA adapter has no verified ${ghidraOnlyArchitectureLabel(
+          target.architecture,
+        )} lane. Select a supported Ghidra profile instead.`,
         diagnostics,
       };
     if (target.kind !== "executable")

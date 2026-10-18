@@ -24,7 +24,7 @@ Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "ku
 
 A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline and that raising it takes a restart. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 
-Windows is not supported yet. Supported targets are ELF and thin Mach-O executables for x86-64, AArch64 and ARM; PE and universal Mach-O are rejected with a typed reason.
+Supported targets are ELF, thin Mach-O and PE (including Windows executables) for x86-64, AArch64 and ARM; universal Mach-O is rejected with a typed reason because slice selection is not verified yet. PE support was verified against a source-owned x86-64 image: inventory, single-function pseudocode and the project export (C, header and assembly) all resolve absolute image addresses.
 
 ## What Kuna answers
 

@@ -11,13 +11,21 @@ REA admits `65816` as a raw-only architecture so single-file Super Nintendo ROM 
 
 ## Usage
 
-Open the ROM as a raw binary and explicitly select the architecture and load address:
+Open the ROM as a raw binary and explicitly select the architecture and entry point:
 
 ```bash
-rea open /path/to/game.sfc --architecture 65816 --entry-point 0x8000
+rea analyze /path/to/game.sfc --target-format raw-binary --architecture 65816 --entry-point 0x8000
 ```
 
-Or via MCP `open_binary` with the same parameters.
+Or via MCP `open_binary` with:
+```json
+{
+  "path": "/path/to/game.sfc",
+  "format": "raw-binary",
+  "architecture": "65816",
+  "entry_point": "0x8000"
+}
+```
 
 Common starting load addresses:
 - LoROM: `0x8000` (or bank-aware equivalents)
@@ -32,6 +40,7 @@ REA does not auto-detect LoROM vs HiROM or interleave multi-file ROM sets in thi
 - No emulation.
 - Decompilation quality depends on the installed 65816 SLEIGH module and on correctly setting the M/X flag state in Ghidra for the region being analysed.
 - Analysis is read-only.
+- Actual decompilation requires a compatible Ghidra 65816 language extension; REA only admits the architecture and hands the bytes to Ghidra.
 
 ## Related
 

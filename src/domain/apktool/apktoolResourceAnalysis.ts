@@ -27,9 +27,10 @@ const localeQualifierSchema = z
   .min(2)
   .max(MAX_ANDROID_LOCALE_SUFFIX)
   // A legacy `-r` region is two letters (androidfw LocaleValue::InitFromParts).
-  // Apktool writes a three-digit region only in the b+ form (ResConfig
-  // computeQualifiers), so `es-419` is admitted as an alias of `b+es+419`
-  // and `es-r419` names no table.
+  // Every supported Apktool writes a three-digit region only in the b+ form
+  // (ResConfigFlags in 2.7 through 2.12, ResConfig.computeQualifiers in 3.x),
+  // so `es-419` is admitted as an alias of `b+es+419` and `es-r419` names no
+  // table.
   .regex(
     /^(?:[a-z]{2,3}(?:-(?:r?[A-Z]{2}|[0-9]{3}))?|b\+[a-z]{2,3}(?:\+[A-Za-z0-9]{2,8})*)$/u,
     "Locale must look like de, pt-BR, pt-rBR, es-419, or b+zh+Hans+CN",

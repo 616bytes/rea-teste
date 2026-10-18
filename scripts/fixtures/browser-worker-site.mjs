@@ -18,6 +18,15 @@ export async function startWorkerSite() {
       "Content-Type",
       sources[req.url] ? "text/javascript" : "text/html",
     );
+    if (req.url.endsWith("-request")) {
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'nonce-worker-fixture-secret'",
+      );
+      res.setHeader("Link", '</agent>; rel="mcp"');
+      res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+      res.setHeader("Set-Cookie", "worker-fixture-credential=secret");
+    }
     res.end(
       sources[req.url] ??
         (req.url === "/" || req.url === "/other"

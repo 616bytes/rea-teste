@@ -2629,10 +2629,11 @@ it.each(["before", "after", "detached", "foreign"] as const)(
         (c) =>
           c.method === "Debugger.enable" && c.sessionId === "worker-service",
       ),
-    ).toBe(order !== "foreign");
+    ).toBe(order !== "foreign" && order !== "detached");
     if (order === "detached") {
-      // Domain enable may already be in flight; later out-of-scope events
-      // must not become retained script evidence after the client detaches.
+      // The client is detached before this queued service-worker enable starts.
+      // Keep the historical ownership event, but issue no new domain commands
+      // and retain no script evidence outside the remaining capture scope.
       expect(observation.scripts).toEqual([]);
       expect(observation.completeness.unavailable_sections).toEqual(
         expect.arrayContaining([
@@ -2681,6 +2682,7 @@ it.each([
   "missing-selection",
   "missing-observation",
   "service-target-type",
+  "dedicated-target-type",
   "page-target",
   "page-origin",
   "page-source-selection",
@@ -2733,6 +2735,14 @@ it.each([
       observation.selected_explicitly = false;
       observation.ownership = "page_related";
       observation.page_target_id = null;
+    }
+    if (mismatch === "dedicated-target-type") {
+      const observation = inspection.workers.find(
+        (w) => w.target_id === "shared",
+      )!.observation!;
+      observation.ownership = "page_related";
+      observation.selected_explicitly = false;
+      observation.page_target_id = input.target_id;
     }
     if (mismatch === "service-target-type") {
       const observation = inspection.workers.find(
@@ -2943,6 +2953,206 @@ it.each(["worker", "shared_worker"] as const)(
       expect(() => selectScriptCapture(evidence)).toThrow(
         /service_worker target/,
       );
+    }
+  },
+);
+
+it.each(["shared_worker", "service_worker"] as const)(
+  "rejects forged page-related ownership for %s in both retained consumers",
+  async (type) => {
+    const { provider, input } = await fixture();
+    const selected = { ...input, worker_target_ids: ["shared"] };
+    const capture = await provider.inspectPage(selected);
+    if (!capture.ok) throw capture.error;
+    const worker = capture.value.workers.find((w) => w.target_id === "shared")!;
+    worker.type = type;
+    worker.observation!.ownership = "page_related";
+    worker.observation!.page_target_id = input.target_id;
+    worker.observation!.selected_explicitly = false;
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      capture.value,
+      provider.identity(),
+    );
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(/dedicated worker/);
+    expect(() => selectScriptCapture(evidence)).toThrow(/dedicated worker/);
+  },
+);
+
+it("retains safe worker response metadata and untrusted agent hints through Evidence parsing", async () => {
+  const { provider, input } = await fixture({
+    commandEvents(command, origin) {
+      if (
+        command.method !== "Network.enable" ||
+        command.sessionId !== "worker-own"
+      )
+        return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: "worker-own",
+          params: {
+            requestId: "headers",
+            type: "Fetch",
+            request: { url: origin + "/headers", method: "GET", headers: {} },
+            initiator: { type: "script" },
+          },
+        },
+        {
+          method: "Network.responseReceived",
+          sessionId: "worker-own",
+          params: {
+            requestId: "headers",
+            response: {
+              url: origin + "/headers",
+              status: 200,
+              mimeType: "text/plain",
+              headers: {
+                "Content-Security-Policy":
+                  "default-src 'self';script-src 'nonce-secret-token'",
+                Link: '</agent>; rel="mcp"',
+                "Cross-Origin-Resource-Policy": "same-origin",
+                "Set-Cookie": "credential-secret",
+                Authorization: "Bearer credential-secret",
+              },
+            },
+          },
+        },
+      ];
+    },
+  });
+  const capture = await provider.inspectPage(input);
+  if (!capture.ok) throw capture.error;
+  const metadata = capture.value.workers.find(
+    (w) => w.target_id === "own",
+  )!.observation!;
+  expect(metadata).toMatchObject({
+    metadata: {
+      headers_allowlisted: true,
+      responses: [
+        {
+          request_id: "headers",
+          csp: { nonce_count: 1 },
+          policies: { corp: "same-origin" },
+        },
+      ],
+      agent_hints: [{ declaration: "mcp", trust: "page-declared-untrusted" }],
+    },
+  });
+  const evidence = createBrowserEvidence(
+    "inspect_web_page",
+    input,
+    capture.value,
+    provider.identity(),
+  );
+  const retained = parseEvidence(JSON.parse(JSON.stringify(evidence)));
+  expect(JSON.stringify(retained)).toContain("headers_allowlisted");
+  expect(JSON.stringify(metadata)).not.toMatch(
+    /credential-secret|nonce-secret-token/,
+  );
+  expect(retained.normalized_result).toEqual(evidence.normalized_result);
+  const scope = browserWorkerEvidenceScopeSchema.parse(evidence);
+  expect(
+    scope.normalized_result.workers.find((w) => w.target_id === "own")!
+      .observation,
+  ).toEqual(metadata);
+});
+
+it.each(["complete", "abort", "failure", "detach"] as const)(
+  "bounds queued worker/frame lifecycle commands and settles %s",
+  async (mode) => {
+    const total = 20;
+    const controller = new AbortController();
+    const { provider, input, browser } = await fixture({
+      hangOnCommand: (c) =>
+        c.sessionId?.startsWith("burst-") === true &&
+        c.method === "Target.setAutoAttach" &&
+        c.params.autoAttach === true,
+      commandEvents(c, origin) {
+        if (
+          c.method === "Target.setAutoAttach" &&
+          c.params.autoAttach === true &&
+          c.sessionId === "session-1"
+        )
+          return Array.from({ length: total }, (_, i) => ({
+            method: "Target.attachedToTarget",
+            sessionId: "session-1",
+            params: {
+              sessionId: `burst-${i}`,
+              targetInfo: {
+                targetId: `burst-target-${i}`,
+                type: i < 16 ? "worker" : "iframe",
+                url: origin + `/burst-${i}.js`,
+                attached: true,
+              },
+            },
+          }));
+        if (c.sessionId?.startsWith("burst-")) return [];
+        return undefined;
+      },
+    });
+    const pending = provider.inspectPage(input, { signal: controller.signal });
+    const attaching = () =>
+      browser.commands.filter(
+        (c) =>
+          c.sessionId?.startsWith("burst-") &&
+          c.method === "Target.setAutoAttach" &&
+          c.params.autoAttach === true,
+      );
+    try {
+      await vi.waitFor(() => expect(attaching()).toHaveLength(1));
+      if (mode === "abort") controller.abort();
+      else if (mode === "failure") {
+        const first = attaching()[0]!;
+        browser.emitRawMessage(
+          JSON.stringify({
+            id: first.id,
+            sessionId: first.sessionId,
+            error: { code: -32602, message: "Invalid params" },
+          }),
+        );
+      } else {
+        if (mode === "detach")
+          browser.emitEvent({
+            method: "Target.detachedFromTarget",
+            sessionId: "session-1",
+            params: { sessionId: "burst-1", targetId: "burst-target-1" },
+          });
+        for (let i = 0; i < total - (mode === "detach" ? 1 : 0); i++) {
+          await vi.waitFor(() => expect(attaching()).toHaveLength(i + 1));
+          const command = attaching()[i]!;
+          browser.emitRawMessage(
+            JSON.stringify({
+              id: command.id,
+              sessionId: command.sessionId,
+              result: {},
+            }),
+          );
+        }
+      }
+      const result = await pending;
+      expect(result.ok).toBe(mode === "complete" || mode === "detach");
+      if (mode === "abort" || mode === "failure")
+        expect(attaching()).toHaveLength(1);
+      else
+        expect(
+          browser.commands.filter(
+            (c) =>
+              c.sessionId?.startsWith("burst-") &&
+              c.method === "Network.enable",
+          ),
+        ).toHaveLength(mode === "detach" ? 15 : 16);
+      if (mode === "detach")
+        expect(
+          browser.commands.some(
+            (c) => c.sessionId === "burst-1" && c.method === "Runtime.enable",
+          ),
+        ).toBe(false);
+      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    } finally {
+      controller.abort();
+      await pending;
     }
   },
 );

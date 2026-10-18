@@ -92,6 +92,12 @@ export const browserWorkerEvidenceScopeSchema = z
         });
       const observation = worker.observation;
       if (observation === undefined) continue;
+      if (observation.ownership === "page_related" && worker.type !== "worker")
+        context.addIssue({
+          code: "custom",
+          path: [...path, "observation", "ownership"],
+          message: "Page-related ownership requires a dedicated worker target",
+        });
       if (
         observation.ownership === "service_worker_client" &&
         worker.type !== "service_worker"

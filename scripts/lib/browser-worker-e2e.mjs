@@ -190,6 +190,35 @@ export async function verifyBrowserWorkers(
       () => page.evaluate(() => window.act()),
     );
     check(explicit, site, target, true);
+    const workerMetadata = explicit.workers.flatMap(
+      (worker) => worker.observation.metadata?.responses ?? [],
+    );
+    for (const path of [
+      "/worker-request",
+      "/module-request",
+      "/shared-request",
+    ]) {
+      const response = workerMetadata.find(
+        (item) => item.url === site.origin + path,
+      );
+      assert.ok(response, `Missing retained worker response metadata: ${path}`);
+      assert.equal(response.csp.nonce_count, 1);
+      assert.equal(response.policies.corp, "same-origin");
+      assert.ok(response.links.some((link) => link.rel.includes("mcp")));
+    }
+    assert.ok(
+      explicit.workers.some((worker) =>
+        worker.observation.metadata?.agent_hints.some(
+          (hint) =>
+            hint.declaration === "mcp" &&
+            hint.trust === "page-declared-untrusted",
+        ),
+      ),
+    );
+    assert.doesNotMatch(
+      JSON.stringify(workerMetadata),
+      /worker-fixture-secret|worker-fixture-credential/,
+    );
     const workerConsole = (result) =>
       result.workers.flatMap(
         (worker) => worker.observation.console_events ?? [],
@@ -389,6 +418,7 @@ export async function verifyBrowserWorkers(
     return {
       cases: 14,
       workerConsoleSelected: true,
+      workerResponseMetadata: true,
       workerConsoleRedacted: true,
       outOfProcessIframeWorker: true,
       outOfProcessIframeServiceWorker: true,

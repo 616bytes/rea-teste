@@ -71,6 +71,8 @@ export class CdpWorkerCapture {
     }[]
   >();
   readonly #pending = new Set<Promise<void>>();
+  readonly #lifecycleWork: (() => Promise<void>)[] = [];
+  #runningLifecycle = false;
   readonly #invalidTargets = new Set<string>();
   readonly #sourceReads: {
     worker: WorkerState;
@@ -185,6 +187,7 @@ export class CdpWorkerCapture {
             "network_requests",
             "websocket_connections",
             "websocket_frames",
+            "metadata",
           ] as const)
             worker.events.completeness.unavailable(section);
         if (!worker.domains.has("Runtime"))
@@ -195,6 +198,11 @@ export class CdpWorkerCapture {
         ];
         worker.item.observation.scripts = [...worker.sources.values()];
         worker.item.observation.console_events = worker.events.console;
+        worker.item.observation.metadata = {
+          responses: worker.events.responseMetadata,
+          agent_hints: worker.events.agentHints,
+          headers_allowlisted: true,
+        };
         worker.item.observation.websocket_connections = [
           ...worker.events.webSocketConnectionsById.values(),
         ];
@@ -634,7 +642,7 @@ export class CdpWorkerCapture {
       this.#sourceReads.push({ worker, item });
       if (this.#readingSources) return;
       this.#readingSources = true;
-      this.#queue(() => this.#readSources());
+      this.#track(() => this.#readSources());
     }
   }
 
@@ -959,6 +967,27 @@ export class CdpWorkerCapture {
   }
 
   #queue(work: () => Promise<void>): void {
+    if (this.#stopped || this.signal.aborted) return;
+    this.#lifecycleWork.push(work);
+    if (this.#runningLifecycle) return;
+    this.#runningLifecycle = true;
+    // Allocate one runner, not one command/timer/promise per attachment. Source
+    // reads have their own serialized runner so neither lane blocks the other.
+    this.#track(async () => {
+      try {
+        for (
+          let index = 0;
+          index < this.#lifecycleWork.length && !this.signal.aborted;
+          index++
+        )
+          await this.#lifecycleWork[index]!();
+      } finally {
+        this.#lifecycleWork.length = 0;
+        this.#runningLifecycle = false;
+      }
+    });
+  }
+  #track(work: () => Promise<void>): void {
     const pending = work()
       .catch((cause) => {
         this.#fail(cause);

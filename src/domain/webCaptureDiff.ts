@@ -453,7 +453,6 @@ const networkDimension = (
   const projection = {
     metadataFields: metadata.fields,
     ambiguousIdentities: requestIdentities.ambiguousIdentities,
-    inventoryComplete: requestsComplete,
   };
   const sources = new Map<string, BodyShapeSources>();
   if (selected) {
@@ -512,16 +511,21 @@ const networkDimension = (
     afterWebSockets,
     webSocketShapes,
   );
+  const [beforeRequests, afterRequests] = comparableNetworkMaps(
+    networkSamples(before, sources, projection),
+    networkSamples(after, sources, projection),
+    requestsComplete,
+  );
   const compared = compareDimension(
     new Map([
-      ...networkMap(before, sources, projection),
+      ...beforeRequests,
       ...(webSocketInventoryComplete
         ? webSocketMetadataMap(beforeWebSockets)
         : []),
       ...beforeWebSocketPayload,
     ]),
     new Map([
-      ...networkMap(after, sources, projection),
+      ...afterRequests,
       ...(webSocketInventoryComplete
         ? webSocketMetadataMap(afterWebSockets)
         : []),
@@ -578,7 +582,7 @@ const networkDimension = (
   };
 };
 
-const networkMap = (
+const networkSamples = (
   inspection: WebPageInspection,
   sources: ReadonlyMap<string, BodyShapeSources>,
   projection: {
@@ -587,9 +591,8 @@ const networkMap = (
       ReadonlySet<NetworkMetadataField>
     >;
     readonly ambiguousIdentities: ReadonlySet<string>;
-    readonly inventoryComplete: boolean;
   },
-): ReadonlyMap<string, string> => {
+): ReadonlyMap<string, readonly string[]> => {
   const grouped = new Map<string, string[]>();
   for (const request of inspection.network.requests) {
     const identity = networkIdentity(request);
@@ -638,16 +641,31 @@ const networkMap = (
     );
     grouped.set(identity, values);
   }
-  return new Map(
-    [...grouped].map(([identity, values]) => [
-      identity,
-      digestCanonicalValue(
-        // Repeated samples do not establish multiplicity across omissions;
-        // keep their known content without interpreting missing rows as change.
-        (projection.inventoryComplete ? values : [...new Set(values)]).sort(),
-      ),
-    ]),
-  );
+  return grouped;
+};
+
+const comparableNetworkMaps = (
+  before: ReadonlyMap<string, readonly string[]>,
+  after: ReadonlyMap<string, readonly string[]>,
+  inventoryComplete: boolean,
+): readonly [ReadonlyMap<string, string>, ReadonlyMap<string, string>] => {
+  const fingerprints = (
+    samples: ReadonlyMap<string, readonly string[]>,
+    peers: ReadonlyMap<string, readonly string[]>,
+  ): ReadonlyMap<string, string> => {
+    const result = new Map<string, string>();
+    for (const [identity, values] of samples) {
+      // Overlapping repeated samples can differ only because rows were missed.
+      // Preserve disjoint observed content changes, but do not call an omitted
+      // sample a modification of a matching one (including redirect metadata).
+      const peerValues = new Set(peers.get(identity));
+      if (!inventoryComplete && values.some((value) => peerValues.has(value)))
+        continue;
+      result.set(identity, digestCanonicalValue([...values].sort()));
+    }
+    return result;
+  };
+  return [fingerprints(before, after), fingerprints(after, before)];
 };
 
 type WebSocketGroup = {

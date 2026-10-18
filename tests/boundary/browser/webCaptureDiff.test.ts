@@ -5,6 +5,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { runCliJson } from "../../fixtures/cliJsonProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -285,6 +286,46 @@ describe("HTTP response source comparison", () => {
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(response.structuredContent).toEqual(evidence);
     await client.ping();
+    const repeated = passiveNetworkCapture(["/a", "/a"]);
+    const first = repeated.network.requests[0]!;
+    first.response_source = {
+      service_worker: false,
+      disk_cache: false,
+      service_worker_response_source: "network",
+    };
+    const surviving = structuredClone(first);
+    surviving.request_id = "surviving-sample";
+    surviving.response_source!.service_worker = true;
+    repeated.network.requests = [first, surviving];
+    const reduced = structuredClone(repeated);
+    reduced.network.requests = [surviving];
+    for (const limited of [false, true]) {
+      if (limited) repeated.completeness.dropped_events.network_requests = 1;
+      await writeFile(beforePath, JSON.stringify({ inspection: repeated }));
+      await writeFile(afterPath, JSON.stringify({ inspection: reduced }));
+      const compared = parseEvidence(
+        await runCliJson([
+          "compare-web-captures",
+          beforePath,
+          afterPath,
+          "--json",
+        ]),
+      );
+      expect(compared.normalized_result).toMatchObject({
+        dimensions: {
+          network: {
+            status: limited ? "unknown" : "changed",
+            total_changes: limited ? 0 : 1,
+          },
+        },
+      });
+      const result = await call("compare_web_captures", {
+        before: { inspection: repeated },
+        after: { inspection: reduced },
+      });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      expect(result.structuredContent).toEqual(compared);
+    }
   });
 });
 

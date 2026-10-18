@@ -827,3 +827,81 @@ describe("passive dropped-event inventory coverage", () => {
     },
   );
 });
+
+it.each(["response", "redirect"] as const)(
+  "does not turn omitted %s samples into a response-source change",
+  (location) => {
+    for (const field of [
+      "service_worker",
+      "disk_cache",
+      "service_worker_response_source",
+    ] as const) {
+      const known =
+        field === "service_worker_response_source" ? "network" : false;
+      const other =
+        field === "service_worker_response_source" ? "cache-storage" : true;
+      const make = (values: readonly (boolean | string)[]) => {
+        const capture = redirectCapture("Document");
+        const template = capture.network.requests[0]!;
+        capture.network.requests = values.map((value, index) => {
+          const request = structuredClone(template);
+          request.request_id = `sample-${index}`;
+          (location === "response"
+            ? request
+            : request.redirects![0]!
+          ).response_source = {
+            service_worker: null,
+            disk_cache: null,
+            service_worker_response_source: null,
+            [field]: value,
+          };
+          return request;
+        });
+        return capture;
+      };
+      for (const [left, right] of [
+        [[known, other], [other]],
+
+        [
+          [known, other],
+          [other, other],
+        ],
+      ] as const) {
+        const before = make(left);
+        const after = make(right);
+        expect(compare(before, after)).toMatchObject({
+          status: "changed",
+          total_changes: 1,
+        });
+        for (const limit of ["dropped", "truncated", "unavailable"] as const)
+          for (const side of ["before", "after", "both"] as const) {
+            const a = structuredClone(before);
+            const b = structuredClone(after);
+            for (const capture of side === "both"
+              ? [a, b]
+              : [side === "before" ? a : b]) {
+              if (limit === "dropped")
+                capture.completeness.dropped_events.network_requests = 1;
+              else if (limit === "truncated")
+                capture.completeness.truncated_sections.push(
+                  "network_requests",
+                );
+              else
+                capture.completeness.unavailable_sections.push(
+                  "network_requests",
+                );
+            }
+            for (const [first, second] of [
+              [a, b],
+              [b, a],
+            ] as const)
+              expect(compare(first, second)).toMatchObject({
+                status: "unknown",
+                total_changes: 0,
+                changes: [],
+              });
+          }
+      }
+    }
+  },
+);

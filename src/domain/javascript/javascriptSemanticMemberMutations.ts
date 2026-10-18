@@ -4,6 +4,7 @@ import {
   semanticBuiltinDataProperty,
   semanticBuiltinSlotChanged,
 } from "./javascriptSemanticDataEffectHelpers.js";
+import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 
 import {
   clearSemanticRequireWriteCache,
@@ -19,6 +20,7 @@ import {
 
 import {
   resolveSemanticBindingState,
+  type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
@@ -176,7 +178,11 @@ const ownLiteralDataProperty = (
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
+  referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
 ): Generator<void, void> {
+  const deferredMapReceivers = new Set<
+    t.CallExpression | t.OptionalCallExpression
+  >();
   const parents = state.parentsByNode;
   const interop = createSemanticModuleInterop(state);
   const wrapperDescriptorWrites = state.ambientWriteEffects.filter(
@@ -1072,7 +1078,11 @@ export function* collectSemanticMemberMutationsSteps(
             });
           else markEscaped(argument, node);
         // Constructing a member does not pass its container as `this`.
-        if (!t.isNewExpression(node)) markReceiver(node.callee, node);
+        if (!t.isNewExpression(node)) {
+          const mapLookup = isIntrinsicMapLookup(node, state);
+          if (mapLookup === undefined) deferredMapReceivers.add(node);
+          else if (!mapLookup) markReceiver(node.callee, node);
+        }
       } else if (t.isTaggedTemplateExpression(node)) {
         markReceiver(node.tag, node);
         for (const expression of node.quasi.expressions)
@@ -1086,7 +1096,8 @@ export function* collectSemanticMemberMutationsSteps(
   while (
     reflectSets.length > 0 ||
     pendingReferences.length > 0 ||
-    iterableReferences.length > 0
+    iterableReferences.length > 0 ||
+    deferredMapReceivers.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const escapesBefore = escapedObjectBindings.size;
@@ -1180,6 +1191,20 @@ export function* collectSemanticMemberMutationsSteps(
         undefined,
         reference.widenedGetterResult === true,
       );
+    }
+    // Native Map lookup methods do not expose their receiver to user code.
+    // Settle genuine effects first, then replay every unproven receiver escape.
+    // Keep proven sites until convergence: later propagated effects can revoke them.
+    let receiverIndex = 0;
+    for (const node of deferredMapReceivers) {
+      if (receiverIndex++ % 64 === 0) yield;
+      if (
+        isIntrinsicMapLookup(node, state, { referenceMayHaveChangedAt }) ===
+        true
+      )
+        continue;
+      deferredMapReceivers.delete(node);
+      markReceiver(node.callee, node);
     }
     if (
       recordedEffectCount === effectsBefore &&

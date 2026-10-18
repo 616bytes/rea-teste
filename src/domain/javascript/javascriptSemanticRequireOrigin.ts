@@ -405,6 +405,7 @@ const writesModuleRequire = (
   const inheritedDescriptorFieldChanged = (
     field: string,
     at: t.Node,
+    consumedAt: t.Node,
   ): boolean => {
     let effects = descriptorPrototypeWrites.get(field);
     if (effects === undefined) {
@@ -418,13 +419,18 @@ const writesModuleRequire = (
       );
       descriptorPrototypeWrites.set(field, effects);
     }
+    // A deferred descriptor may run before this consumer, but a prototype write
+    // ordered after the consumer cannot supply that earlier descriptor value.
     return effects.some(
-      ({ node }) => semanticEffectTiming(at, node, state) !== "after",
+      ({ node }) =>
+        semanticEffectTiming(at, node, state) !== "after" &&
+        semanticEffectTiming(consumedAt, node, state) !== "after",
     );
   };
   const writtenValues = (
     mutation: t.Node | undefined,
     key: string,
+    consumedAt = mutation,
   ):
     | readonly { node: t.Node; path: JavaScriptSemanticPropertyPath }[]
     | undefined => {
@@ -503,7 +509,7 @@ const writesModuleRequire = (
             semanticStaticPropertyKey(property.key, property.computed) ===
               field,
         ) &&
-        inheritedDescriptorFieldChanged(field, mutation)
+        inheritedDescriptorFieldChanged(field, mutation, consumedAt ?? mutation)
       )
         return undefined;
     return [{ node: data, path: ["value"] }];
@@ -524,7 +530,14 @@ const writesModuleRequire = (
       definite && parent !== undefined && !t.isFunction(parent);
       parent = state.parentsByNode.get(child)
     ) {
-      if (semanticBranchMayBeSkipped(parent, child)) definite = false;
+      // A break or continue can bypass a replacement while the later read runs.
+      // Use the same unconditional-body restriction as initializer projection.
+      if (
+        t.isLabeledStatement(parent) ||
+        t.isLoop(parent) ||
+        semanticBranchMayBeSkipped(parent, child)
+      )
+        definite = false;
       child = parent;
     }
     definiteReplacements.set(node, definite);
@@ -807,7 +820,7 @@ const writesModuleRequire = (
           const values =
             effect.path.every((part) => typeof part === "string") &&
             typeof key === "string"
-              ? writtenValues(effect.node, key)
+              ? writtenValues(effect.node, key, call)
               : undefined;
           if (values === undefined) return true;
           for (const reference of values)

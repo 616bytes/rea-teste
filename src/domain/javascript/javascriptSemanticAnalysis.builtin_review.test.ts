@@ -169,6 +169,59 @@ it.each([
   },
 );
 
+it.each([
+  "outer:{if(flag)break outer; holder.child={};}",
+  "outer:{{if(flag)break outer;} holder.child={};}",
+  "outer:{try{if(flag)break outer;}finally{} holder.child={};}",
+  "do{if(flag)break; holder.child={};}while(false);",
+  "do{if(flag)continue; holder.child={};}while(false);",
+  "for(;flag;){holder.child={}; break;}",
+  "flag && (holder.child={});",
+  "flag ? holder.child={} : undefined;",
+])(
+  "retains saved-object exposure across skipped replacements: %s",
+  (replace) => {
+    expect(
+      analyzeJavaScriptSemantics(`const holder={child:{}}; const box={};
+    box.owner=holder.child; ${replace} holder.child.owner=module;
+    Object.assign=(target,value)=>{value.owner.require=replacement};
+    Object.assign({},box.owner); require('fs').readFileSync('wrong');
+  `).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "function install(){Object.defineProperty(box,'owner',{writable:true});} install();",
+  "const install=()=>Reflect.defineProperty(box,'owner',{writable:true}); install();",
+  "(()=>Object.defineProperties(box,{owner:{writable:true}}))();",
+])("bounds inherited descriptor lookup by its consumer: %s", (install) => {
+  const consume =
+    "Object.assign=custom; Object.assign({},box.owner); require('fs').readFileSync('kept');";
+  const prototype = "Object.prototype.value=module;";
+  expect(
+    analyzeJavaScriptSemantics(
+      `const box={}; ${install} ${consume} ${prototype}`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+  expect(
+    analyzeJavaScriptSemantics(
+      `const box={}; ${prototype} ${install} ${consume}`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it("rechecks inherited descriptor lookup at each consuming call", () => {
+  expect(
+    analyzeJavaScriptSemantics(`const box={};
+    function install(){Object.defineProperty(box,'owner',{writable:true,configurable:true});}
+    install(); Object.assign=custom; Object.assign({},box.owner);
+    require('fs').readFileSync('kept'); Object.prototype.value=module;
+    install(); Object.assign({},box.owner); require('fs').readFileSync('wrong');
+  `).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+});
+
 const intrinsicReplacementForms = [
   "Object.defineProperty(Reflect,'set',{value:bound});",
   "Reflect.defineProperty(Reflect,'set',{value:bound});",

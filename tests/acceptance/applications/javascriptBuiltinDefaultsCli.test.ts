@@ -14,6 +14,11 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const holder={child:{}}; const box={}; box.owner=holder.child; outer:{if(flag)break outer;holder.child={};} holder.child.owner=module; Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-labeled-allocation');",
+    "const holder={child:{}}; const box={}; box.owner=holder.child; do{if(flag)continue;holder.child={};}while(false);holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-loop-allocation');",
+    "const box={};function install(){Object.defineProperty(box,'owner',{writable:true});}install();Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('deferred-descriptor.json');Object.prototype.value=module;",
+    "const box={};(()=>Reflect.defineProperty(box,'owner',{writable:true}))();Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('immediate-descriptor.json');Object.prototype.value=module;",
+    "const box={};function install(){Object.defineProperty(box,'owner',{writable:true});}Object.prototype.value=module;install();Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-inherited-descriptor');",
     "const box={}; box.owner=1; Object.assign=custom; Object.assign({},box.owner); require('fs').readFileSync('harmless-written.json');",
     "const box={}; Object.defineProperties(box,{owner:{value:1}}); Object.assign=custom; Object.assign({},box.owner); require('fs').readFileSync('harmless-descriptor.json');",
     "Object.defineProperty(Reflect,'set',{value:Reflect.set.bind(null,module)}); Reflect.set('require',replacement); require('fs').readFileSync('wrong-descriptor-bound');",
@@ -187,11 +192,13 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "bound-separate.json",
     "constructed-receiver.json",
     "copied-unrelated.json",
+    "deferred-descriptor.json",
     "direct.json",
     "escaped.json",
     "glob-kept.json",
     "harmless-descriptor.json",
     "harmless-written.json",
+    "immediate-descriptor.json",
     "later.json",
     "loader-after.json",
     "loader-before.json",

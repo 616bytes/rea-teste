@@ -165,6 +165,30 @@ const closureFindings = (
         input.obligation_ledger.evidence_links,
       ),
     );
+  for (const obligation of input.obligation_ledger.obligations) {
+    if (!obligation.required || obligation.status !== "verified") continue;
+    const verifier = obligation.binding?.verifier;
+    if (
+      verifier?.implementation_sha256 === undefined ||
+      !verifier.negative_controls?.some(({ status }) => status === "fail")
+    )
+      findings.push(
+        finding(
+          "reconstruction-verifier-unchallenged",
+          "verify-reconstruction-closure",
+          "unknown",
+          `${obligation.obligation_id} was verified by a ledger without a digest-bound failing negative control; rebuild the ledger from its manifest to reassess closure.`,
+          obligation.binding === null
+            ? []
+            : [
+                ...(verifier == null ? [] : [verifier.result_evidence_id]),
+                ...(verifier?.negative_controls ?? []).map(
+                  ({ result_evidence_id: id }) => id,
+                ),
+              ],
+        ),
+      );
+  }
   addMissingEvidenceFindings(
     findings,
     "verify-reconstruction-closure",

@@ -38,6 +38,7 @@ import {
   originalCasesFor,
 } from "./ReconstructionObligationOriginalCases.js";
 import { obligationLedgerEvidenceLinks } from "./ReconstructionObligationLedgerProjection.js";
+import { evaluateVerifierControls } from "./ReconstructionObligationVerifierControls.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
@@ -343,6 +344,9 @@ const evaluateVerifier = (
         obligationId: candidate.obligation_id,
         verifierId: verifier.verifier_id,
         claimId: verifier.claim_id,
+        ...(verifier.implementation_sha256 === undefined
+          ? {}
+          : { verifierSha256: verifier.implementation_sha256 }),
       }))
   )
     addDiagnostic(
@@ -356,6 +360,14 @@ const evaluateVerifier = (
       "verifier-failed",
       `Latest verifier status is ${verifier.status}.`,
     );
+  evaluateVerifierControls({
+    candidate,
+    binding,
+    verifier,
+    positiveEvidence: resultEvidence,
+    evidence: context.evidence,
+    diagnostics,
+  });
 };
 
 const evaluateAuthority = (

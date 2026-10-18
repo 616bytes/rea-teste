@@ -95,6 +95,61 @@ describe("reconstruction readiness report", () => {
 });
 
 describe("readiness obligation ledger integrity", () => {
+  it("keeps a historical ready ledger intact but marks its verifier unchallenged", () => {
+    const value = input();
+    const obligation = value.obligation_ledger.obligations[0];
+    const verifier = obligation?.binding?.verifier;
+    if (
+      obligation === undefined ||
+      obligation.binding === null ||
+      verifier == null
+    )
+      throw new TypeError("Missing verified obligation");
+    const {
+      implementation_sha256: _digest,
+      negative_controls: _controls,
+      ...legacyVerifier
+    } = verifier;
+    const legacyLedger = {
+      ...value.obligation_ledger,
+      obligations: [
+        {
+          ...obligation,
+          binding: { ...obligation.binding, verifier: legacyVerifier },
+        },
+      ],
+    };
+    value.obligation_ledger = {
+      ...legacyLedger,
+      closure_digest: reconstructionObligationLedgerClosureDigest(legacyLedger),
+    };
+    const latest = value.closure_history.at(-1);
+    if (latest === undefined) throw new TypeError("Missing closure history");
+    value.closure_history[value.closure_history.length - 1] = {
+      ...latest,
+      ledger_digest: value.obligation_ledger.closure_digest,
+    };
+
+    expect(
+      reconstructionObligationLedgerSchema.parse(value.obligation_ledger),
+    ).toEqual(value.obligation_ledger);
+    const report = createReconstructionReadinessReport(value);
+    expect(report.status).toBe("unknown");
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        code: "reconstruction-verifier-unchallenged",
+        stage_id: "verify-reconstruction-closure",
+      }),
+    );
+    expect(report.findings.map(({ code }) => code)).not.toContain(
+      "closure-history-identity-mismatch",
+    );
+    expect(value.obligation_ledger.status).toBe("ready");
+    expect(value.obligation_ledger.closure_digest).toBe(
+      reconstructionObligationLedgerClosureDigest(value.obligation_ledger),
+    );
+  });
+
   it("rejects a required obligation changed behind the old ledger commitment", () => {
     const value = input();
     expect(

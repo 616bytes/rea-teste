@@ -46,7 +46,7 @@ it("charges table-only output without reserving a duplicate primary copy", async
   expect(outcome.value.coverage).toBe("complete");
 });
 
-describe("physical Apktool string facts", () => {
+describe("Apktool locale alias table selection", () => {
   it.each([false, true])(
     "reads one physical table for two caller-selected aliases (table-only: %s)",
     async (tablesOnly) => {
@@ -112,7 +112,9 @@ describe("physical Apktool string facts", () => {
       ]);
     },
   );
+});
 
+describe("physical Apktool string facts", () => {
   it("counts complete source entries beyond the retained table prefix", async () => {
     const outcome = await projectApktoolStringTables(
       {

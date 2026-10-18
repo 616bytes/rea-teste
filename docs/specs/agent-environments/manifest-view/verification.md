@@ -88,6 +88,17 @@ Findings repaired at their owning boundary:
    `/api/teams/2`, `/api/teams/search` and `/api/teams/mine`, the capture
    guide and the spec state the rule; the built-CLI check above exercises it.
 
+## Hosted lane
+
+- `real-web-network-captures` (hosted ubuntu-24.04, workflow run
+  https://github.com/earakely-scale/rea/actions/runs/39097105064 on the fork
+  at 2d95597f) passed with the manifest block of
+  `scripts/verify-web-network-captures.mjs` executed against the lane's
+  producer and mitmproxy captures. The first run at 61d35369 failed only in
+  that block: the refusal check stringified the whole MCP result, so the
+  declared `[` literal matched the result envelope; the follow-up compares the
+  parsed refusal as the api-surface branch does.
+
 ## Scope and measurement limits
 
 macOS `/usr/bin/time -l`, command accounting only: `npm run check:fast`

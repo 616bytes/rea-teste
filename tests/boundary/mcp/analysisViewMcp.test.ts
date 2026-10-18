@@ -501,6 +501,49 @@ it("advertises and returns native singleton and unavailable item shapes", async 
   }
 });
 
+it("preserves the status-only native API variant through inline and retained MCP views", async () => {
+  const { client, session } = await connect();
+  const parent = createEvidence(
+    {
+      path: "/fixtures/unrecorded-api.exe",
+      format: "pe",
+      sha256: "b".repeat(64),
+    },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "analyze_function",
+      parameters: { address: "0x401000" },
+      result: {
+        ...functionDossierSchema.parse(ghidraFunctionDossier()),
+        native_api: null,
+      },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "native", facet: "native_api", offset: 0, limit: 32 },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const view = parseEvidence(response.structuredContent).normalized_result;
+    expect(z.object({ item: z.unknown() }).parse(view).item).toEqual({
+      available: false,
+      reason: "not recorded",
+    });
+    expect(view).toMatchObject({
+      unknowns: expect.arrayContaining(["native_api was not recorded"]),
+      coverage: { total: 1, next_offset: null, exhausted: true },
+    });
+  }
+});
+
 it("advertises exact schemas and projects one layout section from retained Evidence", async () => {
   const layout = analysisViewLayoutFixture();
   const service = new BinaryLayoutService({

@@ -64,3 +64,19 @@ it("does not promote an awaited receiver into a proven Map identity", () => {
     }),
   );
 });
+
+it("does not prove an awaited thenable's destination private", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    async function expose(external) {
+      const box = await { then(resolve) { resolve(external); } };
+      box.p = Map.prototype;
+    }
+    expose(holder); patch(holder); new Map().get('/accounts');
+  `);
+  expect(analysis.endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});

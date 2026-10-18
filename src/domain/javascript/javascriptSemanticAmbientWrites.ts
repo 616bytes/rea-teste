@@ -416,6 +416,7 @@ export const createAmbientPathResolver = (
       }
       if (possibleWrites && t.isAwaitExpression(root)) {
         // Await may preserve the value; this does not prove its identity for reads.
+        if (activeDestination !== undefined) activeDestination.unknown = true;
         continueWith(root.argument);
         continue;
       }

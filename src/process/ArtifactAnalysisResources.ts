@@ -45,6 +45,11 @@ export class ArtifactAnalysisResources {
     readonly scope: ArtifactResourceScope;
     operation: string;
   };
+  // Keep disclosure policy attached to the exact failure/lease, including when
+  // a later request or close retries an owner from a confidential read.
+  readonly #confidentialArtifacts = new WeakSet<
+    ArtifactReaderFailure | AnalysisCleanupLease
+  >();
   readonly #pending = new Map<
     ArtifactAnalysisRuntime,
     {
@@ -121,14 +126,31 @@ export class ArtifactAnalysisResources {
     return running;
   }
 
-  read(path: string, maximumBytes: number, signal?: AbortSignal) {
-    return this.readArtifact(
-      path,
-      maximumBytes,
-      signal,
-      undefined,
-      this.#artifacts.scope,
-    );
+  async read(
+    path: string,
+    maximumBytes: number,
+    signal?: AbortSignal,
+    disclosure: "public" | "confidential" = "public",
+  ) {
+    try {
+      return await this.readArtifact(
+        path,
+        maximumBytes,
+        signal,
+        undefined,
+        this.#artifacts.scope,
+      );
+    } catch (cause: unknown) {
+      if (
+        disclosure === "confidential" &&
+        cause instanceof ArtifactReaderFailure
+      ) {
+        this.#confidentialArtifacts.add(cause);
+        for (const lease of cause.cleanupLeases ?? [])
+          this.#confidentialArtifacts.add(lease);
+      }
+      throw cause;
+    }
   }
 
   readLimits(limits: LinuxResourceLimits): Promise<LinuxResourceLimits> {
@@ -268,6 +290,11 @@ export class ArtifactAnalysisResources {
   ): AnalysisError {
     const observation = cause.cleanup;
     if (observation === undefined) return classifyPrimary(cause);
+    const confidential =
+      this.#confidentialArtifacts.has(cause) ||
+      cause.cleanupLeases?.some((lease) =>
+        this.#confidentialArtifacts.has(lease),
+      ) === true;
     const failure = new ProviderCleanupError(
       this.providerId,
       observation.resources,
@@ -277,7 +304,9 @@ export class ArtifactAnalysisResources {
           ? {}
           : { captured_output: { ...capturedOutput } }),
       },
-      { operation, cause },
+      // Raw file failures retain completed bytes and readable descriptor owners.
+      // Bind cleanup leases privately below, without publishing those capabilities.
+      { operation, ...(confidential ? {} : { cause }) },
     );
     let leases = cause.cleanupLeases;
     if (leases === undefined) {
@@ -286,6 +315,7 @@ export class ArtifactAnalysisResources {
       const unresolved = new AnalysisCleanupLease(async () => {
         throw cause;
       }, observation.resources);
+      if (confidential) this.#confidentialArtifacts.add(unresolved);
       this.#artifacts.scope.retain({
         kind: "lease",
         resource: observation.resources[0] ?? "Unresolved artifact cleanup",
@@ -329,6 +359,8 @@ export class ArtifactAnalysisResources {
     },
     effectiveLimits: LinuxResourceLimits | undefined,
     operation = this.operation,
+    /** The provider withheld output text; keep the observed stream sizes. */
+    outputWithheld = false,
   ): AnalysisError {
     const capturedOutput =
       cause.snapshot === null
@@ -339,6 +371,12 @@ export class ArtifactAnalysisResources {
             truncated: cause.snapshot.diagnosticTruncated ?? false,
             exit_code: cause.snapshot.exitCode ?? null,
             signal: cause.snapshot.signal ?? null,
+            ...(outputWithheld
+              ? {
+                  stdout_bytes: cause.snapshot.stdout.observedBytes,
+                  stderr_bytes: cause.snapshot.stderr.observedBytes,
+                }
+              : {}),
           };
     const detail = {
       cause,

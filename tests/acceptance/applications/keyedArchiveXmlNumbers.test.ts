@@ -34,8 +34,18 @@ cliTest.for([
     element: `<integer>1${"0".repeat(400)}</integer>`,
     expected: { $plist_type: "integer", decimal: `1${"0".repeat(400)}` },
   },
+  {
+    name: "incomplete data quartet",
+    element: "<data>AQI</data>",
+    expected: { $plist_type: "data", base64: "" },
+  },
+  {
+    name: "data with a non-alphabet character",
+    element: "<data>AQ!ID</data>",
+    expected: { $plist_type: "data", base64: "AQID" },
+  },
 ])(
-  "preserves $name XML numbers through CLI and MCP",
+  "preserves $name XML scalars through CLI and MCP",
   async (scenario, { cli }) => {
     const root = await createTestTempDirectory("rea-keyed-xml-numbers-");
     const bytes = Buffer.from(

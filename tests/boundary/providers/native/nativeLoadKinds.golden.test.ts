@@ -195,6 +195,10 @@ it("preserves dependency install names that begin with the word stamp", () => {
 
 it.each([
   ["surrounding spaces", "  leading.dylib  "],
+  ["surrounding tabs", "\tleading.dylib\t"],
+  ["version prefix", "version 2.dylib"],
+  ["embedded offset annotation", "named (offset 99)"],
+  ["numeric name", "123"],
   ["ordinary control", "leading.dylib"],
 ])(
   "preserves dependency install-name whitespace: %s",

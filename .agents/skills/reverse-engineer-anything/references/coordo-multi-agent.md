@@ -71,8 +71,13 @@ node /absolute/path/to/reverse-engineer-anything/scripts/coordo-handoff.mjs \
   --manifest /absolute/path/to/handoff.json
 ```
 
-Use the installed skill directory for the first path. In a REA source
-checkout, that directory is `.agents/skills/reverse-engineer-anything`.
+The example uses the workspace-installed skill. If it is not present in the
+project, use the helper inside the installed skill directory instead.
+
+Manifests must be valid UTF-8. Coordo agent names are limited to 64 bytes.
+Bundles inside nested Git repositories are rejected, even if the outer project
+ignores their paths; the bundle must be ignored and untracked in the repository
+that owns the selected bytes.
 
 After reviewing the task text and destination agents, add `--apply` to create
 the tasks. The helper calls `coordo task add` sequentially using argument arrays

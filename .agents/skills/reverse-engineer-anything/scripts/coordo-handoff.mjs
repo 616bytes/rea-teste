@@ -73,8 +73,12 @@ function digest(value, name) {
 }
 
 function agent(value, name) {
-  if (typeof value !== "string" || !agentPattern.test(value))
-    fail(`${name} must be a lowercase Coordo agent name`);
+  if (
+    typeof value !== "string" ||
+    !agentPattern.test(value) ||
+    Buffer.byteLength(value, "utf8") > 64
+  )
+    fail(`${name} must be a lowercase Coordo agent name of at most 64 bytes`);
   return value;
 }
 
@@ -190,6 +194,22 @@ async function validateBundle(root, manifest) {
     fail("The Evidence bundle must be inside the selected project");
   if (!(await stat(path)).isFile())
     fail("The Evidence bundle must be a regular file");
+  const owner = spawnSync(
+    "git",
+    ["-C", resolve(path, ".."), "rev-parse", "--show-toplevel"],
+    {
+      encoding: "utf8",
+      shell: false,
+      maxBuffer: 4096,
+    },
+  );
+  if (owner.error || owner.status !== 0)
+    fail("Could not determine which Git repository owns the Evidence bundle");
+  const ownerRoot = await realpath(owner.stdout.trim());
+  if (ownerRoot !== root)
+    fail(
+      "The Evidence bundle is inside a nested Git repository; select a bundle owned by the Coordo project",
+    );
   // Git checks apply to where the bytes live; Git rejects paths that pass
   // through a symlinked directory, so the selected path cannot be used here.
   const tracked = git(["ls-files", "--error-unmatch", "--", canonical], root);
@@ -218,7 +238,16 @@ async function main() {
   const manifestStats = await stat(manifestPath);
   if (!manifestStats.isFile() || manifestStats.size > 256 * 1024)
     fail("The manifest must be a regular JSON file of at most 256 KiB");
-  const manifest = validate(JSON.parse(await readFile(manifestPath, "utf8")));
+  const manifestBytes = await readFile(manifestPath);
+  let manifestText;
+  try {
+    manifestText = new TextDecoder("utf-8", { fatal: true }).decode(
+      manifestBytes,
+    );
+  } catch {
+    fail("The manifest must contain valid UTF-8");
+  }
+  const manifest = validate(JSON.parse(manifestText));
   const bundleRelative = await validateBundle(root, manifest);
   const planned = manifest.tasks.map((task, index) => {
     const description = [

@@ -431,7 +431,6 @@ try {
     skillDiscovery:
       "native GEMINI_CLI_HOME personal shared directory; isolated Git project",
     catalogSize,
-    schemasChecked,
     evidenceSeen,
     skillLoaded,
     artifactDigest,

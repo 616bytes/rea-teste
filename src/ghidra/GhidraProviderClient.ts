@@ -117,7 +117,6 @@ export type GhidraProviderClientFactory = (
     >
   >;
 
-type GhidraProviderClientInstance = ReturnType<GhidraProviderClientFactory>;
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {

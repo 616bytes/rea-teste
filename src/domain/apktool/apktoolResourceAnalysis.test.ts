@@ -9,6 +9,8 @@ it.each([
   "de",
   "pt-rBR",
   "b+es+419",
+  "b+en+001",
+  "b+ar+015",
   "b+sr+Latn",
   "b+zh+Hans+CN",
   "b+sr+Latn+RS+REVISED",
@@ -47,6 +49,8 @@ it.each([
 it.each([
   ["pt-BR", "pt-rBR"],
   ["en-419", "b+en+419"],
+  ["en-001", "b+en+001"],
+  ["ar-015", "b+ar+015"],
   ["fil-419", "b+fil+419"],
   ["pt-rBR", "pt-rBR"],
   ["b+zh+Hans+CN", "b+zh+Hans+CN"],
@@ -54,6 +58,17 @@ it.each([
   "normalizes the request alias %s at the selection owner",
   (locale, suffix) => {
     expect(androidLocaleDirectorySuffix(locale)).toBe(suffix);
+  },
+);
+
+it.each(["es-r419", "en-r001", "ar-r015"])(
+  "refuses the r-prefixed three-digit region %s and names the b+ alias",
+  (locale) => {
+    const parsed = androidLocaleQualifierSchema.safeParse(locale);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((issue) => issue.message)).toEqual([
+      "Locale must look like de, pt-BR, pt-rBR, es-419, or b+zh+Hans+CN",
+    ]);
   },
 );
 

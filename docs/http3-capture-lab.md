@@ -278,6 +278,16 @@ and cleanup all passed. Reinspection run
 `3b4530b2-39bb-407d-8380-108b29dbd48a` also passed. Reinspection uses the same root with
 `--inspect-existing --with-origin-reset --with-partial-reset`.
 
+After rebasing onto upstream `1accac27c36d98fb432e32a4a45fe75c78480773`,
+the runtime built at `71942b2617770fd57e2c5e6bb9c3ecbd3348fe82` reinspected
+the same nine native records in run `a3a1c38e-d4cf-4cef-97cb-c76743866c40`,
+finished 2026-10-18 01:31 UTC. The Node/mitmproxy profile, namespace isolation,
+five laboratory source hashes and four capture digests above were unchanged.
+CLI/MCP schemas, bytes, identity, retained Evidence and reset/recovery checks
+passed again, with no cleanup failures. This reinspection establishes
+compatibility with the updated runtime; it generated no new traffic and adds
+no scenario or platform coverage.
+
 | Observation             | Result                                                                                                                                                      |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Before-headers reset    | Endpoint `H3_REQUEST_CANCELLED` (268); producer and REA response null.                                                                                      |

@@ -9,7 +9,7 @@ caching is not justified by these measurements.
 
 ## Pinned inputs and scope
 
-Baseline: `7c458f04b9155707c8ba406f8b455b10016f1b99`, Node 24.18.0,
+Baseline: REA 6.6.0 at `7c458f04b9155707c8ba406f8b455b10016f1b99`, Node 24.18.0,
 npm 11.16.0, Temurin 21.0.12.1, Linux x86-64
 `6.1.0-53-cloud-amd64`. All six final sessions used the same compiled MCP
 runtime digest, recorded in the [curated receipt](jeb-linux-native.json).
@@ -170,6 +170,25 @@ engine restart. Existing reconnect/invalidation work is
 [PR #3754](https://github.com/morluto/rea/pull/3754). The selected function and
 constant checks do not establish broader software-analysis effectiveness.
 
+## Release 6.7.0 integration control
+
+Main advanced to `a25eb5fbb424197cb8e699e15a82a6ff869658aa` during review.
+The branch rebased onto that release checkpoint, rebuilt, and passed
+`docs:check` plus uncached typecheck/lint. Two additional fresh-engine public
+workflows passed against `837718b1968b5fd90762c4c54895b11e9f5478fd`: one
+authored ELF and one shipped SQLite, adding 30 MCP calls and two CLI parity
+queries. They verify the rebuilt 6.7.0 runtime and remain separate from the
+six-session performance cohort above. Their runtime/catalog digests and
+process-family costs are recorded in the JSON receipt.
+
+The first additional SQLite attempt was stopped after 28.244 seconds when
+host available memory fell below the unchanged 8 GiB stop threshold. Final
+scope limit/OOM counters were observed as zero; payload-exit counters were
+unavailable, so that attempt is incomplete. Its sampled peak is not a kernel
+peak claim. Target bytes remained unchanged. The successful retry used a
+stricter 24 GiB admission wait with the original 8 GiB family cap, 7 GiB early
+stop, one CPU and zero swap. No failed attempt was replaced or counted passed.
+
 ## Reproduction entrypoints
 
 The small source fixture was compiled with `gcc -O1 -g -fno-pie -no-pie`:
@@ -212,7 +231,8 @@ full measurement also used the MCP sequence and process-family observer
 described above. JVM heap flags alone do not impose its family/host guards.
 Private raw transcripts and engine documents are excluded from the repository.
 
-Executed `npm run docs:check`, `npm run check:fast` and `git diff --check`
-passed. Typecheck and lint were cache hits. The first gate attempt was refused
+The baseline gate passed `npm run docs:check`, `npm run check:fast` and
+`git diff --check`; its typecheck/lint were cache hits. The release integration
+gate above also passed with uncached typecheck/lint. The first gate attempt was refused
 before scope creation; the admitted gate passed under the unchanged bounds.
 The runtime results above were executed against the pinned baseline.

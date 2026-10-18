@@ -1573,12 +1573,6 @@
     "public_mcp_calls": 90,
     "public_cli_parity_queries": 6,
     "target_execution": false,
-    "code_checks": {
-      "docs_check": "passed",
-      "check_fast": "passed; typecheck/lint were cache hits",
-      "git_diff_check": "passed",
-      "formatting": "all five changed Markdown/JSON files formatted"
-    },
     "check_gate_cost": {
       "guarded_elapsed_seconds": 21.92,
       "cpu_seconds": 18.36747,
@@ -1596,6 +1590,144 @@
         "attempt": "check-docs-2",
         "status": "passed after admission wait; unchanged resource bounds"
       }
-    ]
-  }
+    ],
+    "baseline_code_checks": {
+      "docs_check": "passed",
+      "check_fast": "passed; typecheck/lint were cache hits",
+      "git_diff_check": "passed",
+      "formatting": "all five changed Markdown/JSON files formatted"
+    },
+    "post_release": {
+      "base_main_revision": "a25eb5fbb424197cb8e699e15a82a6ff869658aa",
+      "rea_version": "6.7.0",
+      "scope": "Two additional correctness controls after rebasing onto the release checkpoint; kept separate from six historical measurement sessions.",
+      "build_docs_check_fast": "passed; typecheck/lint were uncached",
+      "build_gate_cost": {
+        "elapsed_seconds": 362.269,
+        "cpu_seconds": 354.09255,
+        "kernel_family_peak_bytes": 4439879680,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true,
+        "payload_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "whole_scope_final_events": null
+      },
+      "completed_controls": [
+        {
+          "run": "native-probe-post-release-fixture-1",
+          "artifact": "fixture",
+          "status": "passed",
+          "tested_revision": "837718b1968b5fd90762c4c54895b11e9f5478fd",
+          "runtime_sha256": "0809b5004f214efa4b79775d5fda796eaecf4ad5756c55ee3b9d7cf82d91b750",
+          "catalog_sha256": "a1851aa1bfe3d72d6be6bec130519dbdfc1ee49288320cfac0144ced77755c61",
+          "target_sha256": "1a6f55303712e096ff5196c7fd6e8acf75473fbf0f7467d7b315f96f50b3f841",
+          "mcp_calls": 15,
+          "cli_parity_queries": 1,
+          "cli_mcp_facts_and_evidence_identity_equal": true,
+          "unit_pagination_equivalent": true,
+          "target_unchanged": true,
+          "mcp_child_metadata_calls": 1,
+          "cost": {
+            "elapsed_seconds": 42.516,
+            "cpu_seconds": 41.044738,
+            "kernel_family_peak_bytes": 1634881536,
+            "payload_exit_code": 0,
+            "payload_cleanup_verified": true,
+            "payload_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            },
+            "whole_scope_final_events": null
+          }
+        },
+        {
+          "run": "native-probe-post-release-sqlite-2",
+          "artifact": "sqlite",
+          "status": "passed",
+          "tested_revision": "837718b1968b5fd90762c4c54895b11e9f5478fd",
+          "runtime_sha256": "0809b5004f214efa4b79775d5fda796eaecf4ad5756c55ee3b9d7cf82d91b750",
+          "catalog_sha256": "a1851aa1bfe3d72d6be6bec130519dbdfc1ee49288320cfac0144ced77755c61",
+          "target_sha256": "2e6eef9a727f081f0d453b4e5e6cbd8b9ef8b6f86cbf7681cbad444d3b0b55c8",
+          "mcp_calls": 15,
+          "cli_parity_queries": 1,
+          "cli_mcp_facts_and_evidence_identity_equal": true,
+          "unit_pagination_equivalent": true,
+          "target_unchanged": true,
+          "mcp_child_metadata_calls": 1,
+          "cost": {
+            "elapsed_seconds": 69.93,
+            "cpu_seconds": 66.596053,
+            "kernel_family_peak_bytes": 2078978048,
+            "payload_exit_code": 0,
+            "payload_cleanup_verified": true,
+            "payload_events": {
+              "memory.events": {
+                "low": 0,
+                "high": 0,
+                "max": 0,
+                "oom": 0,
+                "oom_kill": 0,
+                "oom_group_kill": 0
+              },
+              "pids.events": {
+                "max": 0
+              }
+            },
+            "whole_scope_final_events": null
+          }
+        }
+      ],
+      "additional_mcp_calls": 30,
+      "additional_cli_parity_queries": 2,
+      "catalog_unchanged_from_baseline": true,
+      "interrupted_attempt": {
+        "run": "native-probe-post-release-sqlite-1",
+        "outcome": "incomplete; host available-memory guard stopped the owned family",
+        "elapsed_seconds": 28.244,
+        "sampled_peak_bytes": 695308288,
+        "cpu_last_observed_seconds": 25.549917,
+        "host_available_min_bytes": 8535224320,
+        "abort": "host_available_memory_early_stop",
+        "payload_exit_code": null,
+        "payload_exit_counters": null,
+        "whole_scope_final_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "whole_scope_final_events_verified": true,
+        "post_stop_target_sha256": "2e6eef9a727f081f0d453b4e5e6cbd8b9ef8b6f86cbf7681cbad444d3b0b55c8"
+      },
+      "retry_admission": "SQLite retry waited for at least24GiB host availability; original guard/cgroup hard8GiB/early7GiB/oneCPU/noSwap thresholds unchanged."
+    }
+  },
+  "rea_version": "6.6.0"
 }

@@ -1,5 +1,17 @@
 # Analysis efficiency measurements
 
+For immutable imported native/JavaScript parents, see the
+[validation-reuse checkpoint](immutable-parent-validation.md). It measures the
+owning format change with the existing retained-query driver, including first
+view costs, small cases, unchanged token estimates, and noisy whole-task results.
+
+For authentic old Evidence and mixed investigations, see the
+[retained-query checkpoint](retained-investigation-workflows.md).
+`retained-investigation.mjs` compares existing complete delivery with selected
+pages, including capacity-refusal recovery and original-record round trips.
+It records negative model results and separates imported-format validation work
+from the query contract.
+
 For genuine Fiddler captures, see the [SAZ selection checkpoint](saz-selection-workflows.md).
 `measure.mjs --saz-selection baseline|focused|retained` compares default complete
 delivery (including retained-reference recovery), caller-selected ordinals, and

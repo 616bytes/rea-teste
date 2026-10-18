@@ -7,6 +7,8 @@ import {
   formatCommandForDisplay,
   installLinuxHopper,
   linuxPackageManagerCommands,
+  linuxHopperEmbeddedPythonPackage,
+  linuxHopperEmbeddedPythonRuntime,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
@@ -65,6 +67,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     outputTruncated: false,
   };
   launcherStatusValue: LinuxHopperLauncherStatus = "ready";
+  releaseVersion = "6.6.0";
   downloads: string[] = [];
   installed: Array<{ family: LinuxPackageFamily; archive: string }> = [];
   cleaned: string[] = [];
@@ -72,7 +75,12 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   distribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distributionValue);
   release = (family: LinuxPackageFamily) =>
-    Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
+    Promise.resolve(
+      ok({
+        ...releasesFor(new Uint8Array([1, 2, 3]))[family],
+        version: this.releaseVersion,
+      }),
+    );
   download = (url: string): Promise<LinuxHopperDownload> => {
     this.downloads.push(url);
     return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
@@ -123,6 +131,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   installPackage = (
     family: LinuxPackageFamily,
     archive: string,
+    _hopperVersion: string,
   ): Promise<LinuxPackageInstallOutcome> => {
     if (!this.verifiedBeforeInstall)
       throw new Error("Package manager ran before publisher verification");
@@ -159,6 +168,15 @@ describe("Linux Hopper host classification", () => {
       });
     },
   );
+
+  it("does not advertise an unverified Ubuntu 25.04 Hopper installer", () => {
+    expect(
+      parseLinuxDistribution('ID=ubuntu\nVERSION_ID="25.04"\n'),
+    ).toMatchObject({
+      packageFamily: "deb",
+      hopperSetupSupported: false,
+    });
+  });
 
   it("detects unresolved or loader-reported shared libraries", () => {
     expect(
@@ -219,7 +237,11 @@ describe("Linux Hopper host classification", () => {
 
 describe("Linux Hopper installation", () => {
   it.each([
-    ["deb", "apt-get", ["xvfb", "xauth", "python3", "libx11-6", "libxtst6"]],
+    [
+      "deb",
+      "apt-get",
+      ["xvfb", "xauth", "python3", "libpython3.12t64", "libx11-6", "libxtst6"],
+    ],
     [
       "rpm",
       "dnf",
@@ -227,6 +249,7 @@ describe("Linux Hopper installation", () => {
         "xorg-x11-server-Xvfb",
         "xorg-x11-xauth",
         "python3",
+        "python3.12-libs",
         "libX11",
         "libXtst",
       ],
@@ -240,7 +263,12 @@ describe("Linux Hopper installation", () => {
     "selects the %s native package manager and dependencies",
     (family, executable, packages) => {
       expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", true),
+        linuxPackageManagerCommands(
+          family,
+          "/tmp/Hopper package",
+          true,
+          family === "deb" ? "24.04" : "41",
+        ),
       ).toContainEqual(
         expect.objectContaining({
           executable,
@@ -248,7 +276,12 @@ describe("Linux Hopper installation", () => {
         }),
       );
       expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", false),
+        linuxPackageManagerCommands(
+          family,
+          "/tmp/Hopper package",
+          false,
+          family === "deb" ? "24.04" : "41",
+        ),
       ).toContainEqual(
         expect.objectContaining({
           executable: "pkexec",
@@ -256,6 +289,57 @@ describe("Linux Hopper installation", () => {
         }),
       );
     },
+  );
+});
+
+it("only selects the verified Ubuntu 24.04 embedded runtime package", () => {
+  expect(
+    linuxHopperEmbeddedPythonPackage({
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      hopperSetupSupported: true,
+    }),
+  ).toBe("libpython3.12t64");
+  expect(
+    linuxHopperEmbeddedPythonPackage({
+      id: "ubuntu",
+      versionId: "25.04",
+      packageFamily: "deb",
+      hopperSetupSupported: false,
+    }),
+  ).toBeUndefined();
+  expect(
+    linuxPackageManagerCommands("deb", "/tmp/Hopper package", true, "25.04"),
+  ).not.toContainEqual(
+    expect.objectContaining({
+      args: expect.arrayContaining(["libpython3.12t64"]),
+    }),
+  );
+  expect(
+    linuxHopperEmbeddedPythonPackage({
+      id: "fedora",
+      versionId: "41",
+      packageFamily: "rpm",
+      hopperSetupSupported: true,
+    }),
+  ).toBe("python3.12-libs");
+  expect(linuxHopperEmbeddedPythonRuntime("6.6.0")).toEqual({
+    soname: "libpython3.12.so.1.0",
+  });
+  expect(linuxHopperEmbeddedPythonRuntime("99.2.1")).toBeUndefined();
+  expect(
+    linuxPackageManagerCommands(
+      "deb",
+      "/tmp/Hopper package",
+      true,
+      "24.04",
+      "99.2.1",
+    ),
+  ).not.toContainEqual(
+    expect.objectContaining({
+      args: expect.arrayContaining(["libpython3.12t64"]),
+    }),
   );
 });
 
@@ -280,6 +364,17 @@ describe("Linux Hopper package installation", () => {
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
     },
   );
+
+  it("rejects an unmapped future Hopper release before package mutation", async () => {
+    const host = new RecordingLinuxHost();
+    host.releaseVersion = "99.2.1";
+    await expect(installLinuxHopper(host)).resolves.toMatchObject({
+      status: "failed",
+      reason: "unsupported_hopper_build",
+    });
+    expect(host.downloads).toEqual([]);
+    expect(host.verifiedBeforeInstall).toBe(false);
+  });
 });
 
 describe("Linux Hopper installation failure classification", () => {
@@ -457,8 +552,8 @@ function releasesFor(
   bytes: Uint8Array,
 ): Record<LinuxPackageFamily, LinuxHopperRelease> {
   const release = (extension: string) => ({
-    version: "future-fixture",
-    filename: `https://www.hopperapp.com:443/downloader/public/Hopper-future-fixture-Linux-demo.${extension}`,
+    version: "6.6.0",
+    filename: `https://www.hopperapp.com:443/downloader/public/Hopper-6.6.0-Linux-demo.${extension}`,
     file_length: String(bytes.byteLength),
     file_hash: createHash("sha1").update(bytes).digest("hex"),
     main_exe_hash: "0".repeat(64),

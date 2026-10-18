@@ -12,6 +12,18 @@ import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
+import {
+  linuxHopperEmbeddedPythonPackage,
+  linuxHopperEmbeddedPythonRuntime,
+  readLinuxDistribution,
+} from "./application/LinuxHopper.js";
+import { execFileOutput } from "./process/ExecFileOutput.js";
+
+const LDCONFIG_CANDIDATES = [
+  "/sbin/ldconfig",
+  "/usr/sbin/ldconfig",
+  "ldconfig",
+];
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
@@ -61,7 +73,62 @@ export const createSystemDoctorHost = (
       }),
     ],
     linuxDemoRuntimeCheck: () => inspectLinuxPrivateDisplay(environment),
+    linuxEmbeddedPythonRuntimeCheck: () =>
+      inspectLinuxEmbeddedPythonRuntime(environment),
   });
+};
+
+export const inspectLinuxEmbeddedPythonRuntime = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  readDistribution: () => Promise<
+    Awaited<ReturnType<typeof readLinuxDistribution>>
+  > = readLinuxDistribution,
+  run: typeof execFileOutput = execFileOutput,
+): Promise<DoctorCheck> => {
+  const distribution = await readDistribution();
+  const runtime = linuxHopperEmbeddedPythonRuntime("6.6.0");
+  const packageName = linuxHopperEmbeddedPythonPackage(distribution, "6.6.0");
+  try {
+    let linked: Awaited<ReturnType<typeof execFileOutput>> | undefined;
+    let lastFailure: unknown;
+    for (const command of LDCONFIG_CANDIDATES) {
+      try {
+        linked = await run(command, ["-p"], { env: environment });
+        break;
+      } catch (cause: unknown) {
+        lastFailure = cause;
+      }
+    }
+    if (linked === undefined) throw lastFailure;
+    const available =
+      runtime !== undefined &&
+      new RegExp(`\\b${runtime.soname}\\b`, "u").test(linked.stdout);
+    return {
+      name: "hopper-embedded-python",
+      ok: available,
+      classification:
+        available || packageName !== undefined
+          ? available
+            ? "healthy"
+            : "missing_dependency"
+          : "unknown",
+      detail: `${packageName ?? runtime?.soname ?? "unknown runtime"} (${available ? "available" : "missing"})`,
+      ...(available || packageName === undefined
+        ? {}
+        : {
+            remediation: `Install ${packageName}, then rerun rea doctor --provider hopper.`,
+          }),
+    };
+  } catch (cause: unknown) {
+    return {
+      name: "hopper-embedded-python",
+      ok: false,
+      classification: "unknown",
+      detail: cause instanceof Error ? cause.message : String(cause),
+      remediation:
+        "Verify the matching Hopper embedded Python runtime with ldconfig, then rerun rea doctor --provider hopper.",
+    };
+  }
 };
 
 const HOPPER_DEMO_HELPER_PATH = fileURLToPath(
@@ -106,7 +173,7 @@ const inspectLinuxPrivateDisplay = async (
       value.failure_code === "x11_socket_directory_unusable"
         ? "Enable unprivileged user and mount namespaces, or provide a writable mode-1777 /tmp/.X11-unix directory. Do not mutate the current host mount with sudo; then rerun rea doctor --provider hopper."
         : missingDependency
-          ? "Install Xvfb, xauth, Python 3, libX11, and libXtst, then rerun rea doctor --provider hopper."
+          ? "Install Xvfb, xauth, Python 3, the matching Hopper 6.6 embedded Python 3.12 runtime (libpython3.12t64 on Ubuntu 24.04 or python3.12-libs on Fedora 41), libX11, and libXtst, then rerun rea doctor --provider hopper."
           : "Inspect the private-display diagnostic, correct the reported local condition, and rerun rea doctor --provider hopper.",
   };
 };

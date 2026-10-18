@@ -32,6 +32,7 @@ export interface SetupDiscovery {
   readonly defaultClientIds: readonly string[];
   readonly clientStates: readonly SetupClientState[];
   readonly linuxPackageFamily?: LinuxPackageFamily;
+  readonly linuxVersionId?: string;
 }
 
 /** Discover supported clients and current registrations without mutation. */
@@ -47,9 +48,11 @@ export const discoverSetupState = async (input: {
   const linuxHopperRepairNeeded =
     input.hopperLauncherConfigured !== true &&
     initialDoctor.checks.some(
-      ({ name, ok, detail }) =>
+      ({ name, ok, classification, detail }) =>
         !ok &&
         (name === "hopper-demo-runtime" ||
+          (name === "hopper-embedded-python" &&
+            classification === "missing_dependency") ||
           (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
     );
   const linuxDistribution =
@@ -127,6 +130,9 @@ export const discoverSetupState = async (input: {
     ...(linuxDistribution?.packageFamily === undefined
       ? {}
       : { linuxPackageFamily: linuxDistribution.packageFamily }),
+    ...(linuxDistribution?.versionId === undefined
+      ? {}
+      : { linuxVersionId: linuxDistribution.versionId }),
   };
 };
 
@@ -219,6 +225,9 @@ export const planSetupActions = async (input: {
     ...(input.discovery.linuxPackageFamily === undefined
       ? {}
       : { linuxPackageFamily: input.discovery.linuxPackageFamily }),
+    ...(input.discovery.linuxVersionId === undefined
+      ? {}
+      : { linuxVersionId: input.discovery.linuxVersionId }),
     command: input.command,
   });
   const blocker =
@@ -287,6 +296,7 @@ const setupPlan = (input: {
   }[];
   readonly providerEnvironment: SetupProviderEnvironment;
   readonly linuxPackageFamily?: LinuxPackageFamily;
+  readonly linuxVersionId?: string;
   readonly command: readonly string[];
 }): readonly SetupAction[] => [
   ...(input.installHopper
@@ -308,7 +318,7 @@ const setupPlan = (input: {
           ...(input.platform === "linux"
             ? input.linuxPackageFamily === undefined
               ? {}
-              : linuxDisclosure(input.linuxPackageFamily)
+              : linuxDisclosure(input.linuxPackageFamily, input.linuxVersionId)
             : {
                 networkOrigins: macHopperInstallDisclosure.networkOrigins,
                 commands: macHopperInstallDisclosure.commands,
@@ -352,10 +362,11 @@ const setupPlan = (input: {
     : []),
 ];
 
-const linuxDisclosure = (family: LinuxPackageFamily) => {
+const linuxDisclosure = (family: LinuxPackageFamily, versionId?: string) => {
   const disclosure = linuxHopperInstallDisclosure(
     family,
     process.getuid?.() === 0,
+    versionId,
   );
   return {
     networkOrigins: disclosure.networkOrigins,

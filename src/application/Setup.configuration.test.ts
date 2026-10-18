@@ -238,6 +238,47 @@ describe("configured Linux Hopper selection", () => {
     });
     expect(discovery.installHopper).toBe(true);
   });
+
+  it("repairs an existing install when only embedded Python is missing", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      hopperSetupSupported: true,
+    };
+    host.hopper = "/opt/hopper/bin/Hopper";
+    host.linuxEmbeddedPythonRuntimeMissing = true;
+    const initial = await host.initialSetupState();
+    const discovery = await discoverSetupState({
+      host,
+      providerConfigured: initial.providerConfigured,
+      forceHopperInstall: false,
+      proposeHopper: true,
+      initialDoctor: initial.doctor,
+    });
+    expect(discovery.installHopper).toBe(true);
+  });
+
+  it("does not reinstall Hopper when embedded Python readiness is unknown", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "arch",
+      packageFamily: "arch",
+      hopperSetupSupported: true,
+    };
+    host.hopper = "/opt/hopper/bin/Hopper";
+    host.linuxEmbeddedPythonRuntimeUnknown = true;
+    const initial = await host.initialSetupState();
+    const discovery = await discoverSetupState({
+      host,
+      providerConfigured: initial.providerConfigured,
+      forceHopperInstall: false,
+      proposeHopper: true,
+      initialDoctor: initial.doctor,
+    });
+    expect(discovery.installHopper).toBe(false);
+  });
 });
 
 describe("setup workflow action selection", () => {

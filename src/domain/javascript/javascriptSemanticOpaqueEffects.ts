@@ -185,6 +185,7 @@ export const createSemanticOpaqueGlobalObserver = (
       callableResult: (node): readonly string[] | undefined => {
         if (
           (!t.isClass(node) &&
+            !t.isArrowFunctionExpression(node) &&
             !t.isCallExpression(node) &&
             !t.isOptionalCallExpression(node) &&
             !t.isNewExpression(node) &&
@@ -194,6 +195,16 @@ export const createSemanticOpaqueGlobalObserver = (
           return undefined;
         strictResults.add(node);
         try {
+          if (t.isArrowFunctionExpression(node)) {
+            const parent = state.parentsByNode.get(node);
+            return (t.isMemberExpression(parent) ||
+              t.isOptionalMemberExpression(parent)) &&
+              parent.object === node &&
+              semanticStaticPropertyKey(parent.property, parent.computed) ===
+                "bind"
+              ? ["intrinsic", "Function", "prototype"]
+              : undefined;
+          }
           if (t.isClass(node)) {
             const overridden = node.body.body.some(
               (member) =>
@@ -213,6 +224,10 @@ export const createSemanticOpaqueGlobalObserver = (
             return ["intrinsic", "class", "constructor"];
           }
           const invocation = strictInvocation(node);
+          if (invocation !== undefined && isIntrinsicBind(invocation)) {
+            const bound = strictInterop.boundIntrinsic(node);
+            if (bound?.kind === "known") return bound.path;
+          }
           const reference = javaScriptIntrinsicResultReference(invocation);
           if (reference !== undefined)
             return strictInterop.intrinsicPath(reference);
@@ -422,37 +437,85 @@ export const createSemanticOpaqueGlobalObserver = (
         ].includes(bound.path.join(".")))
     );
   };
-  const argumentsEscapeCode = (
-    arguments_: readonly t.Node[] | undefined,
-    site: t.Node,
-  ): boolean =>
-    arguments_?.some(
-      (argument) =>
-        t.isNode(argument) &&
-        ambientPaths(
-          t.isSpreadElement(argument) ? argument.argument : argument,
-          site,
-          true,
-        ).some(escapedCode),
-    ) ?? false;
-  const argumentsCoerceCode = (
-    arguments_: readonly t.Node[] | undefined,
-    site: t.Node,
-    list = false,
-  ): boolean =>
-    arguments_?.some(
-      (argument) =>
-        t.isNode(argument) &&
-        ["toString", "valueOf"].some((method) =>
-          ambientPaths(
-            t.isSpreadElement(argument) ? argument.argument : argument,
-            site,
-            true,
-            list ? [null, method] : [method],
-          ).some(escapedCode),
-        ),
-    ) ?? false;
+  const invocationFacts = (node: t.Node, resolve: AmbientPathResolver) => {
+    if (
+      !t.isCallExpression(node) &&
+      !t.isOptionalCallExpression(node) &&
+      !t.isNewExpression(node) &&
+      !t.isTaggedTemplateExpression(node)
+    )
+      return undefined;
+    ambientPaths = resolve;
+    invocationSite = node;
+    const outcomes = invocations(node);
+    synchronizeIntrinsicWrites();
+    const strict = strictInvocation(node);
+    const provenNonCalling =
+      nonCallingIntrinsic(strict) ||
+      ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        strict?.kind === "known" &&
+        strict.path.join(".") === "intrinsic.class.constructor");
+    const completeArguments =
+      !t.isTaggedTemplateExpression(node) &&
+      outcomes.every(
+        (invocation) =>
+          invocation.arguments !== undefined &&
+          invocation.arguments.every(
+            (argument) => !t.isSpreadElement(argument),
+          ),
+      );
+    const coverage =
+      provenNonCalling && completeArguments
+        ? ("all" as const)
+        : outcomes.length > 0 &&
+            completeArguments &&
+            (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+          ? ("arguments" as const)
+          : undefined;
+    const targets: { node: t.Node; projection: readonly (string | null)[] }[] =
+      [];
+    const retain = (
+      arguments_: readonly t.Node[] | undefined,
+      projection: readonly (string | null)[] = [],
+    ) => {
+      for (const argument of arguments_ ?? [])
+        if (t.isNode(argument))
+          targets.push({
+            node: t.isSpreadElement(argument) ? argument.argument : argument,
+            projection,
+          });
+    };
+    const coercion = (
+      arguments_: readonly t.Node[] | undefined,
+      list = false,
+    ) => {
+      for (const method of ["toString", "valueOf"])
+        retain(arguments_, list ? [null, method] : [method]);
+    };
+    for (const invocation of outcomes) {
+      const path = invocation.path.join(".");
+      if (path === "intrinsic.global.Function") {
+        coercion(
+          t.isTaggedTemplateExpression(node)
+            ? [...(invocation.arguments ?? []), ...node.quasi.expressions]
+            : invocation.arguments,
+        );
+      }
+      if (provenNonCalling) continue;
+      if (path === "intrinsic.Reflect.construct") {
+        const list = invocation.arguments?.[1];
+        if (isFunctionFactory(invocation.arguments?.[0])) {
+          for (const target of constructedTargets(invocation))
+            if (target.path.join(".") === "intrinsic.global.Function")
+              coercion(target.arguments);
+          if (t.isExpression(list)) coercion([list], true);
+        } else if (t.isExpression(list)) retain([list], [null]);
+      } else retain(invocation.arguments);
+    }
+    return { node, outcomes, targets, coverage };
+  };
   return {
+    invocationHandoffs: (node, resolve) => invocationFacts(node, resolve),
     callableResult: (node, resolve, constructing = false) => {
       if (resolvingResults.has(node)) return [];
       resolvingResults.add(node);
@@ -510,24 +573,10 @@ export const createSemanticOpaqueGlobalObserver = (
         resolvingResults.delete(node);
       }
     },
-    observeInvocation: (node, resolve) => {
-      if (
-        !t.isCallExpression(node) &&
-        !t.isOptionalCallExpression(node) &&
-        !t.isNewExpression(node) &&
-        !t.isTaggedTemplateExpression(node)
-      )
-        return undefined;
-      ambientPaths = resolve;
-      invocationSite = node;
-      const outcomes = invocations(node);
-      synchronizeIntrinsicWrites();
-      const strict = strictInvocation(node);
-      const provenNonCalling =
-        nonCallingIntrinsic(strict) ||
-        ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-          strict?.kind === "known" &&
-          strict.path.join(".") === "intrinsic.class.constructor");
+    observeInvocation: (input, resolve) => {
+      const facts = invocationFacts(input, resolve);
+      if (facts === undefined) return undefined;
+      const { node, outcomes, targets, coverage } = facts;
       const directExecution = outcomes.some((invocation) => {
         const path = invocation.path.join(".");
         return (
@@ -546,57 +595,16 @@ export const createSemanticOpaqueGlobalObserver = (
         );
       });
 
-      const coercedCode = outcomes.some((invocation) => {
-        const path = invocation.path.join(".");
-        if (path === "intrinsic.global.Function") {
-          const arguments_ = t.isTaggedTemplateExpression(node)
-            ? [...(invocation.arguments ?? []), ...node.quasi.expressions]
-            : invocation.arguments;
-          return argumentsCoerceCode(arguments_, node);
-        }
-        if (
-          path !== "intrinsic.Reflect.construct" ||
-          !isFunctionFactory(invocation.arguments?.[0])
-        )
-          return false;
-        const list = invocation.arguments?.[1];
-        return t.isExpression(list) && argumentsCoerceCode([list], node, true);
-      });
-
-      const handedOff = outcomes.some((invocation) => {
-        const path = invocation.path.join(".");
-        if (provenNonCalling) return false;
-        if (path === "intrinsic.Reflect.construct") {
-          // A possible identity union can omit an unresolved alternative;
-          // only the strict intrinsic owner can prove factory-only handoff.
-          if (isFunctionFactory(invocation.arguments?.[0])) return false;
-          const argumentsList = invocation.arguments?.[1];
-          return (
-            t.isExpression(argumentsList) &&
-            argumentsEscapeCode([argumentsList], node)
-          );
-        }
-        return argumentsEscapeCode(invocation.arguments, node);
-      });
-      if (directExecution || handedOff || coercedCode)
+      const handedOff = targets.some((target) =>
+        ambientPaths(target.node, node, true, target.projection).some(
+          escapedCode,
+        ),
+      );
+      if (directExecution || handedOff)
         state.opaqueEffects.globalSites.push(node);
       // Possible identities may omit unresolved alternatives; only the strict
       // owner can exempt all argument and receiver handoffs.
-      const completeArguments =
-        !t.isTaggedTemplateExpression(node) &&
-        outcomes.every(
-          (invocation) =>
-            invocation.arguments !== undefined &&
-            invocation.arguments.every(
-              (argument) => !t.isSpreadElement(argument),
-            ),
-        );
-      if (provenNonCalling && completeArguments) return "all";
-      return outcomes.length > 0 &&
-        completeArguments &&
-        (t.isCallExpression(node) || t.isOptionalCallExpression(node))
-        ? "arguments"
-        : undefined;
+      return coverage;
     },
     observeEscape: (node, identity) => {
       if (escapedCode(identity)) state.opaqueEffects.globalSites.push(node);

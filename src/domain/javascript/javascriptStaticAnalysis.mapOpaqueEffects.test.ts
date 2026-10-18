@@ -5,6 +5,10 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 
 it.each([
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const Make = Function.bind(null, source); Reflect.construct(Make, []); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const Make = Function.bind(null, source).bind(null); Reflect.construct(Make, []); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const Make = Function.bind(null, source); Reflect.construct.call(null, Make, []); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const Make = Function.bind(null, source); new Make(); new Map().get("/accounts");',
   'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const args = [source]; Function(...args); new Map().get("/accounts");',
   'const args = [Function("Map.prototype.get=fetch")]; const run = Reflect.apply(Object.freeze, null, args); run(); new Map().get("/accounts");',
   'const callbacks = [Function("Map.prototype.get=fetch")]; consume.apply(null, callbacks); new Map().get("/accounts");',
@@ -152,6 +156,10 @@ it.each([
 
   'Object.freeze(Function("Map.prototype.get=fetch")); new Map().get("/accounts");',
   'Function(Function("Map.prototype.get=fetch")); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const Make = Function.bind(null, source).bind(null); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const Make = Function.bind(null, source); Reflect.construct(Function, [""], Make); new Map().get("/accounts");',
+  'const Make = Function.bind(null, "Map.prototype.get=fetch").bind(null); Reflect.construct(Make, []); new Map().get("/accounts");',
+
   'const source = { unused: Function("Map.prototype.get=fetch"), toString() { return ""; } }; Function(source); new Map().get("/accounts");',
   'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; Function.bind(null, source); new Map().get("/accounts");',
   'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; Object.freeze(source); new Map().get("/accounts");',

@@ -72,15 +72,24 @@ const candidateSources = {
     'const callbacks = [Function("Map.prototype.get = fetch")]; Reflect.apply(consume, null, callbacks); new Map().get("/dynamic-apply");',
   "factory-coercion.mjs":
     'const source = { toString: Function("Map.prototype.get = fetch; return 1") }; Function(source); new Map().get("/factory-coercion");',
+  "bound-factory-coercion.mjs":
+    'const source = { toString: Function("Map.prototype.get = fetch; return 1") }; const Make = Function.bind(null, source); Reflect.construct(Make, []); new Map().get("/bound-factory-coercion");',
+  "arrow-superclass.mjs":
+    'class Run extends Function("Map.prototype.get = fetch") { constructor() { (() => super())(); } } new Run(); new Map().get("/arrow-superclass");',
+  "awaited-thenable.mjs":
+    'await { then: Function("resolve", "Map.prototype.get = fetch; resolve()") }; new Map().get("/awaited-thenable");',
   "mixed-destination.mjs":
     'function expose(external) { const box = condition ? {} : external; box.p = Map.prototype; } expose(holder); patch(holder); new Map().get("/mixed-destination");',
 };
 
 const candidateEndpoints = [
   "/api/items",
+  "/arrow-superclass",
   "/assignment",
   "/awaited-generated",
+  "/awaited-thenable",
   "/bound-eval",
+  "/bound-factory-coercion",
   "/constructor",
   "/dynamic-apply",
   "/escaped",
@@ -156,9 +165,12 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     )
     .toEqual([
       "/api/items",
+      "/arrow-superclass",
       "/assignment",
       "/awaited-generated",
+      "/awaited-thenable",
       "/bound-eval",
+      "/bound-factory-coercion",
       "/constructor",
       "/dynamic-apply",
       "/escaped",

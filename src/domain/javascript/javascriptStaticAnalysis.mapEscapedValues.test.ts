@@ -3,6 +3,57 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { (() => super())(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); const alias = start; alias(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); const outer = () => start(); outer(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { (() => (() => super())())(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); start.call(null); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); start.apply(null, []); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); Reflect.apply(start, null, []); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = Object.freeze(() => super()); start(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const first = () => second(); const second = () => { first(); super(); }; first(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { consume(() => super()); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const box = {}; box.run = () => super(); consume(box); } } new Run();',
+  'await { then: Function("resolve", "Map.prototype.get=fetch; resolve()") };',
+  'const thenable = { then: Function("resolve", "Map.prototype.get=fetch; resolve()") }; const alias = thenable; await alias;',
+  'const thenable = {}; thenable.then = Function("resolve", "Map.prototype.get=fetch; resolve()"); await thenable;',
+  'const thenable = { then: Function("resolve", "Map.prototype.get=fetch; resolve()").bind(null) }; await thenable;',
+])(
+  "retains implicit execution of selected source-local hooks: %s",
+  (prefix) => {
+    expect(
+      analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+        .endpoints,
+    ).toContainEqual(
+      expect.objectContaining({
+        value: "/accounts",
+        interpretation: "candidate",
+      }),
+    );
+  },
+);
+
+it.each([
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); const unused = () => start(); return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { (() => super())(); } }',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { (() => { const unused = () => super(); })(); return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const first = () => second(); const second = () => { first(); super(); }; return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { let start = () => super(); start = () => {}; start(); return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { Object.freeze(() => super()); return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { (() => super()).bind(null); return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const unused = () => consume(() => super()); return {}; } } new Run();',
+  'const thenable = { then: Function("resolve", "Map.prototype.get=fetch; resolve()") };',
+  'await Function("Map.prototype.get=fetch");',
+  'await { then(resolve) { resolve(); }, unused: Function("Map.prototype.get=fetch") };',
+  'new Map().get("/before"); await { then: Function("resolve", "Map.prototype.get=fetch; resolve()") };',
+])("keeps unused hooks and pre-effect reads separate: %s", (prefix) => {
+  const source = prefix.startsWith("new Map")
+    ? prefix
+    : `${prefix} new Map().get('/accounts');`;
+  expect(analyzeJavaScriptStaticSource(source).endpoints).toEqual([]);
+});
+
+it.each([
   'const run = Object.freeze(Function("Map.prototype.get=fetch")); run();',
   'const freeze = Object.freeze; const run = freeze(Function("Map.prototype.get=fetch")); run();',
   'const freeze = Object.freeze; Object.freeze = other; const run = freeze(Function("Map.prototype.get=fetch")); run();',

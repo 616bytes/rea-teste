@@ -9,7 +9,10 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { javaScriptIntrinsicResultReference } from "./javascriptIntrinsicInvocation.js";
+import {
+  javaScriptIntrinsicResultReference,
+  resolveJavaScriptIntrinsicInvocations,
+} from "./javascriptIntrinsicInvocation.js";
 import {
   isUnshadowedGlobal,
   resolveSemanticBindingState,
@@ -584,6 +587,18 @@ export const createAmbientPathResolver = (
 export type AmbientPathResolver = ReturnType<typeof createAmbientPathResolver>;
 
 export interface AmbientInvocationObserver {
+  readonly invocationHandoffs?: (
+    node: t.Node,
+    resolve: AmbientPathResolver,
+  ) =>
+    | {
+        readonly targets: readonly {
+          readonly node: t.Node;
+          readonly projection: readonly (string | null)[];
+        }[];
+        readonly coverage: "all" | "arguments" | undefined;
+      }
+    | undefined;
   readonly observeInvocation: (
     node: t.Node,
     resolve: AmbientPathResolver,
@@ -626,6 +641,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   const escapes: {
     node: t.Node;
     invocation?: true;
+    caller?: t.Function;
     targets: EscapeTarget[];
   }[] = [];
   const stores = new WeakMap<
@@ -633,6 +649,18 @@ export function* indexJavaScriptAmbientWritesSteps(
     Map<SemanticIterationSource, AmbientProjection>
   >();
   const superConstructors = new WeakSet<t.Class>();
+  const derivedConstructors = new WeakSet<t.ClassMethod>();
+  let hasDerivedConstructor = false;
+  for (const callable of state.callableNodesById.values()) {
+    if (!t.isClassMethod(callable) || callable.kind !== "constructor") continue;
+    const body = state.parentsByNode.get(callable);
+    const owner =
+      body === undefined ? undefined : state.parentsByNode.get(body);
+    if (t.isClass(owner) && owner.superClass != null) {
+      derivedConstructors.add(callable);
+      hasDerivedConstructor = true;
+    }
+  }
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const [path] = ambientReads(node);
@@ -719,25 +747,31 @@ export function* indexJavaScriptAmbientWritesSteps(
       writes.push({ node, path });
     },
     (node, invocation) => {
-      if (
-        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-        t.isSuper(node.callee)
-      ) {
-        for (
-          let parent = state.parentsByNode.get(node);
-          parent !== undefined;
-          parent = state.parentsByNode.get(parent)
-        ) {
-          if (t.isFunction(parent) && !t.isClassMethod(parent)) break;
-          if (!t.isClassMethod(parent)) continue;
-          const body = state.parentsByNode.get(parent);
-          const owner =
-            body === undefined ? undefined : state.parentsByNode.get(body);
-          if (parent.kind === "constructor" && t.isClass(owner))
-            superConstructors.add(owner);
+      if (t.isAwaitExpression(node)) {
+        escapes.push({
+          node,
+          targets: [
+            {
+              target: node.argument,
+              browserReceiver: false,
+              projection: ["then"],
+            },
+          ],
+        });
+        return;
+      }
+      let caller: t.Function | undefined;
+      for (
+        let parent = hasDerivedConstructor
+          ? state.parentsByNode.get(node)
+          : undefined;
+        parent !== undefined;
+        parent = state.parentsByNode.get(parent)
+      )
+        if (t.isFunction(parent)) {
+          caller = parent;
           break;
         }
-      }
       const targets: EscapeTarget[] = [];
       // Escaping objects can change contents without replacing their identity.
       const retainEscape = (
@@ -780,8 +814,18 @@ export function* indexJavaScriptAmbientWritesSteps(
           browserReceiverMethods.add(browserMethod);
         retainEscape(callee.object, browserMethod !== undefined, true);
       }
-      if (targets.length > 0 || opaqueObserver !== undefined)
-        escapes.push({ node, invocation: true, targets });
+      if (
+        targets.length > 0 ||
+        opaqueObserver !== undefined ||
+        t.isArrowFunctionExpression(caller) ||
+        (t.isClassMethod(caller) && derivedConstructors.has(caller))
+      )
+        escapes.push({
+          node,
+          invocation: true,
+          ...(caller === undefined ? {} : { caller }),
+          targets,
+        });
     },
   );
   const pendingStores = new Set(storedReferences);
@@ -869,6 +913,108 @@ export function* indexJavaScriptAmbientWritesSteps(
           },
         ],
       });
+  }
+  const invokedArrows = new WeakSet<t.ArrowFunctionExpression>();
+  const resolvedCalls = new WeakSet<t.Node>();
+  const callableIds = new WeakMap<t.Node, string>(
+    hasDerivedConstructor
+      ? [...state.callableNodesById].map(([id, node]) => [node, id])
+      : [],
+  );
+  let changed = hasDerivedConstructor;
+  while (changed) {
+    changed = false;
+    for (const { node, caller, targets } of escapes) {
+      yield;
+      if (
+        (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
+        resolvedCalls.has(node) ||
+        (!(t.isClassMethod(caller) && derivedConstructors.has(caller)) &&
+          !(t.isArrowFunctionExpression(caller) && invokedArrows.has(caller)))
+      )
+        continue;
+      resolvedCalls.add(node);
+      if (t.isSuper(node.callee)) {
+        for (
+          let parent: t.Node | undefined = caller;
+          parent !== undefined;
+          parent = state.parentsByNode.get(parent)
+        ) {
+          if (t.isArrowFunctionExpression(parent)) continue;
+          if (!t.isFunction(parent)) continue;
+          if (t.isClassMethod(parent) && parent.kind === "constructor") {
+            const body = state.parentsByNode.get(parent);
+            const owner =
+              body === undefined ? undefined : state.parentsByNode.get(body);
+            if (t.isClass(owner)) superConstructors.add(owner);
+          }
+          break;
+        }
+        continue;
+      }
+      for (const invocation of resolveJavaScriptIntrinsicInvocations(
+        node,
+        (target) => {
+          const local: string[][] = [];
+          ambientWrites(target, node, false, [], (identity, path) => {
+            const id = callableIds.get(identity);
+            if (
+              t.isArrowFunctionExpression(identity) &&
+              id !== undefined &&
+              path !== undefined &&
+              path.every((part) => part !== null)
+            )
+              local.push(["intrinsic", "local", id, ...(path as string[])]);
+          });
+          const intrinsic = interop.intrinsicPath(target);
+          return [...local, ...(intrinsic === undefined ? [] : [intrinsic])];
+        },
+        () => [],
+        interop.intrinsicReadChanged,
+      )) {
+        const target =
+          invocation.path[1] === "local" && invocation.path.length === 3
+            ? state.callableNodesById.get(invocation.path[2] ?? "")
+            : undefined;
+        if (t.isArrowFunctionExpression(target) && !invokedArrows.has(target)) {
+          invokedArrows.add(target);
+          changed = true;
+        }
+      }
+      const handoffs = opaqueObserver?.invocationHandoffs?.(
+        node,
+        ambientWrites,
+      );
+      const activateEscapedArrow = (
+        target: t.Node,
+        projection: AmbientProjection,
+      ): void => {
+        ambientWrites(target, node, true, projection, (identity, path) => {
+          if (
+            t.isArrowFunctionExpression(identity) &&
+            (path === undefined || path.length === 0) &&
+            !invokedArrows.has(identity)
+          ) {
+            invokedArrows.add(identity);
+            changed = true;
+          }
+        });
+      };
+      for (const target of handoffs?.targets ?? [])
+        activateEscapedArrow(target.node, target.projection);
+      if (
+        javaScriptIntrinsicResultReference(
+          interop.intrinsicInvocation(node),
+        ) === undefined
+      )
+        for (const target of targets)
+          if (
+            handoffs?.coverage !== "all" &&
+            (handoffs?.coverage !== "arguments" || target.receiver)
+          )
+            activateEscapedArrow(target.target, target.projection ?? []);
+    }
+    yield;
   }
   for (const { node, invocation, targets } of escapes) {
     const handledHandoffs =

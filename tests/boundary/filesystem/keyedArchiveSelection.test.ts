@@ -318,7 +318,7 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
-it("preserves a known NaN identity while reading a keyed archive", async () => {
+it("keeps an archive readable while preserving a known non-finite real", async () => {
   const root = await bundle();
   const bytes = Buffer.from(
     build({

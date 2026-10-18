@@ -60,6 +60,7 @@ export const registerCaptureCommands = (
             service,
             "tshark-capture",
             "inspect_packet_fields",
+            signal,
           ),
         ),
       ),
@@ -119,6 +120,7 @@ export const registerCaptureCommands = (
             service,
             "tshark-capture",
             "inspect_packet_capture",
+            signal,
           );
         }),
       ),

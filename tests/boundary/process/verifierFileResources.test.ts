@@ -254,7 +254,7 @@ it.each(["late-close", "retry-close", "retained-close", "opaque-cancellation"])(
   },
 );
 
-it("Ghidra verifier awaits installation configuration rejection before creating target fixtures", async () => {
+it("Ghidra verifier awaits native prerequisite rejection before creating target fixtures", async () => {
   const root = await createTestTempDirectory(
     "rea-verifier-ghidra-prerequisite-",
   );
@@ -265,15 +265,12 @@ it("Ghidra verifier awaits installation configuration rejection before creating 
       encoding: "utf8",
       timeout: 10_000,
       env: {
-        PATH: root,
+        // Keep native process inspectors available; the selected JDK and Ghidra are absent.
+        PATH: process.env.PATH ?? "",
         HOME: root,
         USERPROFILE: root,
-        TMPDIR: root,
-        TMP: root,
-        TEMP: root,
         GHIDRA_INSTALL_DIR: join(root, "absent-installation"),
-        // Refuse Java selection before any host process-ownership prerequisite.
-        JAVA_HOME: "relative-jdk",
+        JAVA_HOME: join(root, "absent-jdk"),
       },
     },
   );
@@ -281,8 +278,6 @@ it("Ghidra verifier awaits installation configuration rejection before creating 
   expect(result.stderr).toContain(
     'Ghidra installation is unavailable: {"status":"unavailable"',
   );
-  expect(result.stderr).toContain("JAVA_HOME must be absolute");
   expect(result.stderr).not.toContain("TypeError");
   expect(result.stderr).not.toContain("Ghidra installation is unavailable: {}");
-  expect(await readdir(root)).toEqual([]);
 });

@@ -7,6 +7,34 @@ import {
   parsePlistNonFiniteRealLiteral,
 } from "./apple/plistNumbers.js";
 
+const BASE64_DIGITS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const C_WHITESPACE = new Set([" ", "\t", "\n", "\v", "\f", "\r"]);
+
+// CFPropertyList skips non-alphabet characters and emits only completed
+// quartets; atob would pad or refuse data the native reader accepts.
+const decodePlistData = (text: string): Uint8Array => {
+  // Each completed quartet consumes at least four characters.
+  const bytes = new Uint8Array(Math.floor(text.length / 4) * 3);
+  let length = 0;
+  let quartet = 0;
+  let digits = 0;
+  let padding = 0;
+  for (const character of text) {
+    if (character === "=") padding += 1;
+    else if (!C_WHITESPACE.has(character)) padding = 0;
+    const digit = character === "=" ? 0 : BASE64_DIGITS.indexOf(character);
+    if (digit < 0) continue;
+    quartet = ((quartet << 6) | digit) & 0xffffff;
+    digits += 1;
+    if (digits % 4 !== 0) continue;
+    bytes[length++] = quartet >> 16;
+    if (padding < 2) bytes[length++] = quartet >> 8;
+    if (padding < 1) bytes[length++] = quartet;
+  }
+  return length === bytes.length ? bytes : bytes.slice(0, length);
+};
+
 /** Interpret an already validated, depth-bounded DOM, owning values and number facts together. */
 export const decodeXmlPropertyList = (document: Document) => {
   const root = document.documentElement;
@@ -132,10 +160,8 @@ export const decodeXmlPropertyList = (document: Document) => {
         if (literal.complete) numbers.real(value);
         return value;
       }
-      case "data": {
-        const binary = atob(content(node, textNode).text.replace(/\s+/gu, ""));
-        return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-      }
+      case "data":
+        return decodePlistData(content(node, textNode).text);
       case "date": {
         const value = requireContent(node).nodeValue;
         return new Date(value === null ? 0 : value);

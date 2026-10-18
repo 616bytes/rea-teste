@@ -17,7 +17,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "../contracts/fridaToolContracts.js";
 import { isValidFridaRemoteAddress } from "../contracts/fridaRemoteAddress.js";
 import type { Logger } from "pino";
@@ -117,15 +117,20 @@ export const registerFridaCommands = (
     ),
     run: ({ options }) =>
       logCliCommand(logger, CLI_COMMANDS.listFridaDevices, async () => {
-        const result = await withProviderCleanup(() =>
-          service.listDevices(remoteFrom(options)),
-        );
-        return result.ok
-          ? {
-              devices: result.value.devices,
-              cleanup_error: result.value.cleanupError,
-            }
-          : projectAnalysisError(result.error);
+        const result = await withProviderCleanup(async () => {
+          const list = await service.listDevices(remoteFrom(options));
+          return list.ok
+            ? ok({
+                devices: list.value.devices.map((device) => ({
+                  device_id: device.deviceId,
+                  name: device.name,
+                  type: device.type,
+                })),
+                cleanup_error: list.value.cleanupError,
+              })
+            : list;
+        });
+        return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
   cli.command(CLI_COMMANDS.listFridaProcesses, {

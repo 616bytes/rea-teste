@@ -231,7 +231,46 @@ it("preserves observed devices when CLI provider cleanup fails", async () => {
   const output: unknown = JSON.parse(stdout);
   expect(output).toMatchObject({
     code: "cleanup_incomplete",
-    details: { diagnostics: { partial_observation: { devices } } },
+    details: {
+      diagnostics: {
+        partial_observation: {
+          devices: [
+            {
+              device_id: "remote-device",
+              name: "selected endpoint",
+              type: "remote",
+            },
+          ],
+        },
+      },
+    },
+  });
+});
+
+it("maps internal deviceId to canonical device_id in successful list-frida-devices output", async () => {
+  const provider: FridaInstrumentationPort = new FridaInstrumentationManager();
+  const devices = [
+    { deviceId: "fixture-local", name: "Fixture", type: "local" },
+  ];
+  provider.listDevices = async () => ({
+    ok: true,
+    value: { devices, cleanupError: null },
+  });
+  let stdout = "";
+  await createCli({}, undefined, provider).serve(
+    ["list-frida-devices", "--json"],
+    {
+      env: {},
+      exit: () => {},
+      stdout: (text) => {
+        stdout += text;
+      },
+    },
+  );
+  const output: unknown = JSON.parse(stdout);
+  expect(output).toEqual({
+    devices: [{ device_id: "fixture-local", name: "Fixture", type: "local" }],
+    cleanup_error: null,
   });
 });
 

@@ -98,6 +98,38 @@ const textCoverage = z.strictObject({
   text: z.string(),
   reported_total_bytes: z.number().int().nonnegative().nullable(),
 });
+
+const manifestComponent = z.strictObject({
+  kind: z.enum([
+    "activity",
+    "activity-alias",
+    "service",
+    "receiver",
+    "provider",
+  ]),
+  declared_name: z.string().min(1),
+  name: z.string().min(1),
+  exported: z.boolean().nullable(),
+  exported_default: z.boolean().nullable(),
+  permission: z.string().nullable(),
+  intent_filter_count: z.number().int().nonnegative(),
+  actions: z.array(z.string()),
+  categories: z.array(z.string()),
+  foreground_service_type: z.string().nullable(),
+  authorities: z.array(z.string()).nullable(),
+  target_activity: z.string().nullable(),
+});
+
+/**
+ * Static component projection of the decoded manifest. The export default is
+ * Android's documented rule for an absent android:exported; it is not a
+ * merged-manifest or runtime observation.
+ */
+const manifestComponents = z.strictObject({
+  status: z.enum(["complete", "partial", "unavailable"]),
+  items: z.array(manifestComponent),
+  limitations: z.array(z.string()),
+});
 /** A DEX prototype; hex parentheses also keep the advertised class valid in v mode. */
 export const dexDescriptorSchema = z
   .string()
@@ -133,6 +165,7 @@ export const androidResultSchemas = {
     target_sdk: z.string().nullable(),
     permissions: z.array(z.string()),
     manifest: textCoverage,
+    components: manifestComponents,
     class_count: z.number().int().nonnegative(),
     resource_count: z.number().int().nonnegative(),
     signature_verification: z.literal("not_performed"),

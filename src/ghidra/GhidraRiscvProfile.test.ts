@@ -97,7 +97,7 @@ afterAll(async () => {
 const ghidra = (environment: Record<string, string> = {}) =>
   new GhidraProvider(configOf(installDir, environment), silentLogger, {}, host);
 
-describe("bounded Ghidra RISC-V admission", () => {
+describe("bounded Ghidra RISC-V admission: language pinning and profile resolution", () => {
   it("pins the generic language per width instead of accepting the header guess", async () => {
     const provider = ghidra();
     const rv64 = target();
@@ -155,11 +155,73 @@ describe("bounded Ghidra RISC-V admission", () => {
       ).toBe(true);
     }
   });
+});
 
+describe("bounded Ghidra RISC-V admission: position-independent executables", () => {
+  it("admits little-endian position-independent executables (ET_DYN with PT_INTERP)", async () => {
+    const provider = ghidra();
+    const pie64 = target({ type: 3, hasInterpreter: true });
+    const pie32 = target({
+      elfClass: 32,
+      flags: 0x4,
+      type: 3,
+      hasInterpreter: true,
+    });
+    expect(provider.inspectTargetSupport(pie64).status).toBe("supported");
+    expect(provider.inspectTargetSupport(pie32).status).toBe("supported");
+    expect(ghidraPinnedLanguage(pie64)).toEqual({
+      languageId: "RISCV:LE:64:default",
+      compilerSpecId: "gcc",
+    });
+    expect(ghidraPinnedLanguage(pie32)).toEqual({
+      languageId: "RISCV:LE:32:default",
+      compilerSpecId: "gcc",
+    });
+    const wide = await provider.resolveAnalysisProfile(pie64);
+    const narrow = await provider.resolveAnalysisProfile(pie32);
+    if (!wide.ok || !narrow.ok)
+      throw new Error("expected admitted RISC-V PIE profiles");
+    expect(wide.value.profile?.parameters.riscv_elf).toEqual({
+      elf_class: 64,
+      byte_order: "little",
+      type: 3,
+      flags: 5,
+      float_abi_double: true,
+      rvc_declared: true,
+      rve_declared: false,
+      tso_declared: false,
+      has_interpreter: true,
+      load_model: "pie",
+      expected_default_image_base: "0x100000",
+    });
+    expect(wide.value.profile?.parameters.riscv_support_lane).toBe(
+      "elf64-pie-le-double-float-generic-v1",
+    );
+    expect(narrow.value.profile?.parameters.riscv_support_lane).toBe(
+      "elf32-pie-le-double-float-generic-v1",
+    );
+    expect(narrow.value.profile?.parameters.riscv_elf).toEqual({
+      elf_class: 32,
+      byte_order: "little",
+      type: 3,
+      flags: 4,
+      float_abi_double: true,
+      rvc_declared: false,
+      rve_declared: false,
+      tso_declared: false,
+      has_interpreter: true,
+      load_model: "pie",
+      expected_default_image_base: "0x10000",
+    });
+  });
+});
+
+describe("bounded Ghidra RISC-V admission: refusals and limitations", () => {
   it.each([
     [{ byteOrder: "big" }, "little-endian"],
-    [{ type: 3 }, "fixed-address ET_EXEC only"],
-    [{ type: 1 }, "fixed-address ET_EXEC only"],
+    [{ type: 3 }, "shared libraries without PT_INTERP"],
+    [{ type: 3, hasInterpreter: false }, "shared libraries without PT_INTERP"],
+    [{ type: 1 }, "relocatable"],
     [{ type: 0xffa0 }, "e_type 65440"],
     [{ flags: 0xc }, "EF_RISCV_RVE"],
     [{ flags: 0x14 }, "EF_RISCV_TSO"],
@@ -214,6 +276,15 @@ describe("bounded Ghidra RISC-V admission", () => {
     expect(notes).toHaveLength(3);
     expect(notes.join(" ")).toContain("does not establish static linkage");
     expect(notes[0]).toContain("RISCV:LE:64:default");
+
+    const pieNotes = ghidraRiscvLimitations(
+      target({ type: 3, hasInterpreter: true }),
+    );
+    expect(pieNotes).toHaveLength(3);
+    expect(pieNotes.join(" ")).toContain(
+      "Position-independent executable (PIE): Ghidra assigns analysis coordinates from its default image base (0x100000)",
+    );
+
     expect(
       ghidraRiscvLimitations({
         path: "/other.elf",

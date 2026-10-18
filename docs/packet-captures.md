@@ -142,7 +142,7 @@ a successful retry clears the original error's pending cleanup state. No other
 ```sh
 rea inspect-packet-capture /captures/electron.pcapng \
   --fields http2.headers.method --fields http2.headers.path \
-  --fields http2.headers.status --display_filter http2.headers.path \
+  --fields http2.headers.status \
   --tls_key_log_path /captures/electron.keys --format json
 ```
 
@@ -166,16 +166,42 @@ selected, even if explicitly requested, and each removal is listed as
 `http.cookie`, `http.cookie_pair`, `http.set_cookie`, and the
 `authorization`, `proxy_authorization`, `cookie` and `set_cookie` fields under
 `http2.headers.*` and `http3.headers.*` (also with an `@` raw-byte prefix).
-Header lines (`http.request.line`), generic header values (`http2.header.value`),
-decoded authentication protocols and payload byte fields can still contain
-credentials when selected.
+Other selected fields must belong to this explicit metadata set. Unreviewed
+fields fail closed with `AnalysisInputError` on `fields`, before provider work.
+This refuses header lines (`http.request.line`), generic header values
+(`http2.header.value`), decoded authentication protocols, payload byte fields,
+and `@` raw selections. Named credentials above are admitted only for explicit
+removal, including their `@` variants; they are never returned.
 
-A display filter could probe a removed value through match counts, so with a
-key log `display_filter` is refused (`AnalysisInputError` on `display_filter`)
-when its text contains any of the credential field names above, compared
-case-insensitively as substrings. This is deliberately conservative: it also
-rejects those names inside string literals. Filters over header lines or
-payload bytes (for example `http contains "Cookie"`) are not detected.
+| Metadata    | Permitted field names                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Frame       | `frame.number`, `frame.time_epoch`, `frame.len`, `frame.cap_len`, `frame.protocols`                                     |
+| Ethernet/IP | `eth.src`, `eth.dst`, `ip.src`, `ip.dst`, `ip.addr`, `ipv6.src`, `ipv6.dst`, `ipv6.addr`                                |
+| TCP/UDP     | `tcp.srcport`, `tcp.dstport`, `tcp.port`, `tcp.stream`, `udp.srcport`, `udp.dstport`, `udp.port`, `udp.stream`          |
+| HTTP        | `http.request.method`, `http.request.uri`, `http.host`, `http.response.code`                                            |
+| HTTP/2      | `http2.headers.method`, `http2.headers.path`, `http2.headers.authority`, `http2.headers.scheme`, `http2.headers.status` |
+
+Every non-null `display_filter` is refused with a key log
+(`AnalysisInputError` on `display_filter`). Generic and protocol-container
+filters can probe credentials through match counts even when their text names
+no credential field; parsing a small denylist cannot establish safety. Omit the
+filter, and use the input packet limit and output paging to bound observations.
+Reports validate the returned fields against the same metadata set and reject
+remaining URL userinfo. If an HTTP request URI, host, HTTP/2 path or authority
+contains structural userinfo, its whole selected field is removed and listed in
+`redactions`. This includes ambiguous URL spellings. Origin-form paths (including
+those beginning `//`), path text and query data are preserved without interpreting
+them as an authority or guessing which application values are secret. Select
+`http.request.method` together with `http.request.uri`: CONNECT uses
+authority-form, whereas an `@` in opaque URI data such as
+`mailto:alice@example.test` is preserved for other methods. Reports refuse
+a returned HTTP request URI when method/target occurrence counts differ, or
+when CONNECT and other methods share a frame: flattened arrays cannot establish
+which target uses authority-form.
+
+This is a structural boundary for transport credentials, not content-based
+secret detection. Selected metadata such as URLs may contain application data
+or caller-embedded secrets. No secrecy is inferred from arbitrary text.
 
 Decrypting runs can report decrypted content in diagnostics, so TShark stdout
 and stderr text from the producer run is withheld: the report's `diagnostics`
@@ -184,6 +210,9 @@ exit status, signal and `stdout_bytes`/`stderr_bytes` but no text. To read
 TShark's message for an invalid filter or field, repeat the call without
 `tls_key_log_path`. The version probe's diagnostics are unaffected. Without
 `tls_key_log_path`, TShark arguments and the report are unchanged.
+Raw nested command causes are omitted from decrypting failures, and cleanup
+supervisors remain private so their snapshot methods cannot expose the output.
+The provider retains the exact owner and its retry capability internally.
 
 Decryption depends on the installed TShark build; QUIC/HTTP/3 needs a build
 with HTTP/3 support. TShark can also use secrets embedded in pcapng Decryption
@@ -204,10 +233,16 @@ frames, Evidence persistence, failure diagnostics, source identity and cleanup.
 An optional positional REA entrypoint verifies an installed package.
 For key-log decryption it records owned Node TLS 1.3 and TLS 1.2 HTTP/1.1
 sessions (ephemeral `openssl` self-signed certificate) in synthetic TCP frames,
-omits one session's keys and adds unrelated and malformed key-log lines. It
+includes a credential-bearing absolute request URI, omits one session's keys,
+and adds unrelated and malformed key-log lines. It
 checks that HTTP fields are absent without the key log, decrypted URIs, status
 codes, redactions and key-log counts with it, and that no secret, client random
 or credential appears in CLI, MCP, Evidence bundle or error output.
+Key-log observations include all frames within the selected read/output limits;
+the verifier distinguishes decrypted HTTP fields from encrypted sessions whose
+keys are absent. Generic field and display-filter refusals are checked through
+both compiled CLI and MCP. An admitted invalid decode-as request still reaches
+TShark and verifies producer-failure diagnostics are withheld.
 
 The real-tool lane requires Linux and TShark 4.x. A separate kernel-limit
 regression checks the inherited soft/hard limits and verifies an oversized

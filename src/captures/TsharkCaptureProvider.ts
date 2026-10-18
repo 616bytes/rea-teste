@@ -556,7 +556,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               ...(keyLog === undefined
                 ? []
                 : [
-                    "A private read-only copy of the caller's TLS key log was passed as tls.keylog_file; the workspace owns its removal and any cleanup retries. Its secrets, client randoms and line text are not returned, and producer stdout/stderr text is withheld from diagnostics (sizes are kept). Key-log counts are not compared with recorded handshakes and do not establish that any session was decrypted. Known Authorization, Proxy-Authorization, Cookie and Set-Cookie fields are removed from returned frames and listed in redactions; header lines, generic header values and payload bytes can still contain credentials when selected.",
+                    "A private read-only copy of the caller's TLS key log was passed as tls.keylog_file; the workspace owns its removal and any cleanup retries. Its secrets, client randoms and line text are not returned, and producer stdout/stderr text is withheld from diagnostics (sizes are kept). Key-log counts are not compared with recorded handshakes and do not establish that any session was decrypted. Only reviewed packet/HTTP metadata fields are admitted. Known Authorization, Proxy-Authorization, Cookie and Set-Cookie fields and URL/authority fields containing userinfo are removed and listed in redactions. Generic headers, decoded authentication, payload/raw fields, unreviewed fields and all display filters are refused. Selected metadata such as URLs can still contain application data; no content-based secrecy inference is performed.",
                   ]),
             ],
           }),

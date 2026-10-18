@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { localPathStringSchema } from "../localPath.js";
+import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import { tlsKeyLogReportSchema } from "./tlsKeyLog.js";
 
 const argument = z
@@ -15,13 +16,13 @@ const captureInputShape = z.strictObject({
     .max(1024)
     .min(1)
     .describe(
-      "TShark field names to return, e.g. ip.addr, usb.endpoint_address, btatt.opcode; frame.number is always included",
+      "TShark field names to return, e.g. ip.addr, usb.endpoint_address, btatt.opcode; frame.number is always included. With tls_key_log_path, only the packet/HTTP metadata fields listed in the packet-captures guide are admitted; named credentials are removed. Select http.request.method with http.request.uri to distinguish CONNECT authority-form.",
     ),
   display_filter: argument
     .nullable()
     .default(null)
     .describe(
-      "Optional Wireshark display filter (-Y), applied within the read limit",
+      "Optional Wireshark display filter (-Y), applied within the read limit. Must be omitted or null with tls_key_log_path to prevent credential probes through match counts.",
     ),
   decode_as: z
     .array(argument)
@@ -62,7 +63,7 @@ const captureInputShape = z.strictObject({
   tls_key_log_path: localPathStringSchema
     .optional()
     .describe(
-      "Optional absolute local NSS key log (SSLKEYLOGFILE format) written by the caller's own TLS client. A private read-only copy is passed to TShark as tls.keylog_file and deleted after the run; secrets, client randoms and line text are never returned. Known authorization and cookie fields are then excluded from returned frames and listed in redactions, display filters naming them are refused, and producer stderr text is withheld.",
+      "Optional absolute local NSS key log (SSLKEYLOGFILE format) written by the caller's own TLS client. A private read-only copy is passed to TShark as tls.keylog_file; its owner removes it after the run and retains cleanup retries on failure. Secrets, client randoms and line text are never returned. Only reviewed packet/HTTP metadata fields are admitted (http.request.uri requires http.request.method); known authorization/cookie fields and fields containing URL userinfo are removed and listed in redactions. Generic headers, decoded authentication, payload/raw fields, unreviewed fields and all display filters are refused. Producer diagnostic text is withheld.",
     ),
 });
 // Bound UTF-8 selector text, terminators, option names and 64-bit argv pointers
@@ -90,7 +91,7 @@ export const packetCaptureSelectorBudgetIssue = {
 };
 // Wireshark registrations carrying all or a decoded part of an Authorization,
 // Proxy-Authorization, Cookie or Set-Cookie header (HTTP/3 needs nghttp3).
-// Header lines, generic header values and payload bytes are not covered.
+// Other selections are separately restricted to reviewed metadata below.
 const TRANSPORT_CREDENTIAL_FIELDS: ReadonlySet<string> = new Set([
   "http.authorization",
   "http.proxy_authorization",
@@ -112,32 +113,105 @@ const TRANSPORT_CREDENTIAL_FIELDS: ReadonlySet<string> = new Set([
   "http3.headers.set_cookie",
 ]);
 
-/**
- * Conservatively detect a display filter naming a credential field, including
- * inside string literals or longer names. With a key log such a filter could
- * probe redacted values through match counts.
- */
-const referencesTransportCredentialField = (filter: string): boolean => {
-  const text = filter.toLowerCase();
-  return [...TRANSPORT_CREDENTIAL_FIELDS].some((field) => text.includes(field));
+const isTransportCredentialField = (field: string): boolean =>
+  TRANSPORT_CREDENTIAL_FIELDS.has(field.replace(/^@/u, ""));
+
+/** Recognize credential syntax in URL/authority fields, without inspecting application data. */
+const containsTransportCredentials = (
+  field: string,
+  values: readonly string[],
+  requestMethods: readonly string[],
+): boolean => {
+  if (isTransportCredentialField(field)) return true;
+  if (field === "http.host" || field === "http2.headers.authority")
+    return values.some((value) => value.includes("@"));
+  if (field !== "http.request.uri" && field !== "http2.headers.path")
+    return false;
+  return values.some((value) => {
+    // Request targets beginning with '/' are origin-form paths, including '//'.
+    // Resolving them against a base URL would invent a network authority.
+    if (value.startsWith("/")) return false;
+    return (
+      parseRecordedTransportUrl(value).credentials !== null ||
+      // CONNECT uses authority-form; an '@' in an opaque absolute URI such as
+      // mailto:alice@example.test is path data for other methods.
+      (field === "http.request.uri" &&
+        requestMethods.length === values.length &&
+        requestMethods.every((method) => method === "CONNECT") &&
+        value.split(/[/?#]/u, 1)[0]!.includes("@"))
+    );
+  });
 };
+
+// Fail closed for new dissector fields and alternative credential containers.
+// Raw-byte selections are not admitted, even for otherwise allowed metadata.
+const TLS_METADATA_FIELDS: ReadonlySet<string> = new Set([
+  "frame.number",
+  "frame.time_epoch",
+  "frame.len",
+  "frame.cap_len",
+  "frame.protocols",
+  "eth.src",
+  "eth.dst",
+  "ip.src",
+  "ip.dst",
+  "ip.addr",
+  "ipv6.src",
+  "ipv6.dst",
+  "ipv6.addr",
+  "tcp.srcport",
+  "tcp.dstport",
+  "tcp.port",
+  "tcp.stream",
+  "udp.srcport",
+  "udp.dstport",
+  "udp.port",
+  "udp.stream",
+  "http.request.method",
+  "http.request.uri",
+  "http.host",
+  "http.response.code",
+  "http2.headers.method",
+  "http2.headers.path",
+  "http2.headers.authority",
+  "http2.headers.scheme",
+  "http2.headers.status",
+]);
+const permitsTlsFields = (input: {
+  tls_key_log_path?: string | undefined;
+  fields: readonly string[];
+}): boolean =>
+  input.tls_key_log_path === undefined ||
+  (input.fields.every(
+    (field) =>
+      TLS_METADATA_FIELDS.has(field) || isTransportCredentialField(field),
+  ) &&
+    (!input.fields.includes("http.request.uri") ||
+      input.fields.includes("http.request.method")));
+const tlsFieldsIssue = {
+  path: ["fields"],
+  message:
+    "With tls_key_log_path, select only reviewed packet/HTTP metadata fields listed in the packet-captures guide. Include http.request.method with http.request.uri to distinguish CONNECT authority-form. Generic headers, decoded authentication, payload/raw fields and unreviewed fields are refused.",
+};
+const permitsTlsFilter = (input: {
+  tls_key_log_path?: string | undefined;
+  display_filter: string | null;
+}): boolean =>
+  input.tls_key_log_path === undefined || input.display_filter === null;
 const credentialFilterIssue = {
   path: ["display_filter"],
   message:
-    "With tls_key_log_path, display_filter must not reference a redacted credential field (conservative name match).",
+    "With tls_key_log_path, display_filter must be omitted or null; decrypted filters can probe credentials through match counts.",
 };
 export const inspectPacketCaptureInputSchema = captureInputShape
   .refine(withinPacketCaptureSelectorBudget, packetCaptureSelectorBudgetIssue)
-  .refine(
-    (input) =>
-      input.tls_key_log_path === undefined ||
-      input.display_filter === null ||
-      !referencesTransportCredentialField(input.display_filter),
-    credentialFilterIssue,
-  );
+  .refine(permitsTlsFields, tlsFieldsIssue)
+  .refine(permitsTlsFilter, credentialFilterIssue);
 export const packetCaptureOptionsSchema = captureInputShape
   .omit({ path: true })
-  .refine(withinPacketCaptureSelectorBudget, packetCaptureSelectorBudgetIssue);
+  .refine(withinPacketCaptureSelectorBudget, packetCaptureSelectorBudgetIssue)
+  .refine(permitsTlsFields, tlsFieldsIssue)
+  .refine(permitsTlsFilter, credentialFilterIssue);
 export type InspectPacketCaptureInput = z.infer<
   typeof inspectPacketCaptureInputSchema
 >;
@@ -159,6 +233,19 @@ export const packetFieldsSchema = z
   .catchall(z.array(z.string()));
 type PacketFields = z.infer<typeof packetFieldsSchema>;
 
+const hasRequestTargetContext = (packet: PacketFields): boolean => {
+  const targets = packet["http.request.uri"] ?? [];
+  if (targets.length === 0) return true;
+  const methods = packet["http.request.method"] ?? [];
+  // Flattened field arrays cannot associate mixed CONNECT/other requests.
+  // Refuse uncertain context rather than inventing userinfo in an opaque URI.
+  return (
+    targets.length === methods.length &&
+    (methods.every((method) => method === "CONNECT") ||
+      methods.every((method) => method !== "CONNECT"))
+  );
+};
+
 const packetRedactionSchema = z.strictObject({
   frame: frameNumberSchema.describe("Original frame number"),
   field: z.string().describe("Selected field removed from this frame"),
@@ -166,7 +253,7 @@ const packetRedactionSchema = z.strictObject({
 });
 type PacketRedaction = z.infer<typeof packetRedactionSchema>;
 
-/** Remove known credential fields (including `@` raw-byte selections) from decrypted frames. */
+/** Remove named credentials and whole URL/authority fields carrying userinfo. */
 export const excludeTransportCredentialFields = (
   packets: readonly PacketFields[],
 ): { packets: PacketFields[]; redactions: PacketRedaction[] } => {
@@ -175,8 +262,14 @@ export const excludeTransportCredentialFields = (
     const frame = packet["frame.number"][0];
     return packetFieldsSchema.parse(
       Object.fromEntries(
-        Object.entries(packet).filter(([field]) => {
-          if (!TRANSPORT_CREDENTIAL_FIELDS.has(field.replace(/^@/u, "")))
+        Object.entries(packet).filter(([field, values]) => {
+          if (
+            !containsTransportCredentials(
+              field,
+              values,
+              packet["http.request.method"] ?? [],
+            )
+          )
             return true;
           redactions.push({ frame, field, reason: "transport-credential" });
           return false;
@@ -205,7 +298,7 @@ export const packetCaptureSchema = z
       .array(packetRedactionSchema)
       .exactOptional()
       .describe(
-        "Present only when tls_key_log_path is selected: known credential fields removed from returned frames.",
+        "Present only when tls_key_log_path is selected: known credential fields and URL/authority fields containing userinfo removed from returned frames.",
       ),
     output_window: z.strictObject({
       matching_packets: z
@@ -274,6 +367,28 @@ export const packetCaptureSchema = z
           "Returned packet window must match examined matches and caller-selected offset/limit",
       });
     const keyLogPath = report.selection.tls_key_log_path;
+    if (
+      keyLogPath !== undefined &&
+      report.packets.some(
+        (packet) =>
+          !hasRequestTargetContext(packet) ||
+          Object.entries(packet).some(
+            ([field, values]) =>
+              !TLS_METADATA_FIELDS.has(field) ||
+              containsTransportCredentials(
+                field,
+                values,
+                packet["http.request.method"] ?? [],
+              ),
+          ),
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["packets"],
+        message:
+          "Decrypted packets must contain only reviewed metadata; credentials, URL userinfo and unreviewed fields must not be returned, and HTTP request targets need equal method/target counts without mixed CONNECT/other methods.",
+      });
     if (
       (keyLogPath === undefined) !== (report.tls_key_log === undefined) ||
       (keyLogPath === undefined) !== (report.redactions === undefined) ||

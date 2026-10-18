@@ -168,3 +168,148 @@ it("binds key-log identity and redactions to the selected key log and returned f
       }).success,
     ).toBe(false);
 });
+
+it.each(["http2.header.value", "http.authorization", "future.decrypted.field"])(
+  "refuses a key-log report containing unapproved returned field %s",
+  (field) => {
+    const malformed = report(
+      {
+        path: "/captures/a.pcapng",
+        fields: ["http2.headers.path", "http.authorization"],
+        tls_key_log_path: "/captures/client.keys",
+      },
+      {
+        tls_key_log: keyLog,
+        redactions: [],
+        withheld_diagnostic_bytes: 0,
+        packets: [
+          {
+            "frame.number": ["4"],
+            "http2.headers.path": ["/v1/items"],
+            [field]: ["Bearer fixture-credential"],
+          },
+        ],
+      },
+    );
+    expect(packetCaptureSchema.safeParse(malformed).success).toBe(false);
+  },
+);
+
+it.each([
+  [
+    "http.request.uri",
+    "https://alice:fixture-password@example.test/path",
+    "GET",
+  ],
+  ["http.request.uri", "alice:fixture-password@example.test:443", "CONNECT"],
+  ["http.request.uri", "https:\\\\alice:fixture-password@example.test/path"],
+  ["http.request.uri", "https://ali\tce:fixture-password@example.test/path"],
+  ["http.request.uri", "https://alice:fixture-password@[invalid/path"],
+  ["http2.headers.path", "https://alice:fixture-password@example.test/path"],
+  ["http.host", "alice:fixture-password@example.test"],
+  ["http2.headers.authority", "alice:fixture-password@example.test:443"],
+])(
+  "excludes structural URL userinfo from %s (%s)",
+  (field, value, method = "GET") => {
+    const packets = [
+      {
+        "frame.number": ["4"] as [string],
+        "http.request.method": [method, method],
+        [field]: ["safe-first-value", value],
+      },
+    ];
+    const redacted = excludeTransportCredentialFields(packets);
+    expect(packets[0]?.[field]).toContain(value);
+    const selected = {
+      path: "/captures/a.pcapng",
+      fields: ["http.request.method", field],
+      tls_key_log_path: keyLog.path,
+    };
+    const unredacted = report(selected, {
+      tls_key_log: keyLog,
+      withheld_diagnostic_bytes: 0,
+      redactions: [],
+      packets,
+    });
+    const invalid = packetCaptureSchema.safeParse(unredacted);
+    expect(invalid.success).toBe(false);
+    expect(redacted).toEqual({
+      packets: [
+        { "frame.number": ["4"], "http.request.method": [method, method] },
+      ],
+      redactions: [{ frame: "4", field, reason: "transport-credential" }],
+    });
+    if (!invalid.success)
+      expect(JSON.stringify(invalid.error.issues)).not.toContain(
+        "fixture-password",
+      );
+    expect(
+      packetCaptureSchema.safeParse({ ...unredacted, ...redacted }).success,
+    ).toBe(true);
+  },
+);
+
+it("preserves origin-form paths, queries and URL path data without guessing secrecy", () => {
+  const packets = [
+    {
+      "frame.number": ["4"] as [string],
+      "http.request.method": ["GET"],
+      "http.request.uri": [
+        "/users/alice@example.test?next=https://user:password@example.test",
+        "//alice:password@example.test/path",
+        "https://example.test/path@segment?password=application-data",
+        "https://example.test\\user:password@path",
+        "mailto:alice@example.test",
+        "urn:example:alice@example.test",
+      ],
+      "http2.headers.path": ["/@name", "//user:password@example.test", "*"],
+      "http.host": ["example.test", "[::1]:443"],
+      "http2.headers.authority": ["example.test:443"],
+    },
+  ];
+  expect(excludeTransportCredentialFields(packets)).toEqual({
+    packets,
+    redactions: [],
+  });
+});
+
+it.each([
+  { methods: [], targets: ["/ordinary-target"] },
+  {
+    methods: ["CONNECT"],
+    targets: ["mailto:alice@example.test", "example.test:443"],
+  },
+  {
+    methods: ["GET", "CONNECT"],
+    targets: ["mailto:alice@example.test", "example.test:443"],
+  },
+])(
+  "refuses uncertain request-target context without inventing credential removals: %j",
+  ({ methods, targets }) => {
+    const packets = [
+      {
+        "frame.number": ["4"] as [string],
+        "http.request.uri": targets,
+        "http.request.method": methods,
+      },
+    ];
+    expect(excludeTransportCredentialFields(packets)).toEqual({
+      packets,
+      redactions: [],
+    });
+    const malformed = report(
+      {
+        path: "/captures/a.pcapng",
+        fields: ["http.request.uri", "http.request.method"],
+        tls_key_log_path: keyLog.path,
+      },
+      {
+        tls_key_log: keyLog,
+        withheld_diagnostic_bytes: 0,
+        redactions: [],
+        packets,
+      },
+    );
+    expect(packetCaptureSchema.safeParse(malformed).success).toBe(false);
+  },
+);

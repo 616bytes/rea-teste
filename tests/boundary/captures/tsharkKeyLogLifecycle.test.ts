@@ -99,7 +99,7 @@ const inspectFailure = async (
   });
   const result = await new PacketCaptureService(provider).inspect({
     path,
-    fields: ["http.request.uri"],
+    fields: ["http.request.method", "http.request.uri"],
     tls_key_log_path: keyLog,
   });
   if (result.ok) throw new Error("Expected injected command failure");
@@ -247,6 +247,7 @@ it("withholds nested command output when the outer failure has no snapshot", asy
 });
 
 const completedInspection = async (options: {
+  userInfo?: boolean;
   cancelIntegrity?: boolean;
   malformed?: boolean;
   failUnlink?: boolean;
@@ -266,8 +267,21 @@ const completedInspection = async (options: {
   let privateKeyLog: string | undefined;
   const fields = {
     "frame.number": ["1"],
-    "http.request.uri": ["/items"],
+    "http.request.method": ["GET"],
+    "http.request.uri": [
+      options.userInfo
+        ? "https://alice:fixture-password@example.test/items"
+        : "/items",
+    ],
     "http.authorization": ["fixture-credential"],
+    ...(options.userInfo
+      ? {
+          "http.host": ["alice:fixture-password@example.test"],
+          "http2.headers.authority": [
+            "alice:fixture-password@example.test:443",
+          ],
+        }
+      : {}),
   };
   const provider = new TsharkCaptureProvider(
     { REA_TSHARK_COMMAND: tool, REA_TSHARK_PRLIMIT_COMMAND: tool },
@@ -323,7 +337,7 @@ const completedInspection = async (options: {
   const result = await new PacketCaptureService(provider).inspect(
     {
       path,
-      fields: ["http.request.uri", "http.authorization"],
+      fields: Object.keys(fields).filter((field) => field !== "frame.number"),
       tls_key_log_path: keyLog,
     },
     { signal: controller.signal },
@@ -339,6 +353,36 @@ const completedInspection = async (options: {
     },
   };
 };
+
+it("keeps URL userinfo out of completed partial Evidence after cancellation", async () => {
+  const f = await completedInspection({
+    cancelIntegrity: true,
+    userInfo: true,
+  });
+  if (f.result.ok) throw new Error("Expected finalization cancellation");
+  expect(f.result.error._tag).toBe("AnalysisCancelledError");
+  expect(f.result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      packets: [{ "frame.number": ["1"], "http.request.method": ["GET"] }],
+      redactions: expect.arrayContaining([
+        {
+          frame: "1",
+          field: "http.request.uri",
+          reason: "transport-credential",
+        },
+        { frame: "1", field: "http.host", reason: "transport-credential" },
+        {
+          frame: "1",
+          field: "http2.headers.authority",
+          reason: "transport-credential",
+        },
+      ]),
+    },
+  });
+  expect(
+    inspect(f.result.error, { depth: null, maxStringLength: null }),
+  ).not.toContain("fixture-password");
+});
 
 it.each([false, true])(
   "retains completed output through key-log integrity cancellation (malformed=%s)",

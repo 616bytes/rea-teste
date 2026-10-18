@@ -206,5 +206,21 @@ it("advertises and forwards an optional absolute TLS key log through MCP", async
   });
   expect(relative.isError).toBe(true);
   expect(JSON.stringify(relative)).toContain("tls_key_log_path");
+  for (const [selection, issue] of [
+    [{ fields: ["http2.header.value"] }, "fields"],
+    [{ fields: ["tcp.payload"] }, "fields"],
+    [
+      { display_filter: 'http2.header.value matches "^Bearer A"' },
+      "display_filter",
+    ],
+    [{ display_filter: 'http contains "Cookie"' }, "display_filter"],
+  ] as const) {
+    const refused = await harness.client.callTool({
+      name: tool.name,
+      arguments: { ...input, ...selection },
+    });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused)).toContain(issue);
+  }
   expect(inputs).toHaveLength(1);
 });

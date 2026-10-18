@@ -173,6 +173,13 @@ export const recordTlsKeyLogCapture = async (directory) => {
     { version: "TLSv1.2", path: "/rea-tls12", keyed: true, clientPort: 50012 },
     {
       version: "TLSv1.3",
+      path: "https://rea-verifier-user:rea-verifier-userinfo-password@rea.test/rea-userinfo",
+      userInfo: true,
+      keyed: true,
+      clientPort: 50015,
+    },
+    {
+      version: "TLSv1.3",
       path: "/rea-no-keys",
       keyed: false,
       clientPort: 50014,

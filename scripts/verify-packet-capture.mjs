@@ -397,14 +397,16 @@ try {
   const secretTokens = [
     ...keyLogLines.flatMap((line) => line.split(" ").slice(1)),
     ...tlsCapture.sessions.flatMap(({ token, cookie }) => [token, cookie]),
+    "rea-verifier-userinfo-password",
   ].filter((token) => /^[0-9a-f]{64,}$|^rea-verifier-/iu.test(token));
   // Two hex tokens per recognized line plus each session's credentials.
   assert.equal(
     secretTokens.length,
-    2 * (keyLogLines.length - 2) + 2 * tlsCapture.sessions.length,
+    2 * (keyLogLines.length - 2) + 2 * tlsCapture.sessions.length + 1,
   );
   const httpFields = [
     "tcp.port",
+    "http.request.method",
     "http.request.uri",
     "http.response.code",
     "http.authorization",
@@ -423,18 +425,22 @@ try {
   const decrypted = await inspect({
     path: tlsPath,
     fields: httpFields,
-    display_filter: "http",
+    match_limit: null,
     tls_key_log_path: keyLogPath,
   });
   // Plaintext must appear: a silent no-decrypt run fails here.
-  assert.equal(decrypted.packets.length, 2 * keyed.length);
+  assert.equal(decrypted.packets.length, tlsCapture.frames.length);
+  assert.equal(decrypted.output_window.has_more, false);
   assert.equal(decrypted.diagnostics, "");
   assert.equal(typeof decrypted.withheld_diagnostic_bytes, "number");
   assert.deepEqual(
     decrypted.packets
       .flatMap((packet) => packet["http.request.uri"] ?? [])
       .sort(),
-    keyed.map(({ path }) => path).sort(),
+    keyed
+      .filter(({ userInfo }) => !userInfo)
+      .map(({ path }) => path)
+      .sort(),
   );
   assert.deepEqual(
     decrypted.packets.flatMap((packet) => packet["http.response.code"] ?? []),
@@ -443,11 +449,20 @@ try {
   for (const packet of decrypted.packets) {
     assert.equal(Object.hasOwn(packet, "http.authorization"), false);
     assert.equal(Object.hasOwn(packet, "http.set_cookie"), false);
-    assert.equal(packet["tcp.port"].includes("50014"), false);
+    if (packet["tcp.port"].includes("50014")) {
+      assert.equal(Object.hasOwn(packet, "http.request.uri"), false);
+      assert.equal(Object.hasOwn(packet, "http.response.code"), false);
+    }
   }
   assert.deepEqual(
     decrypted.redactions.map(({ field }) => field).sort(),
-    keyed.flatMap(() => ["http.authorization", "http.set_cookie"]).sort(),
+    keyed
+      .flatMap(({ userInfo }) => [
+        "http.authorization",
+        "http.set_cookie",
+        ...(userInfo ? ["http.request.uri"] : []),
+      ])
+      .sort(),
   );
   const labels = Object.fromEntries(
     [
@@ -478,11 +493,18 @@ try {
     arguments: {
       path: tlsPath,
       fields: httpFields,
-      display_filter: "this is not a filter",
+      decode_as: ["no_such_protocol==1,unknown"],
       tls_key_log_path: keyLogPath,
     },
   });
   assert.equal(keyLogFailure.isError, true);
+  const failureText = keyLogFailure.content.find(({ type }) => type === "text");
+  assert.ok(failureText);
+  const producerFailure = JSON.parse(failureText.text).error;
+  assert.equal(producerFailure.code, "execution_failure");
+  assert.equal(producerFailure.details.diagnostics.stdout, "");
+  assert.equal(producerFailure.details.diagnostics.stderr, "");
+  assert.ok(producerFailure.details.diagnostics.stderr_bytes > 0);
   observedOutputs.push(JSON.stringify(keyLogFailure));
   const credentialFilter = await client.callTool({
     name: tool.name,
@@ -496,6 +518,55 @@ try {
   assert.equal(credentialFilter.isError, true);
   assert.ok(JSON.stringify(credentialFilter).includes("display_filter"));
   cases++;
+  for (const [selection, issue] of [
+    [{ fields: ["http2.header.value"] }, "fields"],
+    [{ fields: ["tcp.payload"] }, "fields"],
+    [{ fields: ["ntlmssp.auth.username"] }, "fields"],
+    [
+      { display_filter: 'http2.header.value matches "^Bearer A"' },
+      "display_filter",
+    ],
+    [{ display_filter: 'http contains "Cookie"' }, "display_filter"],
+  ]) {
+    const input = {
+      path: tlsPath,
+      fields: ["http.request.method", "http.request.uri"],
+      tls_key_log_path: keyLogPath,
+      ...selection,
+    };
+    const refused = await client.callTool({
+      name: tool.name,
+      arguments: input,
+    });
+    assert.equal(refused.isError, true);
+    assert.ok(JSON.stringify(refused).includes(issue));
+    const flags = Object.entries(input)
+      .filter(([name]) => name !== "path")
+      .flatMap(([name, value]) =>
+        (Array.isArray(value) ? value : [value]).flatMap((item) => [
+          `--${name}`,
+          String(item),
+        ]),
+      );
+    let cliOutput;
+    try {
+      cliOutput = (
+        await execute(
+          process.execPath,
+          [entrypoint, "inspect-packet-capture", tlsPath, ...flags, "--json"],
+          { env: environment, timeout: 60000, maxBuffer: 1024 * 1024 },
+        )
+      ).stdout;
+    } catch (failure) {
+      assert.equal(typeof failure.stdout, "string");
+      cliOutput = failure.stdout;
+    }
+    const cliError = JSON.parse(cliOutput);
+    assert.equal(cliError.code, "invalid_request");
+    assert.ok(JSON.stringify(cliError).includes(issue));
+    observedOutputs.push(JSON.stringify(refused), cliOutput);
+    cases++;
+  }
   for (const output of observedOutputs.slice(outputsBeforeKeyLog))
     for (const token of secretTokens)
       assert.equal(

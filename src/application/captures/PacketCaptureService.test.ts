@@ -67,7 +67,7 @@ it("passes an absolute key log to the provider and omits it when not selected", 
   expect(Object.keys(inputs[2] ?? {})).not.toContain("tls_key_log_path");
 });
 
-it("refuses display filters that could probe redacted credentials when a key log is selected", async () => {
+it("refuses every display filter when a key log is selected", async () => {
   const { service, inputs } = recordingService();
   const base = {
     path: absolute("a.pcapng"),
@@ -78,6 +78,12 @@ it("refuses display filters that could probe redacted credentials when a key log
     'HTTP2.HEADERS.AUTHORIZATION matches "^Bearer"',
     'http3.headers.set_cookie == "x" || tcp',
     'frame contains "http.authorization"',
+    'http2.header.value matches "^Bearer A"',
+    'http contains "Cookie"',
+    'tcp.payload contains "session="',
+    "http2.headers.path",
+    "ip.addr == 192.0.2.1",
+    "${credential_probe}",
   ]) {
     const result = await service.inspect({
       ...base,
@@ -98,7 +104,77 @@ it("refuses display filters that could probe redacted credentials when a key log
   await service.inspect({
     ...base,
     display_filter: "http2.headers.path",
-    tls_key_log_path: absolute("client.keys"),
   });
   expect(inputs).toHaveLength(2);
+});
+
+it.each([
+  "http.request.line",
+  "http.response.line",
+  "http2.header.value",
+  "http2.header.name",
+  "http3.header.value",
+  "ntlmssp.auth.username",
+  "kerberos.CNameString",
+  "data.data",
+  "tcp.payload",
+  "tls.app_data",
+  "ip.payload",
+  "@http2.headers.path",
+  "future.new.decrypted.field",
+])(
+  "refuses unreviewed decrypted field %s before provider work",
+  async (field) => {
+    const { service, inputs } = recordingService();
+    const base = {
+      path: absolute("a.pcapng"),
+      fields: ["http2.headers.path", field],
+    };
+    const result = await service.inspect({
+      ...base,
+      tls_key_log_path: absolute("client.keys"),
+    });
+    if (result.ok) throw new Error("Expected decrypted field refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["fields"] })],
+    });
+    expect(inputs).toEqual([]);
+    await service.inspect(base);
+    expect(inputs).toHaveLength(1);
+  },
+);
+
+it("admits reviewed metadata and removable named credentials with a key log", async () => {
+  const { service, inputs } = recordingService();
+  const fields = [
+    "frame.number",
+    "ip.addr",
+    "http.request.uri",
+    "http.request.method",
+    "http2.headers.path",
+    "http.authorization",
+    "@http.cookie",
+  ];
+  await service.inspect({
+    path: absolute("a.pcapng"),
+    fields,
+    tls_key_log_path: absolute("client.keys"),
+  });
+  expect(inputs).toEqual([expect.objectContaining({ fields })]);
+});
+
+it("requires the HTTP method with a decrypted request target to distinguish CONNECT authority", async () => {
+  const { service, inputs } = recordingService();
+  const result = await service.inspect({
+    path: absolute("a.pcapng"),
+    fields: ["http.request.uri"],
+    tls_key_log_path: absolute("client.keys"),
+  });
+  if (result.ok) throw new Error("Expected request-target context refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisInputError",
+    issues: [expect.objectContaining({ path: ["fields"] })],
+  });
+  expect(inputs).toEqual([]);
 });

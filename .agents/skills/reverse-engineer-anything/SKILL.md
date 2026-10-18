@@ -134,7 +134,11 @@ explicit path or endpoint and do not need it.
   limit for complete matching output. Preserve the source digest across pages.
   This does not perform live capture. For HTTPS recorded with the caller's own
   client key log (`SSLKEYLOGFILE`), add `tls_key_log_path`; only key-log counts
-  are returned and known authorization/cookie fields are listed in `redactions`.
+  are returned. Select only the guide's reviewed packet/HTTP metadata fields and
+  omit `display_filter`; generic headers, decoded authentication and raw/payload
+  fields are refused. Select `http.request.method` with `http.request.uri` to
+  distinguish CONNECT authority-form. Known authorization/cookie fields and fields containing URL
+  userinfo are removed and listed in `redactions`.
   For address/DNS/SNI/protocol summaries use `inspect_pcap_capture` with MCP
   detail summary, then retained kind pcap pages. Requires Wireshark 4.x tshark
   and capinfos, with Linux prlimit or Windows Job Objects; see

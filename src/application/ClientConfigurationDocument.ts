@@ -158,6 +158,14 @@ const parseDocument = (
   // ZCode loads nonempty native files with strict JSON.parse.
   if (format === "zcode")
     return requireObject(JSON.parse(text), "The configuration root");
+  // Claude Code loads `.claude.json` with strict native JSON.parse. It accepts
+  // a UTF-8 BOM, but comments and trailing commas must be rejected instead of
+  // registering into a document native Claude Code rejects as corrupt.
+  if (format === "claude_code") {
+    if (isEmptyClientConfigurationText(text)) return {};
+    const unbommed = text.startsWith("\uFEFF") ? text.slice(1) : text;
+    return requireObject(JSON.parse(unbommed), "The configuration root");
+  }
   const errors: ParseError[] = [];
   // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
   const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;

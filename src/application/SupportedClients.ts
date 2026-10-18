@@ -50,6 +50,7 @@ export interface SetupClient {
     | "zcode_fallback"
     | "zcode"
     | "dsh"
+    | "claude_code"
     | "unsupported";
 }
 
@@ -491,7 +492,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: (context: ClientPathContext) =>
       join(claudeCodeConfigDirectory(context), ".claude.json"),
     markerPath: claudeCodeMarkerDirectory,
-    format: "json",
+    format: "claude_code",
   },
   {
     name: "claude_desktop",

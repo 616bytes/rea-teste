@@ -11,6 +11,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
+import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
   failedJavaScriptStaticAnalysis,
@@ -22,6 +23,7 @@ import {
   addReference,
   addSourceMapDirectives,
   finishPartialNetworkEndpoints,
+  finishSqliteStorageCalls,
   inspectCall,
   inspectRouteProperty,
   inspectRoleProperty,
@@ -99,9 +101,14 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);
-  if (accumulator.pendingNetworkCalls.length > 0) {
+  yield* finishElectronBrowserWindowsSteps(findings, index);
+  if (
+    accumulator.pendingNetworkCalls.length > 0 ||
+    accumulator.pendingSqliteCalls.length > 0
+  ) {
     yield* index.indexMemberMutationFactsSteps();
     finishPartialNetworkEndpoints(findings, bindings, index);
+    finishSqliteStorageCalls(findings, bindings, index);
   }
   accumulator.electronCallPaths = collectElectronWrappedCallPaths(
     file.program,

@@ -39,8 +39,8 @@ export const GHIDRA_OPERATIONS = Object.freeze(
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
-  "The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.",
-  "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
+  "The imported Program and temporary project are ephemeral and deleted after successful close cleanup. Incomplete cleanup retains owned resources for retry. Annotation operations edit session database metadata; original executable bytes are never written.",
+  "Cancelling an active Ghidra request attempts to stop its ephemeral database. Successful cleanup discards session annotations; only then can the next uncached provider query import the selected target again. Incomplete cleanup retains owned process/runtime resources and blocks fresh import until cleanup succeeds. The selected target remains open; retained successful Evidence and matching snapshots may still be reused.",
 ]);
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */

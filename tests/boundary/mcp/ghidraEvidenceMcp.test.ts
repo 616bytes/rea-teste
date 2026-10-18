@@ -187,6 +187,14 @@ it("retains terminal-call qualifications across function views and snapshot repl
         limitations: [limitation],
       });
       expect(evidence.limitations, name).toContain(limitation);
+      expect(evidence.limitations, name).toContainEqual(
+        expect.stringContaining(
+          "only then can the next uncached provider query",
+        ),
+      );
+      expect(evidence.limitations, name).toContainEqual(
+        expect.stringContaining("blocks fresh import until cleanup succeeds"),
+      );
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         function_boundary_observations:
           "ghidra-function-boundary-limitations-v4",

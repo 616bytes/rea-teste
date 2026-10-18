@@ -349,6 +349,7 @@ describe("Ghidra provider", () => {
             expect.stringContaining(
               "unresolved targetless flows remain unknown",
             ),
+            expect.stringContaining("blocks fresh import"),
           ]),
         }),
       ]),

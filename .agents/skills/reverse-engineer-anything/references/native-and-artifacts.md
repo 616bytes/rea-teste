@@ -121,8 +121,9 @@ successful cleanup discards the ephemeral database; the next uncached provider
 query imports the selected target again. While the binary session remains open
 without `close_binary`, reuse retained successful Evidence and matching snapshot
 entries where available. Incomplete cleanup retains the owned process/runtime
-and blocks fresh import. Export needed Evidence before `close_binary`: closing
-clears session-retained Evidence IDs and snapshot cache entries even when cleanup
+and blocks fresh import. Preserve needed Evidence with the snapshot-close flow
+above, or wait/recheck and export before a plain close: closing clears
+session-retained Evidence IDs and snapshot cache entries even when cleanup
 fails. Check the close result and retry after addressing `cleanup_incomplete`
 before reopening the target; do not reuse cleared IDs after close. Preserved
 complete dossier Evidence can instead be supplied through the view's inline
@@ -143,7 +144,11 @@ and the exact retained Evidence ID to read selected facts without reanalysis.
 Native facets also include procedure, pseudocode, assembly, basic blocks,
 comments, callers/callees, references, unresolved calls, referenced strings and
 names, the native API record, and value-flow summaries. Pseudocode offsets and limits count UTF-16
-code units; use the returned `next_offset` for continuation. Provider limitations
+code units; use `normalized_result.coverage.next_offset` for continuation.
+Available assembly and recorded collections use rows; `procedure`, `native_api`,
+and `value_flow_summary` are singleton items at offset 0. Unavailable facets and
+unrecorded optional collections return status objects, not text or rows; preserve
+the entire item, including `native_api.residual_unknowns`. Provider limitations
 and unavailable facts remain explicit; the complete parent Evidence is retained.
 
 `inspect_macho` on a large framework returns megabytes of imports and exports.

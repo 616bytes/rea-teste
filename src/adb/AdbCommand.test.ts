@@ -172,3 +172,221 @@ it("keeps a physical failure even when the later abort reason is that same error
     error: { _tag: "AnalysisProtocolError", cause: failure },
   });
 });
+
+it.each([
+  "adb: error: failed to stat remote object '/data/local/tmp/rea-attribute-sample.bin': No such file or directory",
+  "adb: error: failed to open '/data/local/tmp/rea-attribute-sample.bin': read: Permission denied",
+])(
+  "names the pulled file operand for the path-specific refusal: %j",
+  async (stderr) => {
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(new Error("adb pull failed"), {
+        code: 1,
+        stdout: "",
+        stderr,
+        signal: null,
+        killed: false,
+      }),
+    );
+    const result = await runAdbCapture(
+      "pull_adb_file",
+      "emulator-5554",
+      "/host/adb",
+      [],
+      { timeoutMs: 100, maxOutputBytes: 1024 },
+      undefined,
+      { fileTarget: "/data/local/tmp/rea-attribute-sample.bin" },
+    );
+    if (result.ok) throw new Error("Expected a path-specific pull refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisUnsupportedTargetError",
+      operation: "pull_adb_file",
+      path: "/data/local/tmp/rea-attribute-sample.bin",
+      reason: stderr,
+    });
+    expect(result.error.message).toBe(
+      `Unsupported target for pull_adb_file at /data/local/tmp/rea-attribute-sample.bin: ${stderr}`,
+    );
+  },
+);
+
+it("keeps the device target for device-state refusals even when a file operand is given", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr: "error: device offline",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    { fileTarget: "/data/local/tmp/rea-attribute-sample.bin" },
+  );
+  if (result.ok) throw new Error("Expected a device-state refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "emulator-5554",
+    reason: "error: device offline",
+  });
+});
+
+it("keeps the shared target when no file operand is provided", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr:
+        "adb: error: failed to stat remote object '/data/local/tmp/x.bin': No such file or directory",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "inspect_adb_device",
+    "device",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  if (result.ok) throw new Error("Expected a refusal");
+  expect(result.error.message).toContain("at device: ");
+});
+
+it("names the local operand for a local-destination pull refusal", async () => {
+  const stderr =
+    "adb: error: failed to create file '/host/out/rea-attribute-sample.bin': Permission denied";
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    {
+      fileTarget: "/data/local/tmp/rea-attribute-sample.bin",
+      localTarget: "/host/out/rea-attribute-sample.bin",
+    },
+  );
+  if (result.ok) throw new Error("Expected a path-specific pull refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    operation: "pull_adb_file",
+    path: "/host/out/rea-attribute-sample.bin",
+    reason: stderr,
+  });
+  expect(result.error.message).toBe(
+    `Unsupported target for pull_adb_file at /host/out/rea-attribute-sample.bin: ${stderr}`,
+  );
+});
+
+it("keeps the device target when a pull refusal identifies both operands", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr:
+        "adb: error: failed to copy '/data/local/tmp/rea-attribute-sample.bin' to '/host/out/rea-attribute-sample.bin': Permission denied",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    {
+      fileTarget: "/data/local/tmp/rea-attribute-sample.bin",
+      localTarget: "/host/out/rea-attribute-sample.bin",
+    },
+  );
+  if (result.ok) throw new Error("Expected a refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "emulator-5554",
+  });
+});
+
+it("keeps the file identity when pull operands share one path", async () => {
+  const sharedPath = "/host/out/rea-attribute-sample.bin";
+  const stderr = `adb: error: cannot stat remote object '${sharedPath}': No such file or directory`;
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    { fileTarget: sharedPath, localTarget: sharedPath },
+  );
+  if (result.ok) throw new Error("Expected a path-specific pull refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    operation: "pull_adb_file",
+    path: sharedPath,
+    reason: stderr,
+  });
+  expect(result.error.message).toBe(
+    `Unsupported target for pull_adb_file at ${sharedPath}: ${stderr}`,
+  );
+});
+
+it("names the remote file when a destination path shares its prefix", async () => {
+  const stderr =
+    "adb: error: failed to open '/data/local/tmp/rea-attribute-sample.bin': Permission denied";
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("adb pull failed"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "pull_adb_file",
+    "emulator-5554",
+    "/host/adb",
+    [],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+    {
+      fileTarget: "/data/local/tmp/rea-attribute-sample.bin",
+      localTarget: "/data",
+    },
+  );
+  if (result.ok) throw new Error("Expected a path-specific pull refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "/data/local/tmp/rea-attribute-sample.bin",
+    reason: stderr,
+  });
+});

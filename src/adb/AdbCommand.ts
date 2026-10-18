@@ -70,6 +70,22 @@ export interface AdbRunLimits {
   readonly maxOutputBytes: number;
 }
 
+/** Per-command target identities beyond the shared device target. */
+export interface AdbRunTargets {
+  /**
+   * Remote file operand named by path-specific refusals, such as a pull source
+   * that is missing or unreadable. Referenced refusals name this operand in
+   * the refusal text; device-state refusals keep the device target.
+   */
+  readonly fileTarget?: string;
+  /**
+   * Host file operand named by path-specific refusals, such as a pull
+   * destination adb could not create or write. The refusal must identify this
+   * operand in its text for it to be reported.
+   */
+  readonly localTarget?: string;
+}
+
 /** Run one bounded adb invocation and keep its exact failure shape. */
 export const runAdbCapture = async (
   operation: string,
@@ -78,6 +94,7 @@ export const runAdbCapture = async (
   arguments_: readonly string[],
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
+  targets: AdbRunTargets = {},
 ): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
@@ -136,12 +153,43 @@ export const runAdbCapture = async (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
         excerpt,
       )
-    )
+    ) {
+      // adb wraps the failing operand in single quotes, so quoted token
+      // equality decides the named operand when one path is a substring of
+      // the other. Equal pull operands share one identity: a refusal naming
+      // that path keeps the file identity over the device target, while
+      // refusals naming both distinct operands stay at the device target.
+      const quotedFailure = /'[^'\n]{1,1024}'/u.test(excerpt);
+      const sameIdentity =
+        targets.fileTarget !== undefined &&
+        targets.fileTarget === targets.localTarget;
+      const namesFile =
+        targets.fileTarget !== undefined &&
+        (excerpt.includes("remote object") ||
+          excerpt.includes(`'${targets.fileTarget}'`) ||
+          (!quotedFailure && excerpt.includes(targets.fileTarget)));
+      const namesLocal =
+        targets.localTarget !== undefined &&
+        !sameIdentity &&
+        (excerpt.includes(`'${targets.localTarget}'`) ||
+          (!quotedFailure && excerpt.includes(targets.localTarget)));
+      const namedOperand =
+        namesFile === namesLocal
+          ? undefined
+          : namesFile
+            ? targets.fileTarget
+            : targets.localTarget;
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(
+          operation,
+          namedOperand ?? targetPath,
+          excerpt,
+          {
+            cause,
+          },
+        ),
       );
+    }
     if (failure.killed)
       return err(
         new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),

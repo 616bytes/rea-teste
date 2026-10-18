@@ -129,7 +129,11 @@ function* exactTableSlotsSteps(
   const slots: (string | undefined)[] = [];
   for (const [index, element] of table.elements.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
-    if (t.isSpreadElement(element)) break;
+    if (t.isSpreadElement(element)) {
+      // the known prefix cannot prove that the remaining cache is dense.
+      slots.push(undefined);
+      break;
+    }
     const literal =
       element === null ? undefined : readExactJavaScriptLiteral(element);
     slots.push(

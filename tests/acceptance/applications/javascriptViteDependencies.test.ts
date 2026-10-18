@@ -2393,6 +2393,37 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: [],
     unknown: true,
   })),
+  ...(
+    [
+      [
+        "spread-table-at-cache-write.js",
+        'const alias = __vite__mapDeps.f.at(1); alias.f[0] = "./last.js";',
+      ],
+      [
+        "spread-table-slice-cache-write.js",
+        'const alias = __vite__mapDeps.f.slice(1)[0]; alias.f[0] = "./last.js";',
+      ],
+      [
+        "spread-table-borrowed-at-cache-write.js",
+        'const alias = Array.prototype.at.call(__vite__mapDeps.f, 1); alias.f[0] = "./last.js";',
+      ],
+    ] as const
+  ).map(([file, mutation]) => ({
+    file,
+    source: mapDependenciesWithEffects(
+      `__vite__mapDeps([0]); ${mutation} __vite__mapDeps([0]);`,
+      '["./first.js", ...[m]]',
+    ),
+    callOccurrences: [0, 1],
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "spread-table-known-prefix.js",
+    source: mapDependencies('["./first.js", ...[m]]', "[0]"),
+    resolved: ["first.js"],
+    unknown: false,
+  },
 ];
 
 const batches = Array.from(

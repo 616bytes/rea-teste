@@ -5,9 +5,15 @@ import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
-import { classifyParsedJavaScriptReceivers } from "./javascript/javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
+import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
-import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
+import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
+import {
+  semanticStaticPropertyKey,
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascript/javascriptAstValues.js";
 import {
   calleeName,
   endpointArgument,
@@ -61,16 +67,33 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const receivers = classifyParsedJavaScriptReceivers(file);
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(file.program),
+  );
+  completeSemanticSteps(index.indexAmbientWritesSteps());
+  const { receivers } = index;
   const openReceiverFacts = receivers.openReceivers;
+  let mutationFactsIndexed = false;
+  const isMapLookup = (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ): boolean => {
+    const proof = isIntrinsicMapLookup(node, index.bindings);
+    if (proof !== undefined) return proof;
+    if (!mutationFactsIndexed) {
+      completeSemanticSteps(index.indexMemberMutationFactsSteps());
+      mutationFactsIndexed = true;
+    }
+    return isIntrinsicMapLookup(node, index.bindings, index) === true;
+  };
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
     receivers.rpcClientRoots,
+    index,
   );
   traverseJavaScriptAst(file, {
     enter: (node) => {
       accumulator.visitedNodes += 1;
-      inspectNode(script, node, accumulator, openReceiverFacts);
+      inspectNode(script, node, accumulator, openReceiverFacts, isMapLookup);
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
         addFinding({
@@ -83,6 +106,16 @@ export const analyzeScript = (
         });
     },
   });
+  for (const endpoint of rpc.finish())
+    if (endpoint !== undefined)
+      addFinding({
+        collection: accumulator.endpoints,
+        script,
+        rawValue: endpoint.value,
+        mechanism: endpoint.mechanism,
+        node: endpoint.node,
+        accumulator,
+      });
 };
 
 const inspectNode = (
@@ -90,6 +123,9 @@ const inspectNode = (
   node: t.Node,
   accumulator: AnalysisAccumulator,
   openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  isMapLookup: (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ) => boolean,
 ): void => {
   if (
     (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
@@ -127,7 +163,7 @@ const inspectNode = (
     t.isOptionalCallExpression(node) ||
     t.isNewExpression(node)
   )
-    inspectCall(script, node, accumulator, openReceiverFacts);
+    inspectCall(script, node, accumulator, openReceiverFacts, isMapLookup);
 };
 
 const inspectCall = (
@@ -135,6 +171,9 @@ const inspectCall = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   accumulator: AnalysisAccumulator,
   openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  isMapLookup: (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ) => boolean,
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
@@ -179,22 +218,48 @@ const inspectCall = (
     node.callee,
     openReceiverFacts.get(node.start ?? -1),
   );
-  if (endpoint?.kind === "candidate")
-    addEndpointCandidate(script, node, name, endpoint.value, accumulator);
-  else if (endpoint !== undefined)
+  const networkEndpoint =
+    endpoint !== undefined && !isMapLookup(node) ? endpoint : undefined;
+  if (networkEndpoint?.kind === "candidate")
+    addEndpointCandidate(
+      script,
+      node,
+      name,
+      networkEndpoint.value,
+      accumulator,
+    );
+  else if (networkEndpoint !== undefined)
     addFinding({
       collection: accumulator.endpoints,
       script,
-      rawValue: endpoint.value,
+      rawValue: networkEndpoint.value,
       mechanism: `call:${name}`,
       node,
       accumulator,
     });
-  if (
-    name.endsWith("modelContext.registerTool") ||
-    name === "modelContext.registerTool"
-  )
+  if (isWebMcpRegistrationCallee(node.callee))
     addWebMcpDeclaration(script, node, accumulator);
+};
+
+/** Match exact WebMCP receiver and method properties without flattening keys. */
+const isWebMcpRegistrationCallee = (callee: t.Node): boolean => {
+  const method = unwrapJavaScriptExpression(callee).node;
+  if (!t.isMemberExpression(method) && !t.isOptionalMemberExpression(method))
+    return false;
+  if (
+    semanticStaticPropertyKey(method.property, method.computed) !==
+    "registerTool"
+  )
+    return false;
+
+  const receiver = unwrapJavaScriptExpression(method.object).node;
+  if (t.isIdentifier(receiver, { name: "modelContext" })) return true;
+  return (
+    (t.isMemberExpression(receiver) ||
+      t.isOptionalMemberExpression(receiver)) &&
+    semanticStaticPropertyKey(receiver.property, receiver.computed) ===
+      "modelContext"
+  );
 };
 
 const inspectRouteProperty = (
@@ -300,20 +365,15 @@ const addWebMcpDeclaration = (
   const schema =
     objectValue(declaration, "inputSchema") ??
     objectValue(declaration, "input_schema");
-  const declaredProperties = t.isObjectExpression(schema)
+  const properties = t.isObjectExpression(schema)
     ? objectValue(schema, "properties")
     : undefined;
-  const propertyObject = t.isObjectExpression(declaredProperties)
-    ? declaredProperties
-    : schema;
-  const schemaPropertyNames = t.isObjectExpression(propertyObject)
-    ? propertyObject.properties.flatMap((property) =>
-        t.isObjectProperty(property)
-          ? [
-              semanticStaticPropertyName(property.key, property.computed),
-            ].filter(Boolean)
-          : [],
-      )
+  const schemaPropertyNames = t.isObjectExpression(properties)
+    ? properties.properties.flatMap((property) => {
+        if (!t.isObjectProperty(property)) return [];
+        const key = semanticStaticPropertyKey(property.key, property.computed);
+        return key === null ? [] : [key];
+      })
     : [];
   const metadata = {
     name: name ?? null,

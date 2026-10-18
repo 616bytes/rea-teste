@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · **Українська** · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA: Реверс-інжиніринг будь-чого
 
@@ -166,7 +166,7 @@ REA потребує Node.js 22.x (>=22.19), 24.x (>=24.11) або 26+, а та�
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Нативні формати й підтримка систем відрізняються залежно від провайдера. Дивіться [налаштування Hopper і Ghidra](../installation.md#hopper), [посібник IDA](../ida-provider.md) та [експериментальну підтримку Ghidra у Windows](../windows-ghidra-p0.md). Ghidra також підтримує [аналіз 16-бітного DOS](../ghidra-dos.md). Для вибору провайдера дивіться [посібник CLI](../cli.md#choose-a-provider). Для функцій, доданих після найновішої версії в npm, перевірте [доступність у випусках](../installation.md#released-package-and-main).
+Нативні формати й підтримка систем відрізняються залежно від провайдера. Дивіться [налаштування Hopper і Ghidra](../installation.md#hopper), [посібник IDA](../ida-provider.md), [Kuna](../kuna-provider.md) та [експериментальну підтримку Ghidra у Windows](../windows-ghidra-p0.md). Ghidra також підтримує [аналіз 16-бітного DOS](../ghidra-dos.md). Для вибору провайдера дивіться [посібник CLI](../cli.md#choose-a-provider). Для функцій, доданих після найновішої версії в npm, перевірте [доступність у випусках](../installation.md#released-package-and-main).
 
 ## Приклади
 
@@ -272,7 +272,7 @@ npx rea-agents@latest setup
 
 ## Історія зірок
 
-🎉 **200 000 зірок на GitHub — дякуємо!**
+🎉 **300 000 зірок на GitHub — дякуємо!**
 
 Дякуємо всім, хто використовує REA, повідомляє про помилки, пропонує нові функції, тестує збірки й допомагає з виправленнями.
 

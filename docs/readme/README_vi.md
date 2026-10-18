@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA: Kỹ thuật dịch ngược cho mọi thứ
 
@@ -166,7 +166,7 @@ Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà k
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Định dạng mã máy và nền tảng chạy REA được hỗ trợ khác nhau tùy trình phân tích. Xem [thiết lập Hopper và Ghidra](../installation.md#hopper), [hướng dẫn IDA](../ida-provider.md) và [hỗ trợ Ghidra thử nghiệm trên Windows](../windows-ghidra-p0.md). Ghidra cũng hỗ trợ [phân tích DOS 16 bit](../ghidra-dos.md). Để chọn trình phân tích, xem [hướng dẫn CLI](../cli.md#choose-a-provider). Kiểm tra [khả năng sử dụng theo bản phát hành](../installation.md#released-package-and-main) đối với tính năng được bổ sung sau phiên bản npm mới nhất.
+Định dạng mã máy và nền tảng chạy REA được hỗ trợ khác nhau tùy trình phân tích. Xem [thiết lập Hopper và Ghidra](../installation.md#hopper), [hướng dẫn IDA](../ida-provider.md), [Kuna](../kuna-provider.md) và [hỗ trợ Ghidra thử nghiệm trên Windows](../windows-ghidra-p0.md). Ghidra cũng hỗ trợ [phân tích DOS 16 bit](../ghidra-dos.md). Để chọn trình phân tích, xem [hướng dẫn CLI](../cli.md#choose-a-provider). Kiểm tra [khả năng sử dụng theo bản phát hành](../installation.md#released-package-and-main) đối với tính năng được bổ sung sau phiên bản npm mới nhất.
 
 ## Các nghiên cứu điển hình
 
@@ -272,7 +272,7 @@ Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
 
 ## Lịch sử sao
 
-🎉 **200.000 sao trên GitHub — xin cảm ơn!**
+🎉 **300.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 

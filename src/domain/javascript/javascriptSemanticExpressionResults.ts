@@ -178,10 +178,25 @@ const memberAssignmentCanComplete = (
     return false;
   if (!literalMemberWriteCanComplete(initializer.node, key, state))
     return false;
+  const object = unwrapJavaScriptExpression(initializer.node).node;
+  const own = t.isObjectExpression(object)
+    ? semanticFinalObjectMember(object, key, "set")
+    : undefined;
+  const ownData =
+    t.isObjectProperty(own) || (t.isObjectMethod(own) && own.kind === "method");
   return binding.memberWrites.every((effect) => {
     if (semanticEffectTiming(read, effect.node, state) === "after") return true;
     if (effect.path.length === 0 || effect.path[0] === null) return false;
+    // Deletion can expose a prototype setter even when the original slot was data.
+    if (
+      ownData &&
+      effect.path.length === 1 &&
+      effect.path[0] === key &&
+      !t.isAssignmentExpression(effect.node, { operator: "=" })
+    )
+      return false;
     if (effect.path[0] !== "__proto__") return true;
+    if (ownData) return true;
     const mutation = effect.node;
     if (
       effect.path.length !== 1 ||

@@ -61,7 +61,7 @@ export const javaScriptExactResultOperand = (
   node = unwrapJavaScriptExpression(node).node;
   if (t.isSequenceExpression(node)) return node.expressions.at(-1);
   if (t.isConditionalExpression(node)) {
-    const test = readExactJavaScriptLiteral(node.test);
+    const test = readExactJavaScriptNormalResult(node.test);
     return test.found
       ? test.value
         ? node.consequent
@@ -69,7 +69,7 @@ export const javaScriptExactResultOperand = (
       : undefined;
   }
   if (t.isLogicalExpression(node)) {
-    const left = readExactJavaScriptLiteral(node.left);
+    const left = readExactJavaScriptNormalResult(node.left);
     if (!left.found) return undefined;
     const right =
       node.operator === "??"
@@ -109,6 +109,25 @@ export const readExactJavaScriptLiteral = (
       : { found: true, value: cooked };
   }
   return { found: false };
+};
+
+/** Undefined is an exact control result, not a serializable constant-lattice value. */
+const readExactJavaScriptNormalResult = (
+  raw: t.Node,
+):
+  | {
+      readonly found: true;
+      readonly value: JavaScriptSemanticPrimitive | undefined;
+    }
+  | { readonly found: false } => {
+  const node = unwrapJavaScriptExpression(raw).node;
+  const literal = readExactJavaScriptLiteral(node);
+  if (literal.found) return literal;
+  // Only a literal operand proves that void itself completes, without executing it.
+  return t.isUnaryExpression(node, { operator: "void" }) &&
+    readExactJavaScriptLiteral(node.argument).found
+    ? { found: true, value: undefined }
+    : { found: false };
 };
 
 /** Unary plus cannot convert a syntactically proven BigInt operand. */

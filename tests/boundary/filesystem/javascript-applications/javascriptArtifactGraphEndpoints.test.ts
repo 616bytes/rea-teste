@@ -682,6 +682,102 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "own-data-hides-replacement-prototype-setter.js",
+    source:
+      'const box={x:0};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "deleted-own-data-exposes-replacement-prototype-setter.js",
+    source:
+      'const box={x:0};delete box.x;box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "failed-later-yield-retains-earlier-consumer-wait-in-cleanup.js",
+    source:
+      '(async()=>{const[a=await 0,b]=(function*(){try{yield undefined;yield(null.x,undefined)}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "failed-first-yield-has-no-earlier-cleanup-wait.js",
+    source:
+      '(async()=>{const[a=await 0,b]=(function*(){try{yield(null.x,undefined)}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "array-rest-checks-added-getter-with-original-index-excluded.js",
+    source:
+      "let array,value;(async()=>{({0:value=(await 0,Object.defineProperty(array,'extra',{enumerable:true,get(){throw 0}})),...({set run(v){new Socket(\"wss://example.test/review-latest\")}}).run}=(array=[undefined]))})();const Socket=globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    file: "empty-object-rest-checks-added-getter.js",
+    source:
+      "let object,key;(async()=>{({[(await 0,Object.defineProperty(object,'extra',{enumerable:true,get(){throw 0}}),'absent')]:key,...({set run(v){new Socket(\"wss://example.test/review-latest\")}}).run}=(object={}))})();const Socket=globalThis.WebSocket;",
+    present: false,
+  },
+  {
+    file: "failed-await-operand-cannot-defer-branch.js",
+    source:
+      '(async()=>{if(await null.value)new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "failed-nested-await-operand-cannot-defer-branch.js",
+    source:
+      '(async()=>{if(await(await 0,null.value))new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "failed-await-operand-retains-earlier-wait-in-finally.js",
+    source:
+      '(async()=>{try{await(await 0,null.value)}finally{new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "safe-class-declaration-cannot-enter-catch.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{class C{}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "throwing-class-heritage-stops-carried-wait.js",
+    source:
+      '(async()=>{await 0;class C extends null.value{};new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "dormant-class-instance-field-preserves-carried-wait.js",
+    source:
+      '(async()=>{await 0;class C{x=null.value};new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "void-literal-selects-nullish-wait.js",
+    source:
+      '(async()=>{(void 0)??(await 0);new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "failed-import-options-cannot-supply-export.js",
+    source:
+      "(async()=>{const{WebSocket:Socket}=await import('ws',null.value);new Socket(\"wss://example.test/review-latest\")})();",
+    present: false,
+  },
+  {
+    file: "completed-import-options-preserve-export.js",
+    source:
+      "(async()=>{const{WebSocket:Socket}=await import('ws',{});new Socket(\"wss://example.test/review-latest\")})();",
+    present: true,
+  },
+  {
+    file: "plain-nested-object-cannot-consume-iterator.js",
+    source:
+      '(async()=>{const[[x],y=await 0]=(function*(){try{yield {};yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "prototype-setter-failure.js",
     source:
       'const box={};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',

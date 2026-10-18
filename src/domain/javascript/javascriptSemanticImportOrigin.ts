@@ -7,6 +7,7 @@ import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { semanticPromiseSettlementDependency } from "./javascriptSemanticPromiseIdentity.js";
 import { webSocketInitializerDominatesRead } from "./javascriptWebSocketExecution.js";
+import { syntaxEvaluationAlwaysThrows } from "./javascriptSymbolicControlFlow.js";
 
 /** Recover an exact export of a fulfilled literal import, never its promise. */
 export const semanticAwaitedImportOrigin = (
@@ -35,6 +36,7 @@ export const semanticAwaitedImportOrigin = (
   )
     return undefined;
   const imported = unwrapJavaScriptExpression(result.node).node;
+  if (syntaxEvaluationAlwaysThrows(imported)) return undefined;
   const source = t.isImportExpression(imported)
     ? imported.source
     : t.isCallExpression(imported) && t.isImport(imported.callee)

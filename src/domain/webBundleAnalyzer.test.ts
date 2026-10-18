@@ -4367,6 +4367,136 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "explicit class static throw stops carried wait",
+    "(async()=>{await 0;class C{static{throw 0}};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "caught class static throw preserves carried wait",
+    "(async()=>{await 0;class C{static{try{throw 0}catch{}}};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "own data hides replacement prototype setter",
+    "const box={x:0};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    true,
+  ],
+  [
+    "deleted own data exposes replacement prototype setter",
+    "const box={x:0};delete box.x;box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    false,
+  ],
+  [
+    "failed later yield retains earlier consumer wait in cleanup",
+    "(async()=>{const[a=await 0,b]=(function*(){try{yield undefined;yield(null.x,undefined)}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed first yield has no earlier cleanup wait",
+    "(async()=>{const[a=await 0,b]=(function*(){try{yield(null.x,undefined)}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed later yield cannot reach ordinary body",
+    "(async()=>{const[a=await 0,b,c]=(function*(){yield undefined;yield(null.x,undefined);new Socket(URL)})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "array rest checks added getter with original index excluded",
+    "let array,value;(async()=>{({0:value=(await 0,Object.defineProperty(array,'extra',{enumerable:true,get(){throw 0}})),...({set run(v){new Socket(URL)}}).run}=(array=[undefined]))})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "empty object rest checks added getter",
+    "let object,key;(async()=>{({[(await 0,Object.defineProperty(object,'extra',{enumerable:true,get(){throw 0}}),'absent')]:key,...({set run(v){new Socket(URL)}}).run}=(object={}))})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed await operand cannot defer branch",
+    "(async()=>{if(await null.value)new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed nested await operand cannot defer branch",
+    "(async()=>{if(await(await 0,null.value))new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed await operand retains earlier wait in finally",
+    "(async()=>{try{await(await 0,null.value)}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "completed await operand defers branch",
+    "(async()=>{if(await 1)new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "safe class declaration cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{class C{}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "safe static class declaration cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{class C{static{const x=1}}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing class heritage stops carried wait",
+    "(async()=>{await 0;class C extends null.value{};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing class key stops carried wait",
+    "(async()=>{await 0;class C{[null.value](){}};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing class static field stops carried wait",
+    "(async()=>{await 0;class C{static x=null.value};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing class static block stops carried wait",
+    "(async()=>{await 0;class C{static{null.value}};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "dormant class instance field preserves carried wait",
+    "(async()=>{await 0;class C{x=null.value};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "void literal selects nullish wait",
+    "(async()=>{(void 0)??(await 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed void operand cannot select nullish wait",
+    "(async()=>{(void null.x)??(await 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed import options cannot supply export",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',null.value);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "completed import options preserve export",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',{});new Socket(URL)})();",
+    true,
+  ],
+  [
+    "plain nested object cannot consume iterator",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield {};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "custom nested iterator leaves consumer phase unresolved",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield {[Symbol.iterator]:function*(){}};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "prototype setter blocks member capture",
     "const box={};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
     false,

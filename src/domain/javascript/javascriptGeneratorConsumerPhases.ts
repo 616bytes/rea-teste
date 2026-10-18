@@ -19,6 +19,7 @@ import {
 import {
   semanticLiteralProjectionSlot,
   semanticLiteralRestSlots,
+  semanticLiteralOwnKeysStable,
 } from "./javascriptSemanticLiteralProjection.js";
 import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
@@ -52,6 +53,7 @@ const generatorPrefixes = (
   const yielded: t.YieldExpression[] = [];
   const cleanup = new WeakSet<t.Node>();
   let completed = 0;
+  let failed = false;
   const pending: { node: t.Node; exit?: true; cleanup?: boolean }[] = [
     { node: body },
   ];
@@ -62,11 +64,12 @@ const generatorPrefixes = (
     if (entry.cleanup) cleanup.add(node);
     if (entry.exit === true) {
       if (t.isYieldExpression(node)) {
-        if (
-          node.delegate ||
-          (node.argument != null && syntaxEvaluationAlwaysThrows(node.argument))
+        if (node.delegate) completed = -1;
+        else if (
+          node.argument != null &&
+          syntaxEvaluationAlwaysThrows(node.argument)
         )
-          completed = -1;
+          failed = true;
         else if (completed >= 0) {
           yielded.push(node);
           completed += 1;
@@ -74,7 +77,8 @@ const generatorPrefixes = (
       }
       continue;
     }
-    before.set(node, completed);
+    before.set(node, failed && !entry.cleanup ? -1 : completed);
+    if (failed && !entry.cleanup) continue;
     if (t.isFunction(node)) continue;
     if (
       (t.isIfStatement(node) ||
@@ -91,6 +95,7 @@ const generatorPrefixes = (
                 : statement;
               return (
                 syntaxEvaluationCannotThrow(expression) ||
+                syntaxEvaluationAlwaysThrows(expression) ||
                 (t.isYieldExpression(expression) &&
                   !expression.delegate &&
                   (expression.argument == null ||
@@ -173,6 +178,7 @@ const nullishPatternValue = (
 const noniterablePatternValue = (
   value: PatternValue,
   state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
 ): boolean => {
   if (nullishPatternValue(value, state)) return true;
   if (!value.known || value.node === undefined) return false;
@@ -205,14 +211,35 @@ const noniterablePatternValue = (
         !t.isSpreadElement(property) &&
         semanticStaticPropertyKey(property.key, property.computed) !== null,
     ) &&
-    node.properties.some(
-      (property) =>
-        t.isObjectProperty(property) &&
-        !property.computed &&
-        !property.shorthand &&
-        semanticStaticPropertyKey(property.key, false) === "__proto__" &&
-        t.isNullLiteral(property.value),
-    )
+    semanticLiteralOwnKeysStable(
+      node,
+      capture,
+      state,
+      value.ownedResultEscape,
+    ) &&
+    (() => {
+      const prototype = node.properties.find(
+        (property) =>
+          t.isObjectProperty(property) &&
+          !property.computed &&
+          !property.shorthand &&
+          semanticStaticPropertyKey(property.key, false) === "__proto__",
+      );
+      return prototype === undefined
+        ? !state.ambientWrites.covers([
+            "global",
+            "Object",
+            "prototype",
+            null,
+          ]) &&
+            !state.ambientEscapes.covers([
+              "global",
+              "Object",
+              "prototype",
+              null,
+            ])
+        : t.isObjectProperty(prototype) && t.isNullLiteral(prototype.value);
+    })()
   );
 };
 
@@ -374,7 +401,7 @@ const patternCompletedSuspension = (
             ? semanticLiteralRestSlots(
                 patternValueNode(value.node),
                 excluded,
-                pattern,
+                property,
                 state,
                 value.ownedResultEscape,
               )
@@ -434,7 +461,7 @@ const patternCompletedSuspension = (
   }
   if (t.isArrayPattern(pattern)) {
     // GetIterator runs even for an empty pattern, before later slots/defaults.
-    if (noniterablePatternValue(value, state)) return "blocked";
+    if (noniterablePatternValue(value, state, pattern)) return "blocked";
     for (const [index, element] of pattern.elements.entries()) {
       if (element === null) continue;
       const completion = patternCompletedSuspension(
@@ -495,15 +522,18 @@ export const semanticPatternSuspendsBeforeTarget = (
     path.add(current);
     if (current === pattern)
       return (
-        patternCompletedSuspension(
-          pattern,
-          { known: true, node: value },
-          state,
-          completedSuspension,
-          0,
-          target,
-          path,
-          executionFrames,
+        combinePatternCompletion(
+          patternExpressionCompletion(value, completedSuspension),
+          patternCompletedSuspension(
+            pattern,
+            { known: true, node: value },
+            state,
+            completedSuspension,
+            0,
+            target,
+            path,
+            executionFrames,
+          ),
         ) === "suspended"
       );
     current = state.parentsByNode.get(current);

@@ -38,6 +38,8 @@ import {
   syntaxMayContinue,
   syntaxSwitchCaseTests,
   syntaxEvaluationAlwaysThrows,
+  syntaxStaticInitializers,
+  syntaxBeforeDefiniteThrow,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -277,6 +279,10 @@ const webSocketEveryExitSuspension = (
       scopeExitSuspensions.set(block, node);
       return node;
     }
+    if (syntaxEvaluationAlwaysThrows(node)) {
+      pending.push(...syntaxBeforeDefiniteThrow(node).toReversed());
+      continue;
+    }
     if (syntaxEvaluationCannotThrow(node)) continue;
     // A successfully acquired null async resource still schedules a disposal
     // await on every exit, including throw/return/break. The declaration itself
@@ -312,25 +318,6 @@ const webSocketEveryExitSuspension = (
   scopeExitSuspensions.set(block, null);
   return undefined;
 };
-
-/** Class keys complete before any static initializer or instance construction. */
-const webSocketClassKeys = (node: t.Class): readonly t.Node[] => [
-  ...(t.isNode(node.superClass) ? [node.superClass] : []),
-  ...node.body.body.flatMap((member) =>
-    (javaScriptClassField(member) || t.isClassMethod(member)) &&
-    "computed" in member &&
-    member.computed
-      ? [member.key]
-      : [],
-  ),
-];
-
-const webSocketStaticInitializers = (member: t.Node): readonly t.Node[] =>
-  t.isStaticBlock(member)
-    ? member.body
-    : javaScriptClassField(member) && member.static && t.isNode(member.value)
-      ? [member.value]
-      : [];
 
 /** A definite throw enters a simple catch binding before its handler can run. */
 const webSocketMandatoryHandler = (
@@ -372,11 +359,6 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
     return exit === undefined ? prefix : [...prefix, exit];
   }
   if (t.isWithStatement(node)) return [node.object, node.body];
-  if (t.isClass(node))
-    return [
-      ...webSocketClassKeys(node),
-      ...node.body.body.flatMap(webSocketStaticInitializers),
-    ];
   if (t.isSwitchStatement(node)) return [node.discriminant];
   // Every normally completed loop evaluates its initial test, but its body
   // and updates may never execute. A do/while body precedes its first test.
@@ -400,8 +382,6 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
   if (t.isForStatement(node))
     return [node.init, node.test].filter((element) => element != null);
-  if (t.isYieldExpression(node) && node.argument != null)
-    return [node.argument];
   // Conditional/short-circuit branches, nested functions and try/catch do not
   // establish a suspension on every path to the following expression.
   return [];
@@ -417,6 +397,7 @@ const webSocketCompletedSuspension = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): WebSocketSuspension | undefined => {
+  if (syntaxEvaluationAlwaysThrows(node)) return undefined;
   let cached = webSocketCompletedSuspensions.get(state);
   if (cached === undefined) {
     cached = new WeakMap();
@@ -446,7 +427,8 @@ const webSocketCompletedSuspension = (
         ? webSocketSuspensionOwner(current, state)
         : undefined;
     if (
-      t.isAwaitExpression(current) ||
+      (t.isAwaitExpression(current) &&
+        !syntaxEvaluationAlwaysThrows(current.argument)) ||
       (t.isForOfStatement(current) && current.await) ||
       (t.isYieldExpression(current) &&
         (!current.delegate ||
@@ -1063,7 +1045,7 @@ const webSocketClassPrefix = (
     }
     for (const item of declaration.body.body) {
       statics.set(item, suspended ?? null);
-      for (const initializer of webSocketStaticInitializers(item))
+      for (const initializer of syntaxStaticInitializers(item))
         suspended =
           webSocketCompletedSuspension(initializer, state) ?? suspended;
     }
@@ -1175,9 +1157,13 @@ export const webSocketExecutionContexts = (
         if (site !== undefined) {
           // RHS and preceding pattern slots finish before the selected write,
           // whereas later slots must not defer this setter activation.
-          suspendedAt(webSocketContinuation(invocation, site, state));
+          const structuredPattern =
+            t.isAssignmentExpression(site) &&
+            (t.isObjectPattern(site.left) || t.isArrayPattern(site.left));
+          if (!structuredPattern)
+            suspendedAt(webSocketContinuation(invocation, site, state));
           if (t.isAssignmentExpression(site)) {
-            suspendedAfter(site.right);
+            if (!structuredPattern) suspendedAfter(site.right);
             if (
               semanticPatternSuspendsBeforeTarget(
                 site.left,
@@ -1192,8 +1178,9 @@ export const webSocketExecutionContexts = (
               suspendedOwner = webSocketSuspensionOwner(site, state);
           }
           if (t.isForOfStatement(site) && site.await) suspendedAt(site);
+          if (!structuredPattern) suspendedAfter(invocation);
+          else invocation = site;
         }
-        suspendedAfter(invocation);
       } else if (!t.isArrayPattern(invocation)) {
         suspendedAfter(
           t.isForOfStatement(invocation)
@@ -1230,7 +1217,7 @@ export const webSocketExecutionContexts = (
           )
         )
           suspendedOwner = parent;
-        const continuation = webSocketContinuation(node, parent.body, state);
+        const continuation = webSocketContinuation(point, parent.body, state);
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);
       }

@@ -18,6 +18,7 @@ import {
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticInitializer,
+  JavaScriptSemanticLiteralMemberEffect,
 } from "./javascriptSemanticState.js";
 
 type LiteralProjectionSlot =
@@ -25,6 +26,54 @@ type LiteralProjectionSlot =
   | { readonly kind: "accessor"; readonly node: t.ObjectMethod }
   | { readonly kind: "undefined" }
   | { readonly kind: "unknown" | "invalid" };
+
+/** Shared capture ordering and the sole consumer's owned result exposure. */
+const literalEffectCanPrecede = (
+  effect: JavaScriptSemanticLiteralMemberEffect,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  ownedResultEscape?: t.Node,
+): boolean => {
+  if (
+    ownedResultEscape !== undefined &&
+    effect.kind === "escape" &&
+    effect.path.length === 0 &&
+    effect.node === ownedResultEscape
+  )
+    return false;
+  const patternOrder =
+    effect.node === undefined
+      ? undefined
+      : semanticPatternInitializationPrecedesRead(
+          capture,
+          effect.node,
+          state.parentsByNode,
+        );
+  return !(
+    patternOrder ??
+    semanticEffectTiming(capture, effect.node, state) === "after"
+  );
+};
+
+/** Enumeration cannot ignore newly added own keys, even for an empty remainder. */
+export const semanticLiteralOwnKeysStable = (
+  container: t.ObjectExpression | t.ArrayExpression,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  ownedResultEscape?: t.Node,
+  excluded: ReadonlySet<string> = new Set(),
+): boolean =>
+  !state.literalMemberEffects
+    ?.get(container)
+    ?.some(
+      (effect) =>
+        literalEffectCanPrecede(effect, capture, state, ownedResultEscape) &&
+        (effect.path.length === 0 ||
+          (effect.kind === "write" &&
+            effect.path.length === 1 &&
+            (effect.path[0] === null ||
+              !excluded.has(String(effect.path[0]))))),
+    );
 
 /** Share slot validity and iterator exhaustion without conflating undefined with unknown. */
 export const semanticLiteralProjectionSlot = (
@@ -46,15 +95,6 @@ export const semanticLiteralProjectionSlot = (
   if (
     container !== undefined &&
     state.literalMemberEffects?.get(container)?.some((effect) => {
-      // A proven sole pattern consumer owns this producer's result exposure;
-      // it does not exempt foreign escapes, property writes or iterator effects.
-      if (
-        options?.ownedResultEscape !== undefined &&
-        effect.kind === "escape" &&
-        effect.path.length === 0 &&
-        effect.node === options?.ownedResultEscape
-      )
-        return false;
       const [affected] = effect.path;
       const affectsSlot =
         effect.path.length === 0 ||
@@ -66,17 +106,11 @@ export const semanticLiteralProjectionSlot = (
               semanticArrayIndex(key) !== null &&
               affected === "length")));
       if (!affectsSlot) return false;
-      const patternOrder =
-        effect.node === undefined
-          ? undefined
-          : semanticPatternInitializationPrecedesRead(
-              capture,
-              effect.node,
-              state.parentsByNode,
-            );
-      return !(
-        patternOrder ??
-        semanticEffectTiming(capture, effect.node, state) === "after"
+      return literalEffectCanPrecede(
+        effect,
+        capture,
+        state,
+        options?.ownedResultEscape,
       );
     })
   )
@@ -111,6 +145,17 @@ export const semanticLiteralRestSlots = (
   const container = semanticLiteralContainer(node, (expression) =>
     semanticExactResultOperand(expression, state),
   );
+  if (
+    container !== undefined &&
+    !semanticLiteralOwnKeysStable(
+      container,
+      capture,
+      state,
+      ownedResultEscape,
+      excluded,
+    )
+  )
+    return undefined;
   if (t.isArrayExpression(container)) {
     if (container.elements.some((element) => t.isSpreadElement(element)))
       return undefined;

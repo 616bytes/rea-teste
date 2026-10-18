@@ -4,6 +4,7 @@ import {
   readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
   javaScriptUnaryAlwaysThrows,
+  javaScriptClassField,
 } from "./javascriptAstValues.js";
 import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import {
@@ -83,11 +84,35 @@ export const syntaxUnconditionalOperands = (
   return undefined;
 };
 
+/** Keys are evaluated before static initialization; instance values stay dormant. */
+const syntaxClassKeys = (node: t.Class): readonly t.Node[] => [
+  ...(node.superClass == null ? [] : [node.superClass]),
+  ...node.body.body.flatMap((member) =>
+    (javaScriptClassField(member) || t.isClassMethod(member)) &&
+    "computed" in member &&
+    member.computed
+      ? [member.key]
+      : [],
+  ),
+];
+
+export const syntaxStaticInitializers = (member: t.Node): readonly t.Node[] =>
+  t.isStaticBlock(member)
+    ? [member]
+    : javaScriptClassField(member) && member.static && member.value != null
+      ? [member.value]
+      : [];
+
 /** Evaluation order shared by continuation and caught-prefix proofs. */
 export const syntaxEvaluationOperands = (
   node: t.Node,
 ): readonly t.Node[] | undefined => {
   if (t.isBlockStatement(node) || t.isStaticBlock(node)) return node.body;
+  if (t.isClass(node))
+    return [
+      ...syntaxClassKeys(node),
+      ...node.body.body.flatMap(syntaxStaticInitializers),
+    ];
   if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
   // Abrupt statements evaluate their argument before completing. Their block
@@ -104,6 +129,9 @@ export const syntaxEvaluationOperands = (
     return [t.isRestElement(node) ? node.argument : node.left];
   if (t.isUnaryExpression(node) || t.isUpdateExpression(node))
     return [node.argument];
+  if (t.isAwaitExpression(node)) return [node.argument];
+  if (t.isYieldExpression(node))
+    return node.argument == null ? [] : [node.argument];
   if (t.isMemberExpression(node))
     return node.computed ? [node.object, node.property] : [node.object];
   if (t.isOptionalMemberExpression(node))
@@ -480,6 +508,7 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
         ? unwrapJavaScriptExpression(node.object).node
         : undefined;
     if (
+      t.isThrowStatement(node) ||
       javaScriptUnaryAlwaysThrows(node) ||
       ((t.isNullLiteral(object) ||
         t.isUnaryExpression(object, { operator: "void" })) &&
@@ -490,9 +519,7 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
       continue;
     }
     const operands =
-      syntaxUnconditionalOperands(node) ??
-      syntaxEvaluationOperands(node) ??
-      (t.isAwaitExpression(node) ? [node.argument] : []);
+      syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node) ?? [];
     if (entry.exit)
       throwingEvaluations.set(
         node,
@@ -517,9 +544,7 @@ export const syntaxBeforeDefiniteThrow = (raw: t.Node): readonly t.Node[] => {
   let node = unwrapJavaScriptExpression(raw).node;
   while (syntaxEvaluationAlwaysThrows(node)) {
     const operands =
-      syntaxUnconditionalOperands(node) ??
-      syntaxEvaluationOperands(node) ??
-      (t.isAwaitExpression(node) ? [node.argument] : []);
+      syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node) ?? [];
     let throwing: t.Node | undefined;
     for (const operand of operands) {
       if (syntaxEvaluationAlwaysThrows(operand)) {
@@ -562,7 +587,7 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     t.isArrowFunctionExpression(node) ||
     t.isRegExpLiteral(node) ||
     t.isBigIntLiteral(node) ||
-    (t.isClassExpression(node) &&
+    (t.isClass(node) &&
       node.superClass == null &&
       (node.decorators?.length ?? 0) === 0 &&
       node.body.body.every((member) =>

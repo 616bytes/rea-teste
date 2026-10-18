@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
+import { semanticReadPrecedesWrite } from "./javascriptSemanticMutationInitializers.js";
 import {
   hasJavaScriptViteInheritedIndex,
   isJavaScriptViteDefaultUndefined,
@@ -137,7 +138,7 @@ export class ViteCacheIdentities {
     return ("inputs" in node ? node : this.vertices.get(node))?.fact;
   }
 
-  /** Module projection owns runtime exports and default-expression captures. */
+  /** module projection owns runtime exports and default-expression captures. */
   *retainExportedValuesSteps(exposures: ViteCacheExposure[]): Generator<void> {
     let examined = 0;
     for (const link of this.state.moduleLinks) {
@@ -556,6 +557,8 @@ export class ViteCacheIdentities {
       return yield* this.helperResultSteps(source, input, vertex);
     if (input.kind === "select")
       return yield* this.selectSteps(source, input, vertex);
+    if (input.kind === "prototype")
+      return yield* this.prototypeSteps(source, input.read, vertex);
     if (input.kind === "alias") return source;
     const owner =
       input.kind === "copy-family" && source.allocation?.kind === "cache"
@@ -802,14 +805,21 @@ export class ViteCacheIdentities {
           ? this.invocation(expression)
           : undefined;
       if (
-        invocation?.kind === "known" &&
+        invocation !== undefined &&
         (invocation.path.join(".") === "intrinsic.Object.getPrototypeOf" ||
           invocation.path.join(".") === "intrinsic.Reflect.getPrototypeOf")
       ) {
-        // A derived prototype may be shared by every helper. Its unresolved
-        // identity cannot establish a foreign object or an unchanged method.
-        vertex.seed = { allocation: null, owner: null };
-        this.enqueue(vertex);
+        const receiver =
+          invocation.kind === "known" ? invocation.arguments?.[0] : undefined;
+        if (receiver === undefined || t.isSpreadElement(receiver)) {
+          vertex.seed = { allocation: null, owner: null };
+          this.enqueue(vertex);
+        } else
+          this.connect(vertex, {
+            kind: "prototype",
+            source: this.normalize(receiver),
+            read: expression,
+          });
         continue;
       }
       if (
@@ -936,6 +946,44 @@ export class ViteCacheIdentities {
       });
     }
     this.enqueue(vertex);
+  }
+
+  /** preserve a supplied prototype until intervening effects make it unproven. */
+  private *prototypeSteps(
+    source: ViteCacheIdentity,
+    read: t.Node,
+    target: Vertex,
+  ): Generator<void, ViteCacheIdentity | undefined> {
+    const allocation = source.allocation;
+    const sharedUnknown: ViteCacheIdentity = { allocation: null, owner: null };
+    if (
+      allocation?.kind !== "container" ||
+      !t.isCallExpression(allocation.node) ||
+      viteCacheObjectOperation(allocation.node, this.invocation) !== "create"
+    )
+      return sharedUnknown;
+    let examined = 0;
+    for (const effect of this.properties.writes.get(allocation) ?? []) {
+      if (examined++ % 1024 === 0) yield;
+      if (
+        !semanticReadPrecedesWrite(read, effect.node, this.state.parentsByNode)
+      )
+        return sharedUnknown;
+    }
+    for (const effect of this.properties.escapes.get(allocation)?.nodes ?? []) {
+      if (examined++ % 1024 === 0) yield;
+      if (
+        effect !== read &&
+        !semanticReadPrecedesWrite(read, effect, this.state.parentsByNode)
+      )
+        return sharedUnknown;
+    }
+    const prototype = this.invocation(allocation.node)?.arguments?.[0];
+    if (prototype === undefined || t.isSpreadElement(prototype))
+      return sharedUnknown;
+    const selected = this.normalize(prototype);
+    selected.listeners.add(target);
+    return selected.fact;
   }
 
   private *selectSteps(

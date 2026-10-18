@@ -56,6 +56,11 @@ export type Input =
       readonly source: Vertex;
     }
   | {
+      readonly kind: "prototype";
+      readonly source: Vertex;
+      readonly read: t.Node;
+    }
+  | {
       readonly kind: "select";
       readonly source: Vertex;
       readonly key: Key;

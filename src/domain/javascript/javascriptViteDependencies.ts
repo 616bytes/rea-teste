@@ -172,7 +172,7 @@ function* selectedDependencySpecifiersSteps(
   for (const [index, element] of indexes.elements.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
     if (element === null) {
-      // Native map visits inherited indexes even when the input has an elision.
+      // native map visits inherited indexes even when the input has an elision.
       if (hasJavaScriptViteInheritedIndex(index, state))
         selected.push(undefined);
       continue;

@@ -107,7 +107,7 @@ const collectedEsmExports = new WeakMap<
   WeakSet<t.Node>
 >();
 
-/** Static consumers can request export facts without evaluating the complete IR. */
+/** static consumers can request export facts without evaluating the complete IR. */
 export const collectSemanticEsmExport = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,

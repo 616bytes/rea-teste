@@ -2352,6 +2352,47 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: [],
     unknown: true,
   },
+  ...(["Object", "Reflect"] as const).map((namespace) => ({
+    file: `independent-${namespace.toLowerCase()}-prototype-write.js`,
+    source: mapDependenciesWithEffects(
+      `const proto = {}; const object = Object.create(proto); ${namespace}.getPrototypeOf(object).label = 1; __vite__mapDeps([0]);`,
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  })),
+  {
+    file: "independent-prototype-alias-write.js",
+    source: mapDependenciesWithEffects(
+      "const proto = {}; const object = Object.create(proto); const alias = Object.getPrototypeOf(object); alias.label = 1; __vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  ...(["Object", "Reflect"] as const).map((namespace) => ({
+    file: `owned-${namespace.toLowerCase()}-prototype-cache-write.js`,
+    source: mapDependenciesWithEffects(
+      `__vite__mapDeps([0]); const proto = {cache: __vite__mapDeps.f}; const object = Object.create(proto); ${namespace}.getPrototypeOf(object).cache[0] = "./last.js"; __vite__mapDeps([0]);`,
+    ),
+    callOccurrences: [0, 1],
+    resolved: [],
+    unknown: true,
+  })),
+  ...(
+    [
+      [
+        "replaced-created-prototype.js",
+        "Object.setPrototypeOf(object, Array.prototype);",
+      ],
+      ["escaped-created-prototype.js", "mutate(object);"],
+    ] as const
+  ).map(([file, effect]) => ({
+    file,
+    source: mapDependenciesWithEffects(
+      `const proto = {}; const object = Object.create(proto); ${effect} Object.getPrototypeOf(object).map = function () { return ["./last.js"]; }; __vite__mapDeps([0]);`,
+    ),
+    resolved: [],
+    unknown: true,
+  })),
 ];
 
 const batches = Array.from(

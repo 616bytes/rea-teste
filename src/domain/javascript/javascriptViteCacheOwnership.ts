@@ -441,6 +441,15 @@ function* retainObjectWritesSteps(
     if (invocation?.kind !== "known") continue;
     const path = invocation.path.join(".");
     if (
+      path === "intrinsic.Object.setPrototypeOf" ||
+      path === "intrinsic.Reflect.setPrototypeOf"
+    ) {
+      const target = invocation.arguments?.[0];
+      if (t.isExpression(target))
+        writes.push({ node: call, receiver: target, key: "__proto__" });
+      continue;
+    }
+    if (
       path === "intrinsic.Object.defineProperty" ||
       path === "intrinsic.Reflect.defineProperty"
     ) {

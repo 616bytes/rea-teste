@@ -86,6 +86,14 @@ it("retains native decoder null and nested-envelope behavior", () => {
   ).toEqual([{ value: null }, [null]]);
 });
 
+it("ignores processing instructions between plist members", () => {
+  expect(
+    parseXmlPropertyList(
+      '<?xml version="1.0"?><plist><?root ignored?><array><string>first</string><?array ignored?><string>second</string></array><dict><key>name</key><?dict ignored?><string>REA</string></dict></plist>',
+    ).value,
+  ).toEqual([["first", "second"], { name: "REA" }]);
+});
+
 it.each([
   ["nan", NaN],
   ["NaN", NaN],

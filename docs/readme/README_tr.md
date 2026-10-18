@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · **Türkçe** · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Azərbaycanca](README_az.md)
 
 # REA: Her şeyi tersine mühendislikle inceleyin
 
@@ -11,7 +11,7 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
-[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
+[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#neleri-analiz-edebilirsiniz)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
@@ -20,15 +20,17 @@
 
 **[Web sitesi](https://rea.tools/tr/) · [Rehberler](https://rea.tools/tr/guides/) · [Örnek çalışmalar](https://rea.tools/tr/showcase/)**
 
-[Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [Sık sorulan sorular](#sık-sorulan-sorular) · [GNU objdump ve Rizin araçları](../reverse-engineering-tools.md) · [Belgeler](#belgeler)
+[Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [Sık sorulan sorular](#sık-sorulan-sorular) · [Belgeler](#belgeler)
 
 <code>npx rea-agents setup</code>
 
 </div>
 
 > [!IMPORTANT]
-> REA’nın resmî kaynakları: [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/), [rea-agents](https://www.npmjs.com/package/rea-agents) (npm).
-> Kurulum ve sürüm bağlantılarını bu resmî kaynaklardan takip edin. Benzer bir depo adı veya kopyalanmış bir README, indirilen dosyanın resmî olduğunu kanıtlamaz.
+> REA'yı [morluto/rea](https://github.com/morluto/rea),
+> [rea.tools](https://rea.tools/) veya [rea-agents npm paketi](https://www.npmjs.com/package/rea-agents) üzerinden edinin.
+> Kurulum ve sürüm bağlantılarını bu resmî kaynaklardan takip edin. Benzer bir
+> depo adı veya kopyalanmış bir README, indirilen dosyanın resmî olduğunu kanıtlamaz.
 
 <div align="center">
 
@@ -65,6 +67,11 @@ Kurulum, REA'yı ajanınıza kaydeder ve uyumlu iş akışı talimatlarını yü
 > Kurulum talimatları, görselli rehberler ve gerçek örnek çalışmalar için **[REA web sitesini ziyaret edin](https://rea.tools/tr/)**.
 
 ## Hızlı başlangıç
+
+Linux'ta Ghidra, JADX, donanım yazılımı araçlarının başlatılması ve statik JavaScript/Electron
+analizi, süreç sahipliği kontrolleri için REA'nın `PATH` değişkeninde procps uyumlu bir `ps`
+gerektirir. Kurtarma adımları `docs/installation.md` dosyasında
+"Linux owned-process prerequisite" başlığı altındadır.
 
 ### Ajanınızı yapılandırın
 
@@ -115,6 +122,14 @@ REA hızla değişir ve yeni sürümler sık sık hata düzeltmeleri içerir. Ku
 rea update
 ```
 
+`rea --update`, bu doğrulanmış iş akışının bir takma adıdır ve aynı global çıktı
+bayraklarını kabul eder. Diğer komut denetimleriyle birlikte kullanırken `rea update` kullanın.
+
+Güncelleyici komutları stdout ve stderr için toplamda en fazla 4 MiB saklar. Boyutu aşan
+meta veri yanıtları komut sona erdikten sonra reddedilir; ayrıntılı (verbose) kurulumlar
+sınırlı tanılama bilgisiyle devam eder. İnsanlara yönelik ilerleme çıktısı terminalin geri
+basıncına (backpressure) uyar ve gönderilen yazma işlemlerinin tamamlanmasını bekler.
+
 Bun ile yapılan global güncellemeler için Bun 1.2.17 veya üzeri gerekir. Daha eski bir Bun sürümünü kullanıyorsanız `rea update` komutunu çalıştırmadan önce Bun'u manuel olarak yükseltin.
 
 Ajan kayıtlarını ve skill'i güncellemek için güncellemenin çıktısında gösterilen kurulum komutunu çalıştırın.
@@ -151,10 +166,10 @@ REA; Node.js 22.x (>=22.19), 24.x (>=24.11) veya 26+ ve npm gerektirir. Ek araç
 | EVM bayt kodu                           | Yönlendirme seçicileri, bayt ofsetleri, çıkarımla belirlenen argümanlar ve durum değiştirilebilirliği       | Linux x64 üzerinde yerel ham bayt/onaltılık girdi; [çevrimdışı EVM rehberi](../evm-bytecode.md)                                    |
 | SQLite veritabanları                    | Tablolar, sütunlar, index'ler, view'lar, trigger'lar ve seçilen sıradan tablo satırları                     | Yerel database/WAL snapshot'ı; native SQLite sınırlarıyla Node.js 24.x >=24.15 veya 26+                                            |
 | Kaydedilmiş Linux çökmeleri             | Ham note kayıtları, kaydedilen her iş parçacığının yazmaçları/sinyalleri ve isteğe bağlı eşleme adayları    | Linux x64 üzerinde çağıranın sağladığı pwntools; isteğe bağlı GDB/pwndbg; [kaydedilmiş çökmeler](../recorded-crashes.md)           |
-| JavaScript / Electron                   | Modüller, içe aktarmalar, kaynak haritaları, rotalar, IPC ve yerel eklenti ilişkileri                       | Node.js ve npm; [uygulama analizi](../javascript-application-workflows.md)                                                         |
+| JavaScript / Electron                   | Modüller, içe aktarmalar, kaynak haritaları, rotalar, IPC ve yerel eklenti ilişkileri                       | Node.js ve npm; Linux: procps uyumlu `ps`; [uygulama analizi](../javascript-application-workflows.md)                              |
 | Web siteleri                            | Sayfa yapısı, betikler, ağ gözlemleri ve istenen ekran görüntüleri                                          | Chrome ailesinden bir tarayıcı; [tarayıcı analizi](../browser-observation.md)                                                      |
 | Kaydedilmiş ağ yakalamaları             | İstekler, yanıtlar, erişilebilir yük içerikleri ve kaynak konumları                                         | HAR veya Fiddler Everywhere SAZ; Linux'ta native mitmproxy için mitmdump; [ağ yakalama rehberi](../web-network-captures.md)        |
-| .NET derlemeleri                        | Meta veriler, CIL talimatları, bildirilmiş yerel bağımlılıklar ve derleme karşılaştırmaları                 | Statik inceleme; [yönetilen kod rehberi](../managed-code-analysis.md)                                                              |
+| .NET derlemeleri                        | Meta veriler, CIL talimatları, bildirilmiş yerel bağımlılıklar ve derleme karşılaştırmaları                 | Yok (yalnızca statik); [yönetilen kod rehberi](../managed-code-analysis.md)                                                        |
 | Android APK'leri                        | Manifest bildirimleri, sınıflar, tersine derlenmiş metotlar ve referanslar                                  | Linux/macOS/Windows x64 üzerinde arayüzsüz JADX ve tam bir JDK; [Android rehberi](../android-analysis.md)                          |
 | Android cihazları                       | Cihazlar, paketler, süreçler, günlükler, dökümler, ekran görüntüleri ve APK/dosya aktarımları               | Çağıranın sağladığı adb (emülatör veya cihaz); [ADB rehberi](../adb-device-analysis.md)                                            |
 | JEB projeleri                           | Motor destekli proje birimleri, artefakt özetleri ve tür/metot sözdekodu                                    | Çağıranın başlattığı, MCP sunan bir JEB istemcisi, REA_JEB_MCP_URL ile seçilir; [JEB rehberi](../jeb-analysis.md)                  |
@@ -169,9 +184,14 @@ REA; Node.js 22.x (>=22.19), 24.x (>=24.11) veya 26+ ve npm gerektirir. Ek araç
 
 Statik JavaScript ve .NET incelemesi, uygulamayı çalıştırmadan sağlanan dosyaları okur. Çalışma zamanı yakalaması, seçilen hedefi kullanıcı izinlerinizle çalıştırır veya onunla etkileşime girer; her çalışma zamanı rehberi etkilerini açıklar.
 
+Çevrimdışı yerel makine kodu incelemesi için REA, çağıranın sağladığı GNU objdump ve
+Rizin'i de destekler. Sağlayıcı kurulumu, CLI komutları ve Evidence sınırlamaları için
+[tersine mühendislik araçları rehberine](../reverse-engineering-tools.md) bakın. REA bu
+sağlayıcıların hiçbirini yüklemez veya güncellemez.
+
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Yerel makine kodu içeren ikili dosya biçimleri ve ana bilgisayar desteği sağlayıcıya göre değişir. [Hopper ve Ghidra kurulumu](../installation.md#hopper), isteğe bağlı native MCP bridge'i de açıklayan [IDA rehberi](../ida-provider.md), [Kuna](../kuna-provider.md) ve [Windows için deneysel Ghidra desteği](../windows-ghidra-p0.md) belgelerine bakın. Ghidra ayrıca [16 bit DOS analizini](../ghidra-dos.md) destekler. Büyük ikili dosyalar için sağlayıcının başlatma zaman aşımını `REA_GHIDRA_STARTUP_TIMEOUT_MS` veya `REA_HOPPER_STARTUP_TIMEOUT_MS` ile artırın. Sağlayıcı seçimi için [CLI rehberine](../cli.md#choose-a-provider) bakın. En son npm sürümünden sonra eklenen özellikler için [sürümlerde kullanılabilirliği](../installation.md#released-package-and-main) kontrol edin.
+Yerel makine kodu içeren ikili dosya biçimleri ve ana bilgisayar desteği sağlayıcıya göre değişir. [Hopper ve Ghidra kurulumu](../installation.md#hopper), isteğe bağlı native MCP bridge'i de açıklayan [IDA rehberi](../ida-provider.md), [Kuna decompiler rehberi](../kuna-provider.md) ve [Windows için deneysel Ghidra desteği](../windows-ghidra-p0.md) belgelerine bakın. Ghidra ayrıca [16 bit DOS analizini](../ghidra-dos.md) destekler. Büyük ikili dosyalar için sağlayıcının başlatma zaman aşımını `REA_GHIDRA_STARTUP_TIMEOUT_MS` veya `REA_HOPPER_STARTUP_TIMEOUT_MS` ile artırın. Sağlayıcı seçimi için [CLI rehberine](../cli.md#choose-a-provider) bakın. En son npm sürümünden sonra eklenen özellikler için [sürümlerde kullanılabilirliği](../installation.md#released-package-and-main) kontrol edin.
 
 ## Örnek çalışmalar
 
@@ -216,7 +236,7 @@ Derin yerel kod analizi bunlardan birini kullanır. Statik JavaScript ve .NET in
 <details>
 <summary><strong>Önce Hopper'ı başlatmam gerekiyor mu?</strong></summary>
 
-REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştırmada demo modunu seçmenizi veya lisansınızı etkinleştirmenizi isteyen bir iletişim kutusu açılabilir. [Hopper başlatma ve sorun giderme](../installation.md#launcher-paths-and-troubleshooting) belgesine bakın.
+REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştırmada demo modunu seçmenizi veya lisansınızı etkinleştirmenizi isteyen bir iletişim kutusu açılabilir. İlk CLI/MCP işleminizden veya gözetimsiz bir işten önce bu istemi aynı kullanıcı oturumunda tamamlayın. Gerekirse Hopper'ı elle açın. [Hopper başlatma ve sorun giderme](../installation.md#launcher-paths-and-troubleshooting) belgesine bakın.
 
 </details>
 
@@ -246,7 +266,7 @@ REA hedefleri yerel olarak analiz eder. Ajanınız araç sonuçlarını alır ve
 
 Önce güncelleyin; yakın tarihli bir sürüm hatayı düzeltmiş olabilir.
 
-npm ile yüklenen CLI için:
+`npm install --global` veya `bun add --global` ile yüklenen CLI için:
 
 ```bash
 rea update
@@ -293,11 +313,11 @@ REA'yı kullanan, hata bildiren, özellik talep eden, derlemeleri test eden ve d
 
 Sorumlu kullanım yönergeleri için [DISCLAIMER.md](../../DISCLAIMER.md) dosyasına bakın.
 
-REA; yasal araştırma, eğitim, birlikte çalışabilirlik, yazılımın korunması ve sahibi olduğunuz ya da inceleme yetkiniz bulunan yazılımların analizi için tasarlanmıştır.
-
 Projenin yasa dışı veya yetkisiz kullanıma ilişkin tutumu tüm REA sürümleri,
 dağıtım kanalları ve platformlar için geçerlidir; her kopya geçerli lisanslarını
 korur.
+
+REA; yasal araştırma, eğitim, birlikte çalışabilirlik, yazılımın korunması ve sahibi olduğunuz ya da inceleme yetkiniz bulunan yazılımların analizi için tasarlanmıştır.
 
 ## Katkıda bulunma
 

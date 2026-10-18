@@ -364,6 +364,19 @@ it("retains parameter types and avoids client-side reference expansion", async (
     coverage: { type: "object" },
     boundary_id: { type: "string" },
   });
+  const inspection = tools.find(({ name }) => name === "inspect_web_page");
+  expect(inspection?.inputSchema.properties).toMatchObject({
+    allowed_origins: { type: "array", items: { type: "string" } },
+  });
+  const scenario = tools.find(
+    ({ name }) => name === "capture_browser_scenario",
+  );
+  expect(scenario?.inputSchema.properties).toMatchObject({
+    browser: { type: "object" },
+    start_url: { type: "object" },
+    actions: { type: "array" },
+    capture: { type: "object" },
+  });
 });
 
 it("parses the profile selection the server startup reads", () => {

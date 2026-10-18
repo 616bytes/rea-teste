@@ -417,6 +417,9 @@ describe("MSIX Claude Desktop setup", () => {
     expect(action?.detail).toContain(
       "Quit Claude Desktop fully before approving; closing its window is not enough.",
     );
+    expect(action?.detail).toContain(
+      "Claude Desktop defaults REA_MCP_INPUT_SCHEMA_PROFILE to compact only when no stored or supplied profile exists.",
+    );
   });
 
   it("refuses AppData writes from a process the MSIX package started", async () => {

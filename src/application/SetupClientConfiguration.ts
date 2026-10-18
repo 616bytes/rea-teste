@@ -737,8 +737,10 @@ const clientConfigurationDesired = (
     "fragment",
   );
   if (!environment.ok) throw environment.error;
+  // These clients need compact schemas by default, but stored and supplied
+  // profile choices belong to the caller and have already been validated.
   const registrationEnvironment =
-    client.name === "kimi" &&
+    (client.name === "claude_desktop" || client.name === "kimi") &&
     environment.value.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {
           ...environment.value,

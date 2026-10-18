@@ -5,7 +5,7 @@ import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
 } from "../artifacts/AnalysisCleanupLease.js";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -293,6 +293,84 @@ const acquireAttachedScenario = (
   });
 };
 
+const nonemptyEnvironmentValue = (
+  environment: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string | undefined => {
+  const value = environment[name];
+  return value === undefined || value.length === 0 ? undefined : value;
+};
+
+/**
+ * Android's `/tmp` belongs to the shell user, so a Termux process cannot create
+ * a Chromium profile there. A caller-selected temp directory wins; otherwise
+ * the Termux prefix temp directory is the writable location.
+ */
+const androidScenarioTempDirectory = (
+  environment: Readonly<Record<string, string | undefined>>,
+): string | undefined => {
+  if (process.platform !== "android") return undefined;
+  const explicit = ["TMPDIR", "TMP", "TEMP"]
+    .map((name) => nonemptyEnvironmentValue(environment, name))
+    .find((value) => value !== undefined);
+  if (explicit !== undefined) return explicit;
+  const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
+  return prefix === undefined ? undefined : join(prefix, "tmp");
+};
+
+const HOST_TEMP_NAMES = ["TMPDIR", "TMP", "TEMP"] as const;
+
+let androidHostTempUsers = 0;
+let androidHostTempPrevious:
+  | Readonly<Record<(typeof HOST_TEMP_NAMES)[number], string | undefined>>
+  | undefined;
+
+const restoreHostTempValue = (
+  name: string,
+  value: string | undefined,
+): void => {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+};
+
+/**
+ * Playwright creates `playwright-artifacts-*` with the host `os.tmpdir()`
+ * before Chromium starts. Android reads `TMPDIR` for that call, so the
+ * scenario's writable directory has to be visible on the host until launch
+ * finishes. `TMP` and `TEMP` are published for the same window because some
+ * hosts resolve `os.tmpdir()` from those names instead.
+ */
+const retainAndroidHostTempDirectory = (
+  directory: string | undefined,
+): (() => void) => {
+  if (
+    process.platform !== "android" ||
+    directory === undefined ||
+    (androidHostTempUsers === 0 && tmpdir() === directory)
+  )
+    return () => undefined;
+  if (androidHostTempUsers === 0) {
+    androidHostTempPrevious = {
+      TMPDIR: process.env.TMPDIR,
+      TMP: process.env.TMP,
+      TEMP: process.env.TEMP,
+    };
+    for (const name of HOST_TEMP_NAMES) process.env[name] = directory;
+  }
+  androidHostTempUsers += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    androidHostTempUsers -= 1;
+    if (androidHostTempUsers > 0 || androidHostTempPrevious === undefined)
+      return;
+    for (const name of HOST_TEMP_NAMES)
+      restoreHostTempValue(name, androidHostTempPrevious[name]);
+    androidHostTempPrevious = undefined;
+  };
+};
+
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Record<string, string | undefined> => {
@@ -324,10 +402,17 @@ const allowedBrowserEnvironment = (
   // directory. Termux supplies an exec interceptor that rewrites those calls
   // through the system linker and removes itself for the launched program.
   // Playwright must retain it for its Chromium child process.
-  const prefix = environment.PREFIX;
-  if (prefix === undefined) return selected;
+  const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
+  const temporaryDirectory = androidScenarioTempDirectory(environment);
+  const hasSelectedTemp =
+    selected.TMPDIR !== undefined && selected.TMPDIR.length > 0;
+  const withTemporaryDirectory =
+    temporaryDirectory === undefined || hasSelectedTemp
+      ? selected
+      : { ...selected, TMPDIR: temporaryDirectory };
+  if (prefix === undefined) return withTemporaryDirectory;
   return {
-    ...selected,
+    ...withTemporaryDirectory,
     LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   };
@@ -675,10 +760,17 @@ export const openPlaywrightScenarioBrowser = async (
       options.retainCleanup,
     );
 
-  const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
+  const preferredTemp = androidScenarioTempDirectory(environment);
+  if (preferredTemp !== undefined)
+    await mkdir(preferredTemp, { recursive: true });
+  const profilePath = await mkdtemp(
+    join(preferredTemp ?? tmpdir(), "rea-browser-scenario-"),
+  );
   let context: BrowserContext;
+  let releaseHostTemp = (): void => undefined;
   try {
     await chmod(profilePath, 0o700);
+    releaseHostTemp = retainAndroidHostTempDirectory(preferredTemp);
     context = await launcher.launchPersistentContext(profilePath, {
       executablePath: resolve(scenario.browser.executable_path),
       headless: scenario.browser.headless,
@@ -701,12 +793,15 @@ export const openPlaywrightScenarioBrowser = async (
       // Termux's Chromium cannot create its renderer process through Android's
       // executable boundary. Single-process mode keeps the browser and page in
       // the Termux-launched process so scenario navigation remains available.
+      // Android has no usable /dev/shm, so shared-memory files stay in the
+      // writable temp directory instead of failing the launch.
       args:
         process.platform === "android"
-          ? ["--no-sandbox", "--single-process"]
+          ? ["--no-sandbox", "--disable-dev-shm-usage", "--single-process"]
           : [],
     });
   } catch (cause: unknown) {
+    releaseHostTemp();
     const cleanup = new AnalysisCleanupLease(
       () => rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
       ["browser_profile"],
@@ -719,7 +814,13 @@ export const openPlaywrightScenarioBrowser = async (
     }
   }
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: () => context.close(),
+    closeBrowser: async () => {
+      try {
+        await context.close();
+      } finally {
+        releaseHostTemp();
+      }
+    },
     removeProfile: () =>
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
@@ -745,3 +846,4 @@ export const openPlaywrightScenarioBrowser = async (
     }
   }
 };
+

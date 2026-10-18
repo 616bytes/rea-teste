@@ -61,6 +61,45 @@ describe("host require delegate identity", () => {
   });
 
   it.each([
+    'Reflect.set(target,"require",other)',
+    'Reflect.deleteProperty(target,"require")',
+    "Object.setPrototypeOf(target,{require:other})",
+  ])("preserves loaders when %s targets module exports", (write) => {
+    for (const loader of ["require", "Q"]) {
+      expect(
+        electronOf(
+          `${SHIM}const {exports:target}=module;${write};new (${loader}("electron").BrowserWindow)({});`,
+        ).browser_windows,
+      ).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    "const target=module;",
+    "const {missing:target=module}=module;",
+    "let target=module;",
+  ])(
+    "refuses a delegate write through a retained module alias: %s",
+    (declaration) => {
+      for (const loader of ["require", "Q"]) {
+        expect(
+          electronOf(
+            `${SHIM}${declaration}Reflect.set(target,"require",other);${declaration.startsWith("let") ? "target={};" : ""}new (${loader}("electron").BrowserWindow)({});`,
+          ).browser_windows,
+        ).toEqual([]);
+      }
+    },
+  );
+
+  it("preserves loaders when a module alias is replaced before the write", () => {
+    expect(
+      electronOf(
+        `${SHIM}let target=module;target={};Reflect.set(target,"require",other);${DIRECT_CONSUMER}`,
+      ).browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
     "Object.assign(module,{__proto__:{require:other}})",
     'Object.defineProperty(module,"__proto__",{value:other})',
     'Object.defineProperties(module,{["__proto__"]:{value:other}})',
@@ -140,6 +179,20 @@ describe("Electron identity through esbuild's __require shim", () => {
   });
 
   it.each([
+    `${SHIM}${DIRECT_CONSUMER}eval("Q=other");`,
+    `${SHIM}function eval(){}eval("Q=other");${DIRECT_CONSUMER}`,
+    `${SHIM.replace("var Q", "const Q")}{function Q(){return other}}${DIRECT_CONSUMER}`,
+    `${SHIM.replace("var Q", "let Q")}{function Q(){return other}}${DIRECT_CONSUMER}`,
+  ])(
+    "preserves a loader beside a non-replacing dynamic binding: %s",
+    (source) => {
+      expect(electronOf(source).browser_windows).toHaveLength(1);
+    },
+  );
+});
+
+describe("unproven Electron require shims", () => {
+  it.each([
     [
       "an evaluated fallback argument that replaces require",
       'var Q=(e=>typeof require<"u"?require:e)(eval("require=other"));var cy=Q("electron");new cy.BrowserWindow({});',
@@ -175,6 +228,30 @@ describe("Electron identity through esbuild's __require shim", () => {
     [
       "a shim binding reassigned before the call",
       `${SHIM}Q=other;var cy=Q("electron");new cy.BrowserWindow({});`,
+    ],
+    [
+      "a shim binding replaced by direct eval",
+      `${SHIM}eval("Q=other");${DIRECT_CONSUMER}`,
+    ],
+    [
+      "a shim binding replaced by strict direct eval",
+      `"use strict";${SHIM}eval("Q=other");${DIRECT_CONSUMER}`,
+    ],
+    [
+      "a shim binding replaced by eval in a closure",
+      `${SHIM}function replace(){eval("Q=other")}replace();${DIRECT_CONSUMER}`,
+    ],
+    [
+      "a shim var replaced by a block function",
+      `${SHIM}{function Q(){return other}}${DIRECT_CONSUMER}`,
+    ],
+    [
+      "a shim var replaced by a conditional block function",
+      `${SHIM}if(flag){function Q(){return other}}${DIRECT_CONSUMER}`,
+    ],
+    [
+      "a function-local shim var replaced by a block function",
+      `function load(){${SHIM}{function Q(){return other}}${DIRECT_CONSUMER}}load();`,
     ],
     [
       "a shim whose guard always returns the fallback",

@@ -15,6 +15,10 @@ import {
 } from "./javascriptSemanticRequireOrigin.js";
 import { argumentValue } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingMayHaveBlockFunctionWrite,
+  semanticOpaqueBindingReadMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 
 const proofs = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -62,6 +66,8 @@ export const semanticRequireShimOrigin = (
   if (
     binding === undefined ||
     semanticResolutionBlocked(state, current.callee, current.callee.name) ||
+    semanticOpaqueBindingReadMayHaveChanged(binding, current.callee, state) ||
+    semanticBindingMayHaveBlockFunctionWrite(binding, state) ||
     binding.definitions.length !== 1 ||
     binding.definitions[0]?.kind === "assignment"
   )

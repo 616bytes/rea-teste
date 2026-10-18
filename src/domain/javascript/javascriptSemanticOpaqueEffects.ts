@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
@@ -10,6 +12,46 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+
+const blockFunctionNames = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReadonlySet<string>
+>();
+
+/** Annex B may copy a block function into a same-named var without an indexed
+ * assignment. Preserve the existing conservative source-wide name check until
+ * those implicit writes have an explicit scope and timing owner. */
+export const semanticBindingMayHaveBlockFunctionWrite = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !binding.declarationKinds.has("var") ||
+    javaScriptRuntimeContext(state.program) === "module"
+  )
+    return false;
+  let names = blockFunctionNames.get(state);
+  if (names === undefined) {
+    const collected = new Set<string>();
+    traverseJavaScriptAst(state.program, {
+      enter(node, parent) {
+        if (
+          t.isFunctionDeclaration(node) &&
+          node.id != null &&
+          !t.isProgram(parent) &&
+          !(
+            t.isBlockStatement(parent) &&
+            t.isFunction(state.parentsByNode.get(parent))
+          )
+        )
+          collected.add(node.id.name);
+      },
+    });
+    names = collected;
+    blockFunctionNames.set(state, names);
+  }
+  return names.has(binding.name);
+};
 
 /** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
 export interface JavaScriptOpaqueScopeEffects {

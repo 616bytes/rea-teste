@@ -18,6 +18,7 @@ import {
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  semanticBindingAtRead,
   semanticEffectTiming,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -287,9 +288,17 @@ const writesModuleRequire = (
     const binding = resolveSemanticBindingState(state, value, value.name);
     if (binding === undefined || visited.has(binding.bindingId)) return false;
     const next = new Set(visited).add(binding.bindingId);
-    return (
-      binding.initializers.length > 0 &&
-      binding.initializers.every(({ node: init }) => isModuleObject(init, next))
+    const atRead = semanticBindingAtRead(
+      binding,
+      value,
+      state.parentsByNode,
+    ).binding;
+    // A property projection belongs to that property, not the module itself.
+    // Retain every possible whole-object alias, including default sources;
+    // later unrelated assignments must not hide an earlier delegate write.
+    return [...atRead.initializers, ...atRead.referenceInitializers].some(
+      ({ node: init, projection }) =>
+        projection.length === 0 && isModuleObject(init, next),
     );
   };
   traverseJavaScriptAst(state.program, {

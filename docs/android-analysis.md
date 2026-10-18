@@ -368,6 +368,8 @@ engine archive through `validateVerifierJadxConfiguration`. This shared verifier
 boundary supplies the production validator's resource owner and waits for
 retained cleanup before proceeding. Failed closes retain their exact owners for
 retry; prerequisite failures must not be mistaken for completed bridge tests.
+Recovery checks match the typed Java or archive failure and its applicable
+remediation.
 
 The lane also uses the selected full JDK's `jlink` to create a disposable JRE
 without the compiler module. It checks real Java startup failures, missing

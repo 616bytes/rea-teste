@@ -211,8 +211,11 @@ export class ProcmonEventWindow {
     if (this.#bytes <= PROCMON_EXPORT_LIMITS.output_bytes) return;
     if (this.#metadataBytes > PROCMON_EXPORT_LIMITS.output_bytes)
       throw new ProcmonExportOutputFailure(this.events.length, "metadata");
-    throw kind === "events"
-      ? this.#eventOverflow()
+    if (kind === "events") throw this.#eventOverflow();
+    // A later name pushed a one-event page over; no smaller page exists.
+    const [only] = this.events;
+    throw this.events.length === 1 && only !== undefined
+      ? new ProcmonExportOutputFailure(1, "first-event", only.ordinal)
       : new ProcmonExportOutputFailure(this.events.length);
   }
 

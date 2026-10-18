@@ -148,11 +148,12 @@ describe("readProcmonExport review of e014743", () => {
     );
   });
 
-  it("blames events, not metadata, when a smaller page would fit", async () => {
-    // Events nearly fill the budget; a later event then names a new field.
+  it("blames the event, not metadata, when a later name overflows", async () => {
+    // Event 1 nearly fills the budget; a later event then names a new field.
+    // Names are charged for every event, so only skipping event 1 helps.
     const xml = `<procmon><eventlist><event><Path>${"p".repeat(8 * 1024 * 1024 - 150)}</Path></event><event><Extra_Field>x</Extra_Field></event></eventlist></procmon>`;
     await expect(readProcmonExport(Buffer.from(xml), all)).rejects.toThrow(
-      "choose a smaller event_limit",
+      "Event 1 alone exceeds",
     );
   });
 });
@@ -429,5 +430,36 @@ describe("readProcmonExport review of 1630664", () => {
       reason: "malformed",
       line: 3,
     });
+  });
+});
+
+describe("readProcmonExport review of e96f135", () => {
+  it("stops at XML nested deeper than the element cap", async () => {
+    const deep = `${"<x>".repeat(300)}${"</x>".repeat(300)}`;
+    const reading = await readProcmonExport(
+      Buffer.from(
+        `<procmon><eventlist><event><Operation>Read</Operation></event><event><Stack>${deep}</Stack></event></eventlist></procmon>`,
+      ),
+      { ...selection, event_limit: null },
+    );
+    expect(reading.events).toHaveLength(1);
+    expect(reading.coverage).toMatchObject({
+      status: "partial",
+      reason: "malformed",
+      message: "XML elements nest deeper than 256 levels.",
+    });
+  });
+
+  it("does not suggest a smaller page when a later name overflows a one-event page", async () => {
+    const detail = "d".repeat(8 * 1024 * 1024 - 400);
+    const name = "Z".repeat(600);
+    await expect(
+      readProcmonExport(
+        Buffer.from(
+          `<procmon><eventlist><event><Operation>Read</Operation><Detail>${detail}</Detail></event><event><${name}>v</${name}></event></eventlist></procmon>`,
+        ),
+        selection,
+      ),
+    ).rejects.toThrow("Event 1 alone exceeds");
   });
 });

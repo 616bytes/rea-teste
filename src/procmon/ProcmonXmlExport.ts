@@ -15,6 +15,9 @@ class XmlStop {
   constructor(readonly message: string) {}
 }
 
+/** Far deeper than any Process Monitor export; nested fields are not projected. */
+const MAX_ELEMENT_DEPTH = 256;
+
 /**
  * Track procmon > eventlist > event > field. Simple fields become event
  * values; fields with child elements are named but not projected.
@@ -36,6 +39,11 @@ class ProcmonXmlEvents {
 
   open(tag: { readonly name: string }): void {
     this.#depth += 1;
+    // The parser keeps every open element until it closes, so bound the stack.
+    if (this.#depth > MAX_ELEMENT_DEPTH)
+      throw new XmlStop(
+        `XML elements nest deeper than ${MAX_ELEMENT_DEPTH} levels.`,
+      );
     if (this.#depth === 1) {
       if (tag.name !== "procmon")
         throw new ProcmonExportFormatFailure(

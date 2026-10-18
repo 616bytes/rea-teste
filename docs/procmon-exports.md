@@ -82,7 +82,8 @@ A truncated or malformed export does not fail the call. Events read before the
 problem are returned, and `coverage` is `partial` with the `reason`
 (`truncated` or `malformed`), a message and the source line where reading
 stopped. A CSV row with the wrong number of fields, a quote in an unquoted
-field, an unclosed quote, or XML that stops being well-formed all end reading.
+field, an unclosed quote, XML that stops being well-formed, or XML nested more
+than 256 elements deep all end reading.
 An export whose last character is cut off is decoded up to that character
 and reported as `truncated`.
 Events after that point are not examined, so their absence is not established.

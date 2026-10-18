@@ -1108,13 +1108,15 @@ const upsertTomlServerSection = (
   // The last kept CRLF line has no following LF from the join.
   if (body.endsWith("\r")) body += "\n";
   if (entry !== undefined && !inlineServerTable) {
-    let fragment = stringifyToml({
-      mcp_servers: { [serverKey]: entry },
-    }).replace(/\n+$/u, "");
+    let fragment = trimTrailingLfs(
+      stringifyToml({
+        mcp_servers: { [serverKey]: entry },
+      }),
+    );
     if (crlf) fragment = fragment.replaceAll("\n", "\r\n");
     const nl = crlf ? "\r\n" : "\n";
     const endedWithNewline = body.endsWith("\n");
-    const base = body.replace(/\n+$/u, "");
+    const base = trimTrailingLfs(body);
     const trimmed =
       endedWithNewline && base.endsWith("\r") ? base.slice(0, -1) : base;
     body =
@@ -1123,6 +1125,12 @@ const upsertTomlServerSection = (
         : `${trimmed}${nl}${nl}${fragment}${nl}`;
   }
   return bom ? `\uFEFF${body}` : body;
+};
+
+const trimTrailingLfs = (text: string): string => {
+  let end = text.length;
+  while (end > 0 && text.charCodeAt(end - 1) === 10) end -= 1;
+  return end === text.length ? text : text.slice(0, end);
 };
 
 const tomlServerEntry = (

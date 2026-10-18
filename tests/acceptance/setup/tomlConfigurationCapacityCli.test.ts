@@ -73,5 +73,4 @@ for (const scenario of [
       expect(parseToml(remaining)).toEqual(parseToml(original));
       expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     },
-    120_000,
   );

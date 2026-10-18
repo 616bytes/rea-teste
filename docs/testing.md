@@ -355,9 +355,10 @@ The process-global Vitest configuration contract rejects new direct temporary-ro
 creation outside the workspace seam and its narrowly documented boundary/package
 exceptions.
 
-`npm run verify:test-temp-hygiene` runs tests under a fresh private temporary
-root and rejects every remaining entry, regardless of its prefix. It reports
-test failures alongside residues and removes only that run's temporary root.
+The shared temporary-directory and workspace helpers preserve caller labels
+under an owned `rea-` prefix when needed. `npm run verify:test-temp-hygiene`
+uses the same ownership rule to find retained fixtures under a private temporary
+root. Third-party caches remain outside that ownership rule.
 
 Real Hopper, Ghidra, IDA, browser, package, and managed-code claims belong to their
 explicit `npm run verify:*` lanes. The reconstruction-readiness lane also

@@ -3,6 +3,7 @@ import {
   assertFeatureTrace,
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
+import { privateIdaInput } from "./lib/ida-private-input.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
 
 import assert from "node:assert/strict";
@@ -63,6 +64,7 @@ const [
   { readIdaConfiguration },
   { createIdaMcpConnection },
   { idaAddressSchema },
+  { hasIdaDatabaseSignature },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
@@ -70,6 +72,7 @@ const [
   importBuilt("ida/IdaConfiguration.js"),
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
+  importBuilt("domain/analysisDatabase.js"),
 ]);
 const registration = readIdaConfiguration(process.env.REA_IDA_MCP_CONFIG);
 if (!registration.ok) throw registration.error;
@@ -104,6 +107,7 @@ const expectedXref =
     : idaAddressSchema.parse(values["expected-xref"]);
 let phase = "target admission";
 const workspaces = new Set();
+let targetIsDatabase = false;
 const databases = new Set();
 const digest = async () => {
   const hash = createHash("sha256");
@@ -123,8 +127,15 @@ const observe = (input) => {
     evidence.locations.some((location) => location.kind === "artifact-path"),
   );
   if (config.mode === "headless") {
-    assert.notEqual(evidence.raw_result.metadata_before.input_path, target);
-    workspaces.add(dirname(evidence.raw_result.metadata_before.input_path));
+    workspaces.add(
+      dirname(
+        privateIdaInput(
+          evidence.raw_result.metadata_before,
+          target,
+          targetIsDatabase,
+        ),
+      ),
+    );
     for (const observation of evidence.raw_result.observations) {
       // Hex-Rays reads select their lease by instance id through execute_python.
       const database =
@@ -448,6 +459,8 @@ const cleanup = async () => {
 };
 try {
   const before = await digest();
+  for await (const head of createReadStream(target, { end: 3 }))
+    targetIsDatabase = hasIdaDatabaseSignature(head);
   const siblings = (await readdir(dirname(target))).sort();
   await mcp(await cli());
   await cleanup();

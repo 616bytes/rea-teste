@@ -29,16 +29,17 @@ export const captureElectronScripts = async (
   const items: ElectronPageInspection["scripts"]["items"] = [];
   const seen = new Set<string>();
   for (const script of input.scripts) {
+    if (script.frameId !== null && !input.frameIds.has(script.frameId)) {
+      input.completeness.exclude("scripts", "out_of_target_scope");
+      continue;
+    }
     const path = await authorizedElectronFile(script.rawUrl);
     if (path === undefined) {
       input.completeness.exclude("scripts", "out_of_target_scope");
       continue;
     }
     const identity = {
-      frame_id:
-        script.frameId !== null && input.frameIds.has(script.frameId)
-          ? script.frameId
-          : null,
+      frame_id: script.frameId,
       file_path: path,
       cdp_hash: script.hash,
       length: script.length,

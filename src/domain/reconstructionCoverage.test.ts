@@ -544,4 +544,177 @@ describe("reconstruction coverage verifier future timestamps", () => {
       ]),
     );
   });
+
+  it("fails closed when a passing package proof conflicts with a failing proof for the same artifact", () => {
+    const workspace = completeReconstructionCoverageData();
+    const [passProof, independenceProof] = workspace.package_proofs;
+    if (passProof === undefined || independenceProof === undefined)
+      throw new Error("Expected fixture package proofs");
+    const failProof = {
+      ...passProof,
+      proof_id: "proof.clean-install.failed",
+      status: "fail" as const,
+      evidence_ids: [reconstructionCoverageEvidenceId("3")],
+    };
+    for (const packageProofs of [
+      [failProof, independenceProof],
+      [passProof, failProof, independenceProof],
+      [failProof, passProof, independenceProof],
+    ]) {
+      const evaluated = evaluateReconstructionClosure(
+        createReconstructionCoverageData({
+          ...workspace,
+          package_proofs: packageProofs,
+        }),
+        "replacement.cli",
+        RECONSTRUCTION_COVERAGE_NOW,
+      );
+      expect(evaluated).toMatchObject({
+        status: "failed",
+        reasons: [
+          expect.objectContaining({
+            code: "package-proof-failed",
+            subject_id: "clean-install",
+          }),
+        ],
+      });
+      expect(evaluated.evidence_ids).toContain(
+        reconstructionCoverageEvidenceId("3"),
+      );
+    }
+  });
+});
+
+describe("reconstruction coverage required claim surfaces", () => {
+  it("reports authority routing on surfaces named only by a required claim", () => {
+    const { workspace, result, boundary } =
+      completeReconstructionCoverageFixture();
+    const surface = workspace.surfaces[0];
+    const owner = workspace.owners[0];
+    const claim = workspace.claims[0];
+    if (
+      surface === undefined ||
+      owner === undefined ||
+      owner.ownership.disposition !== "implemented" ||
+      claim === undefined
+    )
+      throw new Error("Expected complete reconstruction coverage fixture");
+    const routed = createReconstructionCoverageData({
+      ...workspace,
+      surfaces: [
+        surface,
+        {
+          ...surface,
+          surface_id: "cli.background",
+          location: "bin/app background",
+        },
+      ],
+      owners: [
+        owner,
+        {
+          surface_id: "cli.background",
+          ownership: {
+            ...owner.ownership,
+            owner_path: "src/background.ts",
+            owner_sha256: digest("5"),
+            authority_route: "detected",
+          },
+        },
+      ],
+      claims: [
+        { ...claim, surface_ids: [...claim.surface_ids, "cli.background"] },
+      ],
+      verifier_results: [
+        { ...result, owner_sha256s: [...result.owner_sha256s, digest("5")] },
+      ],
+    });
+    expect(
+      evaluateReconstructionClosure(
+        routed,
+        boundary.boundary_id,
+        RECONSTRUCTION_COVERAGE_NOW,
+      ),
+    ).toMatchObject({
+      status: "failed",
+      reasons: [
+        expect.objectContaining({
+          code: "authority-routing-detected",
+          subject_id: "cli.background",
+        }),
+      ],
+    });
+  });
+
+  it("reports active contradictions on surfaces named only by a required claim", () => {
+    const { workspace, boundary } = completeReconstructionCoverageFixture();
+    const surface = workspace.surfaces[0];
+    const owner = workspace.owners[0];
+    if (surface === undefined || owner === undefined)
+      throw new Error("Expected complete reconstruction coverage fixture");
+    const withContradiction = (
+      status: "active" | "resolved",
+      surfaceId: string,
+    ) =>
+      createReconstructionCoverageData({
+        ...workspace,
+        surfaces: [
+          surface,
+          { ...surface, surface_id: "cli.version" },
+          { ...surface, surface_id: "cli.other" },
+        ],
+        owners: [
+          owner,
+          { ...owner, surface_id: "cli.version" },
+          { ...owner, surface_id: "cli.other" },
+        ],
+        contradictions: [
+          {
+            contradiction_id: "conflict.help",
+            status,
+            surface_ids: [surfaceId],
+            claim_ids: [],
+            evidence_ids: [
+              reconstructionCoverageEvidenceId("2"),
+              reconstructionCoverageEvidenceId("3"),
+            ],
+          },
+        ],
+        boundaries: [{ ...boundary, required_surface_ids: ["cli.version"] }],
+      });
+    expect(
+      evaluateReconstructionClosure(
+        withContradiction("active", "cli.help"),
+        boundary.boundary_id,
+        RECONSTRUCTION_COVERAGE_NOW,
+      ),
+    ).toMatchObject({
+      status: "failed",
+      reasons: [
+        expect.objectContaining({
+          code: "active-contradiction",
+          subject_id: "conflict.help",
+        }),
+      ],
+      recommended_probes: [
+        expect.objectContaining({
+          operation: "resolve_contradiction",
+          subject_id: "conflict.help",
+        }),
+      ],
+    });
+    expect(
+      evaluateReconstructionClosure(
+        withContradiction("resolved", "cli.help"),
+        boundary.boundary_id,
+        RECONSTRUCTION_COVERAGE_NOW,
+      ),
+    ).toMatchObject({ status: "ready", reasons: [] });
+    expect(
+      evaluateReconstructionClosure(
+        withContradiction("active", "cli.other"),
+        boundary.boundary_id,
+        RECONSTRUCTION_COVERAGE_NOW,
+      ),
+    ).toMatchObject({ status: "ready", reasons: [] });
+  });
 });

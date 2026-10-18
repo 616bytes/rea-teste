@@ -7,6 +7,7 @@ import {
   identityProjection,
   isAutoName,
   normalizeCfg,
+  referenceEdgesCompatible,
   referenceKindProjection,
   referenceProjection,
   sorted,
@@ -279,7 +280,8 @@ const compareReferences = (
     );
   if (
     canonicalJson(leftProjection, "Function comparison") !==
-    canonicalJson(rightProjection, "Function comparison")
+      canonicalJson(rightProjection, "Function comparison") &&
+    !referenceEdgesCompatible(left, right, sameArtifact, false)
   )
     return dimensionResult({
       dimension: "references",
@@ -301,10 +303,11 @@ const compareReferences = (
   if (
     kindsKnown &&
     canonicalJson(leftKinds, "Function comparison") !==
-      canonicalJson(rightKinds, "Function comparison")
+      canonicalJson(rightKinds, "Function comparison") &&
+    !referenceEdgesCompatible(left, right, sameArtifact, true)
   )
     return compareValues("references", leftKinds, rightKinds, context);
-  // Equal projections with unknown endpoints do not establish equal targets.
+  // Equal or compatible projections with unknown endpoints do not establish equal targets.
   if (!sameArtifact && (hasUnnamedEndpoint(left) || hasUnnamedEndpoint(right)))
     return unresolvedDimension({
       dimension: "references",
@@ -313,6 +316,19 @@ const compareReferences = (
       rightCount: rightProjection.length,
       limitations: [
         "Unnamed reference endpoints have no stable identity across different artifacts, so equal named endpoints do not establish equal references.",
+      ],
+    });
+  if (
+    canonicalJson(leftProjection, "Function comparison") !==
+    canonicalJson(rightProjection, "Function comparison")
+  )
+    return unresolvedDimension({
+      dimension: "references",
+      links: context.links,
+      leftCount: leftProjection.length,
+      rightCount: rightProjection.length,
+      limitations: [
+        "Reference endpoint procedure identity is missing on one side at a matching address, so equal procedure endpoints are not established.",
       ],
     });
   if (kindsKnown)

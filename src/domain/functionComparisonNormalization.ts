@@ -167,6 +167,156 @@ export const referenceKindProjection = (
   );
 };
 
+interface ComparableReferenceEdge {
+  readonly direction: "in" | "out";
+  readonly sourceName: string | null;
+  readonly sourceAddress: string | null;
+  readonly targetName: string | null;
+  readonly targetAddress: string | null;
+  readonly kindKey: string | null;
+}
+
+const comparableReferenceEdges = (
+  snapshot: FunctionSnapshot,
+  sameArtifact: boolean,
+  includeKinds: boolean,
+): readonly ComparableReferenceEdge[] =>
+  [
+    ...snapshot.dossier.incoming_references.map((edge) => ({
+      direction: "in" as const,
+      edge,
+    })),
+    ...snapshot.dossier.outgoing_references.map((edge) => ({
+      direction: "out" as const,
+      edge,
+    })),
+  ].map(({ direction, edge }) => ({
+    direction,
+    sourceName: edge.source_procedure?.name ?? null,
+    sourceAddress: sameArtifact ? edge.source_address : null,
+    targetName: edge.target_procedure?.name ?? null,
+    targetAddress: sameArtifact ? edge.target_address : null,
+    kindKey:
+      includeKinds && edge.kind.available
+        ? canonicalJson(
+            {
+              type: edge.kind.type,
+              flow: edge.kind.flow,
+              call: edge.kind.call,
+              jump: edge.kind.jump,
+              data: edge.kind.data,
+              read: edge.kind.read,
+              write: edge.kind.write,
+              indirect: edge.kind.indirect,
+              computed: edge.kind.computed,
+              conditional: edge.kind.conditional,
+              terminal: edge.kind.terminal,
+              primary: edge.kind.primary,
+              operand_index: edge.kind.operand_index,
+              external: edge.kind.external,
+            },
+            "Function comparison",
+          )
+        : null,
+  }));
+
+const endpointsCompatible = (
+  leftName: string | null,
+  leftAddress: string | null,
+  rightName: string | null,
+  rightAddress: string | null,
+  sameArtifact: boolean,
+): boolean => {
+  if (leftName !== null && rightName !== null) return leftName === rightName;
+  return sameArtifact ? leftAddress === rightAddress : true;
+};
+
+const edgePairCompatible = (
+  left: ComparableReferenceEdge,
+  right: ComparableReferenceEdge,
+  sameArtifact: boolean,
+): boolean =>
+  left.direction === right.direction &&
+  left.kindKey === right.kindKey &&
+  endpointsCompatible(
+    left.sourceName,
+    left.sourceAddress,
+    right.sourceName,
+    right.sourceAddress,
+    sameArtifact,
+  ) &&
+  endpointsCompatible(
+    left.targetName,
+    left.targetAddress,
+    right.targetName,
+    right.targetAddress,
+    sameArtifact,
+  );
+
+/**
+ * Determine whether two reference inventories can correspond 1-to-1 without
+ * contradicting known procedure names, same-artifact addresses, or (when
+ * requested) known reference kinds.
+ */
+export const referenceEdgesCompatible = (
+  left: FunctionSnapshot,
+  right: FunctionSnapshot,
+  sameArtifact: boolean,
+  includeKinds: boolean,
+): boolean => {
+  const leftEdges = comparableReferenceEdges(left, sameArtifact, includeKinds);
+  const rightEdges = comparableReferenceEdges(
+    right,
+    sameArtifact,
+    includeKinds,
+  );
+  if (leftEdges.length !== rightEdges.length) return false;
+  const rightCounts = new Map<string, number[]>();
+  rightEdges.forEach((edge, index) => {
+    const key = canonicalJson(edge, "Function comparison");
+    const bucket = rightCounts.get(key) ?? [];
+    bucket.push(index);
+    rightCounts.set(key, bucket);
+  });
+  const unmatchedLeft: ComparableReferenceEdge[] = [];
+  const matchedRightIndices = new Set<number>();
+  for (const edge of leftEdges) {
+    const key = canonicalJson(edge, "Function comparison");
+    const bucket = rightCounts.get(key);
+    const matchedIndex = bucket?.pop();
+    if (matchedIndex !== undefined) matchedRightIndices.add(matchedIndex);
+    else unmatchedLeft.push(edge);
+  }
+  const unmatchedRight = rightEdges.filter(
+    (_, index) => !matchedRightIndices.has(index),
+  );
+  const assignedLeftByRight = new Array<number>(unmatchedRight.length).fill(-1);
+  const tryMatch = (leftIndex: number, visitedRight: Set<number>): boolean => {
+    const leftEdge = unmatchedLeft[leftIndex];
+    if (leftEdge === undefined) return false;
+    for (let rightIndex = 0; rightIndex < unmatchedRight.length; rightIndex++) {
+      if (visitedRight.has(rightIndex)) continue;
+      const rightEdge = unmatchedRight[rightIndex];
+      if (
+        rightEdge === undefined ||
+        !edgePairCompatible(leftEdge, rightEdge, sameArtifact)
+      )
+        continue;
+      visitedRight.add(rightIndex);
+      const currentLeft = assignedLeftByRight[rightIndex] ?? -1;
+      if (currentLeft === -1 || tryMatch(currentLeft, visitedRight)) {
+        assignedLeftByRight[rightIndex] = leftIndex;
+        return true;
+      }
+    }
+    return false;
+  };
+  for (let leftIndex = 0; leftIndex < unmatchedLeft.length; leftIndex++) {
+    if (!tryMatch(leftIndex, new Set())) return false;
+  }
+  return true;
+};
+
 export const commentProjection = (
   snapshot: FunctionSnapshot,
 ): readonly unknown[] | null => {

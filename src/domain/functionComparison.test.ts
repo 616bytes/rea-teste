@@ -1327,4 +1327,74 @@ describe("function comparison unnamed reference endpoints", () => {
       ).dimensions.find(({ dimension }) => dimension === "references"),
     ).toMatchObject({ status: "changed" });
   });
+
+  it("keeps mixed named and unnamed reference endpoints unknown when compatible and changed when conflicting", () => {
+    const withTarget = (
+      target: string,
+      name: string | null,
+      kind: "call" | "data" = "call",
+    ) => {
+      const edge = dossierWithReference("0x1000", kind).outgoing_references[0];
+      return functionDossierSchema.parse({
+        ...dossierWithReference("0x1000", kind),
+        outgoing_references: [
+          {
+            ...edge,
+            target_address: target,
+            target_procedure: name === null ? null : procedure(target, name),
+          },
+        ],
+      });
+    };
+    const reference = (left: Evidence, right: Evidence) =>
+      compareFunctions(left, right).dimensions.find(
+        ({ dimension }) => dimension === "references",
+      );
+    expect(
+      reference(
+        observe("a", withTarget("0x2000", "helper")),
+        observe("b", withTarget("0x3000", null)),
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      conclusion_kind: "unresolved_branch",
+      left_count: 1,
+      right_count: 1,
+      limitations: [expect.stringContaining("Unnamed reference endpoints")],
+    });
+    expect(
+      reference(
+        observe("b", withTarget("0x3000", null)),
+        observe("a", withTarget("0x2000", "helper")),
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      conclusion_kind: "unresolved_branch",
+      left_count: 1,
+      right_count: 1,
+    });
+    expect(
+      reference(
+        observe("a", withTarget("0x2000", "helper")),
+        observe("a", withTarget("0x2000", null)),
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      conclusion_kind: "unresolved_branch",
+      left_count: 1,
+      right_count: 1,
+    });
+    expect(
+      reference(
+        observe("a", withTarget("0x2000", "helper")),
+        observe("a", withTarget("0x3000", null)),
+      ),
+    ).toMatchObject({ status: "changed" });
+    expect(
+      reference(
+        observe("a", withTarget("0x2000", "helper", "call")),
+        observe("b", withTarget("0x3000", null, "data")),
+      ),
+    ).toMatchObject({ status: "changed" });
+  });
 });

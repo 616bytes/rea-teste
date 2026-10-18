@@ -274,65 +274,77 @@ it("marks signal-terminated provider commands as unknown completion", async () =
 });
 
 describe("Rizin command service", () => {
-  it("runs Rizin with user scripts suppressed while retaining plugins and preserves nonzero output", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-"));
-    const path = join(directory, "fixture.bin");
-    await writeFile(path, "fixture");
-    const calls: { command: string; args: readonly string[] }[] = [];
-    const service = new ReverseEngineeringService({
-      environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
-      run: async (command, args) => {
-        calls.push({ command, args });
-        const failure = new Error("command exited with status 2") as Error & {
-          stdout: string;
-          stderr: string;
-          code: number;
-          signal: null;
-          killed: boolean;
-        };
-        Object.assign(failure, {
+  it.each(["iI", "e scr.color=1; pd 1"])(
+    "runs Rizin with color disabled by default while preserving the caller's command %s and nonzero output",
+    async (command) => {
+      const directory = await mkdtemp(join(tmpdir(), "rea-rizin-"));
+      const path = join(directory, "fixture.bin");
+      await writeFile(path, "fixture");
+      const calls: { command: string; args: readonly string[] }[] = [];
+      const service = new ReverseEngineeringService({
+        environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
+        run: async (command, args) => {
+          calls.push({ command, args });
+          const failure = new Error("command exited with status 2") as Error & {
+            stdout: string;
+            stderr: string;
+            code: number;
+            signal: null;
+            killed: boolean;
+          };
+          Object.assign(failure, {
+            stdout: "partial data",
+            stderr: "command error",
+            code: 2,
+            signal: null,
+            killed: false,
+          });
+          throw failure;
+        },
+      });
+
+      try {
+        const result = await service.executeRizinCommand({ path, command });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(calls).toEqual([
+          {
+            command: "/tools/rizin",
+            args: ["-N", "-q", "-e", "scr.color=0", "-c", command, path],
+          },
+        ]);
+        expect(result.value.raw_result).toMatchObject({
           stdout: "partial data",
           stderr: "command error",
-          code: 2,
-          signal: null,
-          killed: false,
+          exit_code: 2,
+          completion_status: "complete",
         });
-        throw failure;
-      },
-    });
-
-    try {
-      const result = await service.executeRizinCommand({ path, command: "iI" });
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(calls).toEqual([
-        {
-          command: "/tools/rizin",
-          args: ["-N", "-q", "-c", "iI", path],
-        },
-      ]);
-      expect(result.value.raw_result).toMatchObject({
-        stdout: "partial data",
-        stderr: "command error",
-        exit_code: 2,
-        completion_status: "complete",
-      });
-      expect(result.value.limitations.join(" ")).not.toContain(
-        "terminated by signal",
-      );
-      expect(result.value.limitations).toContain(
-        "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
-      );
-      expect(result.value.limitations).toHaveLength(4);
-      expect(result.value.parameters).toMatchObject({
-        command: "iI",
-        provider_executable: "/tools/rizin",
-      });
-      expect(result.value.provider.id).toBe("rizin");
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+        expect(result.value.limitations.join(" ")).not.toContain(
+          "terminated by signal",
+        );
+        expect(result.value.limitations).toContain(
+          "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+        );
+        expect(result.value.limitations).toHaveLength(4);
+        expect(result.value.parameters).toMatchObject({
+          command,
+          provider_executable: "/tools/rizin",
+          command_arguments: [
+            "-N",
+            "-q",
+            "-e",
+            "scr.color=0",
+            "-c",
+            command,
+            path,
+          ],
+        });
+        expect(result.value.provider.id).toBe("rizin");
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects multiline Rizin command input before launching the provider", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));

@@ -72,7 +72,7 @@ const registerOwnedRizinCommandOutcomeTests = (options: {
         expect(runOwned).toHaveBeenCalledWith(
           expect.objectContaining({
             command: "rizin-test",
-            arguments: expect.arrayContaining(["-q", "-c", "iI"]),
+            arguments: ["-N", "-q", "-e", "scr.color=0", "-c", "iI", path],
             expectedCommand: null,
             env: expect.objectContaining({ REA_RIZIN_COMMAND: "rizin-test" }),
             hostEnvironment: {},
@@ -102,7 +102,15 @@ const registerOwnedRizinCommandOutcomeTests = (options: {
         expect(result.value.parameters).toMatchObject({
           command: "iI",
           provider_executable: "rizin-test",
-          command_arguments: expect.arrayContaining(["-q", "-c", "iI"]),
+          command_arguments: [
+            "-N",
+            "-q",
+            "-e",
+            "scr.color=0",
+            "-c",
+            "iI",
+            path,
+          ],
         });
         expect(result.value.locations).toContainEqual({
           kind: "artifact-path",

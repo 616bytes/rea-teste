@@ -1,3 +1,4 @@
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -11,6 +12,7 @@ import type {
 } from "../application/AnalysisProvider.js";
 import {
   createAnalysisExecution,
+  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
 import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -25,6 +27,7 @@ import {
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ArtifactReaderFailure,
@@ -164,6 +167,11 @@ const mapInputFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined)
+    return new AnalysisCancelledError(operation, {
+      cause: cancellation.reason,
+    });
   if (isCancellation(cause))
     return new AnalysisCancelledError(operation, { cause });
   if (
@@ -211,6 +219,11 @@ const mapOwnedIoFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined)
+    return new AnalysisCancelledError(operation, {
+      cause: cancellation.reason,
+    });
   if (isCancellation(cause))
     return new AnalysisCancelledError(operation, { cause });
   if (
@@ -523,18 +536,47 @@ export class FlutterBuildProvider {
 
   /** Retain failed snapshot cleanup ownership and retry it on close. */
   async close(): Promise<void> {
-    const failures: unknown[] = [];
+    const failures: {
+      readonly root: string;
+      readonly causes: readonly unknown[];
+    }[] = [];
     for (const root of [...this.ownedRoots.keys()]) {
       if (!(await this.discardRoot(root)))
-        failures.push(
-          new AggregateError(
-            this.cleanupFailures.get(root)!,
-            `snapshot root retained: ${root}`,
-          ),
-        );
+        failures.push({ root, causes: this.cleanupFailures.get(root)! });
     }
     if (failures.length > 0)
-      throw new AggregateError(failures, "Flutter snapshot cleanup failed");
+      throw new ProviderCleanupError(
+        FLUTTER_PROVIDER_IDENTITY.id,
+        failures.map(({ root }) => root),
+        {
+          reason: failures
+            .flatMap(({ causes }) =>
+              causes.map((cause) =>
+                cause instanceof Error ? cause.message : String(cause),
+              ),
+            )
+            .join("; "),
+          retained_roots: failures.map(({ root, causes }) => ({
+            path: root,
+            failures: causes.map((cause) => ({
+              name: cause instanceof Error ? cause.name : "UnknownError",
+              message: cause instanceof Error ? cause.message : String(cause),
+              ...(cause instanceof Error &&
+              "code" in cause &&
+              typeof cause.code === "string"
+                ? { code: cause.code }
+                : {}),
+            })),
+          })),
+        },
+        {
+          cause: new AggregateError(
+            failures.flatMap(({ causes }) => causes),
+            "Flutter snapshot cleanup failed",
+          ),
+          operation: "close_flutter_build",
+        },
+      );
   }
 
   async execute(
@@ -578,9 +620,23 @@ export class FlutterBuildProvider {
     } finally {
       if (snapshot !== undefined) await this.discardRoot(snapshot.root);
     }
+    // Cancellation observed after the awaited snapshot removal still keeps
+    // the completed facts, composed exactly as the uncancelled Evidence.
     if (signal?.aborted === true)
       return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
+        new AnalysisCancelledError(request.operation, {
+          cause: signal.reason,
+          ...(result.ok
+            ? {
+                partialObservation: createAnalysisExecutionEvidence(
+                  request.operation,
+                  request.input,
+                  result.value,
+                  "observed",
+                ),
+              }
+            : {}),
+        }),
       );
     return result;
   }

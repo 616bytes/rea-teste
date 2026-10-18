@@ -110,9 +110,14 @@ rendered declarations. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
-The reused CLI boundary workers cap V8 old space at 384 MiB, based on their
-profiled allocation and cleanup behavior. This encourages collection between
-files; spawned REA processes retain their own heap settings.
+The reused CLI boundary workers cap V8 old space at 384 MiB for ordinary runs
+and 512 MiB with coverage enabled. Covered ADB fixtures exhaust the ordinary
+384 MiB budget; those fixtures also complete with the shared CLI graph preloaded
+at 512 MiB. This is a measured capacity control, not a suite-wide speedup claim.
+Both profiles keep the
+same bounded worker count, and spawned REA processes retain their own heap
+settings. Explicitly disabling coverage retains the ordinary profile; coverage
+provider options alone do not enable instrumentation.
 
 Vitest worker limits do not bound subprocesses launched within a test. Bound
 those batches separately so repeated CLI validation cannot oversubscribe the
@@ -198,6 +203,121 @@ teardown would retire inspectors still needed by other files.
 Measure slow cases before pruning capacity coverage. Retain inputs beyond the
 formerly failing size/depth and distinguish cold runs, warm builds, coverage,
 and toolchain conditions when comparing timings.
+
+## Lifecycle regressions
+
+For changes to resource acquisition, readiness, cancellation, or cleanup, select
+the affected owners and applicable scenarios below. Include temporary snapshots
+and one-shot commands. Use public CLI/MCP workflows where practical and a
+controlled production seam for interleavings that cannot be reproduced reliably.
+
+| Scenario                                                                                | Assertion and control                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                  |
+| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                   |
+| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                             |
+| Cancellation arrives after workload exit, during result reads or temporary-root removal | Return typed cancellation with available partial observations and actual cleanup status. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence.                                            |
+| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                      |
+| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                        |
+| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported. |
+
+Shared process-supervision controls separate leader exit from output closure.
+Cover output during held or failed cleanup, bounded retention and drain timeout,
+retry, and borrowed stream authority. The POSIX inherited-stderr control uses a
+separate pipe as a release barrier after leader exit; it does not establish
+native Windows Job Object behavior.
+
+Synchronize cancellation with the finalization boundary being tested; a fixed
+delay after dispatch does not establish that phase. Use markers, barriers, or
+owned cleanup seams while preserving real cleanup where feasible. Check server
+settlement and retained resources even if the MCP SDK rejects the client promise
+before the handler finishes. A cancellation during active execution does not
+cover cancellation during final cleanup.
+Use explicit abort reasons and assert their identity at admission and after
+provider completion, alongside retained observations and cleanup state.
+
+Electron fuse regressions cover actual descriptor close denial and retry through
+the built CLI, same-connection MCP recovery, mixed descriptor outcomes, and
+server shutdown. Controlled seams cover cancellation during final close and
+after reader finalization, plus active-provider shutdown during preflight.
+They preserve real filesystem cleanup where possible; mocked launch boundaries
+do not establish real Electron teardown or naturally occurring OS failures.
+
+Active Electron cleanup controls retain independent transport and process-family
+owners, block replacement captures until recovery, and retry only unresolved
+owners. Cover late close acknowledgement and rejection after a wait deadline,
+opaque rejection reasons, cancellation during failed finalization, and missing
+lineage followed by a confirmed passive family census. Windows controls require
+a fresh lineage observation and do not signal cached descendant PIDs after root
+termination. Simulated Windows controls do not establish native Windows behavior.
+
+For atomic writes, exercise cancellation on both sides of the documented commit
+point and preserve any publication receipt. A late interruption does not prove
+that no output was published.
+
+For successful provider reports, test cancellation immediately before the report
+reaches the application workflow as well as during provider cleanup. Validate
+the report before classifying completion: a valid report must retain its Evidence
+on cancellation, and an invalid report must keep its output error. Exercise both
+the provider boundary and the shared CLI/MCP workflow; a downstream guard does
+not repair the provider's own completion contract. When callers share startup,
+cancel each waiter independently and verify that the last departure awaits owned
+cleanup while interested peers can still reach readiness. Repeat the same
+shutdown event after a cleanup failure to verify that its listener can retry.
+Exercise non-default lifecycle deadlines through queued requests and their
+consumers; default-only controls cannot detect dropped request options.
+
+For descriptor-backed reads, inject a close failure after a successful read and
+after a primary read or cancellation failure. Verify that the exact descriptor
+remains owned, both failures survive, and a later close retries it. Repeat
+admission attempts while close still fails: no additional descriptor or
+native command should start. Restore close and verify that the exact owner
+resolves the originating cleanup marker and allows later work, while the earlier
+failure remains available as a diagnostic. Retain errors returned by multiple
+failed retries, including admission and shutdown aggregates, and assert that
+each becomes complete after recovery. For an aggregate with multiple owners,
+release one owner while another still fails and assert that it remains incomplete.
+Cover recovery before the
+caller-specific error is bound to its retained owner, as
+another request can retry cleanup concurrently. Confirm that an already released
+owner resolves a later binding too. Include
+admission failure after opening the descriptor. If caller cancellation returns
+before an inspection settles, gate its final read or close and verify that
+session shutdown waits for the owned work and reports any retained resources.
+Gate a later read in a multi-read inspection, not only its first read. Overlap
+operations so one retains a failed descriptor while another reaches its next
+read; both the operation and shutdown must settle without nested-admission
+deadlock. Deny child close and verify its containing root survives until retry.
+
+Exercise publication on filesystems without hard links using an unsupported-link
+seam. Check exclusive destination creation, stat/write/close failures, completed
+output receipts, and cancellation at the documented cutoff. A streamed fallback
+has different visibility from an atomic hard-link commit and must report it
+accurately. For Windows command supervision, keep a descendant writing after its
+leader exits, deny cleanup observation, and verify a competing writer remains
+excluded until the exact Job Object closes. Portable doubles cover retry logic;
+the native Windows lane must establish actual process-tree behavior.
+
+Supervisor tests must observe process exit, output-pipe closure, and IPC
+disconnection separately. In the pinned Node runtime, a parent-initiated IPC
+disconnect can omit the aggregate `ChildProcess` close event. Join the actual
+resource observations before reporting completion; process exit alone does not
+establish pipe or process-tree release.
+
+When changing an internal helper contract, check its JavaScript verifier and
+subprocess-script consumers alongside TypeScript references. Source typecheck
+does not check those calls; run their orchestration tests against the built
+modules, including the verifier's failure and cleanup paths.
+
+Representative regressions include
+[process cleanup-time SIGINT](https://github.com/morluto/rea/blob/e78455338fe2d06c4cd03d59cbf33473d754998b/tests/boundary/process/processCaptureCancellationAdapters.test.ts),
+[late authenticated cleanup](https://github.com/morluto/rea/blob/e78455338fe2d06c4cd03d59cbf33473d754998b/tests/boundary/providers/hopper/hopperClient.handshakeRecovery.test.ts),
+[LLDB launch and finalization](https://github.com/morluto/rea/blob/e78455338fe2d06c4cd03d59cbf33473d754998b/tests/boundary/providers/native/lldbCallTracerFailures.test.ts),
+[composed child ownership](https://github.com/morluto/rea/blob/e78455338fe2d06c4cd03d59cbf33473d754998b/src/application/binary/CompositeProvider.test.ts),
+and [public CLI cleanup denial](https://github.com/morluto/rea/blob/e78455338fe2d06c4cd03d59cbf33473d754998b/tests/boundary/cli/wasmCleanupCli.test.ts).
+These controlled probes do not replace the matching real-provider lane. Record
+the base failure, passing control, exact host/provider, verified cleanup, and
+unavailable coverage; a missing engine is not a pass.
 
 ## Behavioral depths
 
@@ -409,7 +529,7 @@ costs. Its queue, execution, and failures are independent of the required gate
 and publication. CPU time and peak process-family memory are not measured by this API.
 
 The build job saves portable Turbo outputs across runs. Eight Linux real-system
-lanes restore this cache without waiting for the build job. The shared action
+lanes reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
 derives its key from `test:prepare --dry=json` task hashes, runner OS and
 architecture, `.npmrc`, `.nvmrc`, and the lockfile; test-only changes can reuse compiled outputs. Every
 build and verification command still runs, so Turbo checks task inputs and
@@ -419,7 +539,15 @@ that generator's entry. Native outputs are not stored in this cache.
 
 Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
 the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The Windows lane relies on the Linux static job for typechecking. They retain the normal build and prepack
+catalogs. The key parser retains the validated `test:prepare` task identities in
+`.cache/ci-build-plan.json`; staging reads this plan without starting another
+Turbo run that could evict cache entries. The producer stages matching archives,
+metadata, and available manifests into `.cache/ci-build-cache/`.
+`portable-build-cache.json` records availability per task. Evicted or partially
+missing entries are omitted as whole entries, and consumers rebuild cache misses,
+including when every entry is unavailable. Malformed plans, non-file entries,
+and I/O errors other than disappearance still fail publication. Older cross-run entries stay in the
+original cache. The Windows lane relies on the Linux static job for typechecking. They retain the normal build and prepack
 commands, which restore matching outputs or rebuild on a cache miss. Native
 artifacts, dependency installs, package archives, and runtime verification remain
 host-local. Keep platform-dependent outputs out of this shared cache.
@@ -881,6 +1009,16 @@ decompilation, 16-bit overflow rejection without replacing the active session,
 and runtime cleanup. Windows additionally requires the matching native addon;
 its verifier lineage remains explicitly unavailable outside the provider's
 retained Job Object, as in the other Windows lanes.
+
+`npm run verify:ghidra:m68k` needs no assembler: its 22-byte big-endian 68000
+fixture is source-owned annotated hex in the verifier, loaded at `0x1000`. With
+an installed Ghidra 12.1.4 and full JDK on Linux or macOS, it verifies the
+`68000:BE:32:default` BinaryLoader import, real CLI/stdio MCP load-image parity,
+exact source bytes, both functions, the `bsr.b` call reference, decompilation
+through address and file offset, rejection of a misaligned entry and of a mapping
+past `0xffffffff` without replacing the active session, and runtime cleanup.
+Windows Ghidra P0 does not admit m68k, so this is not a Windows lane. The lane
+has been run on macOS; Linux has not been exercised.
 
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
 through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
@@ -1432,7 +1570,12 @@ NUL-containing names. It compares exact WAT,
 section output and selected/tool digests through the compiled CLI and real MCP
 SDK, validates advertised schemas, checks identical CLI/MCP Evidence IDs and
 session bundle readback, retains invalid/truncated module diagnostics, preserves
-all inputs and checks workspace cleanup. Pass an installed package's
+all inputs and checks workspace cleanup.
+The lane also injects one cleanup denial for exact private runtime roots and
+input descriptors, checks recovered CLI errors, and verifies retry on the same
+MCP connection after repeated runtime-removal denial. These are controlled
+faults, not naturally occurring permission failures; no WASM target is executed.
+Pass an installed package's
 `scripts/rea.mjs` as the first argument to run the same lane against the package.
 `npm run verify:wasm:package` packs and installs REA into an isolated temporary
 prefix with lifecycle scripts disabled and runs the same required real-tool lane.

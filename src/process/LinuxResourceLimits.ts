@@ -68,16 +68,15 @@ export const readLinuxResourceLimits = async (
   configured: LinuxResourceLimits,
   resourceScope?: ArtifactResourceScope,
 ): Promise<LinuxResourceLimits> => {
-  const path = "/proc/self/limits";
-  const file = await open(path, "r");
+  const file = await open("/proc/self/limits", "r");
   return withArtifactFileHandle(
-    path,
+    "/proc/self/limits",
     file,
     resourceScope,
     undefined,
-    async (file) => {
+    async (handle) => {
       const buffer = Buffer.alloc(16 * 1024);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
       if (bytesRead === buffer.length)
         throw new Error("Inherited Linux limits exceed the report budget.");
       return clampLinuxResourceLimits(

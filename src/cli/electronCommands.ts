@@ -20,7 +20,10 @@ import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
 } from "../cliObservationOptions.js";
-import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import {
+  cliJavaScriptSourcePaths,
+  runCliJavaScriptApplicationAnalysis,
+} from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
@@ -276,42 +279,51 @@ const registerJavaScriptApplicationCommand = (
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
-          runCliJavaScriptApplicationAnalysis(
-            {
-              input_path: args.path,
-              format: options.artifactFormat,
-              integrity_policy: options.integrityPolicy,
-              ...(options.maxSemanticNodes === undefined
-                ? {}
-                : { max_semantic_nodes: options.maxSemanticNodes }),
-              ...(options.maxSemanticNodesPerFile === undefined
-                ? {}
-                : {
-                    max_semantic_nodes_per_file:
-                      options.maxSemanticNodesPerFile,
-                  }),
-              ...(options.maxSemanticUnknowns === undefined
-                ? {}
-                : { max_semantic_unknowns: options.maxSemanticUnknowns }),
-              ...(options.maxSemanticUnknownsPerFile === undefined
-                ? {}
-                : {
-                    max_semantic_unknowns_per_file:
-                      options.maxSemanticUnknownsPerFile,
-                  }),
-              ...(options.sourcePath === undefined
-                ? {}
-                : { source_paths: options.sourcePath }),
-              ...(options.maxHeapMb === undefined
-                ? {}
-                : { max_heap_mb: options.maxHeapMb }),
-              ...(options.analysisTimeoutMs === undefined
-                ? {}
-                : { analysis_timeout_ms: options.analysisTimeoutMs }),
-            },
-            signal,
-          ),
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.analyzeJavaScriptApplication,
+          async () => {
+            const sourcePaths = await cliJavaScriptSourcePaths(
+              options.sourcePath,
+              options.sourcePathsJson,
+            );
+            if (!sourcePaths.ok) return sourcePaths.error;
+            return runCliJavaScriptApplicationAnalysis(
+              {
+                input_path: args.path,
+                format: options.artifactFormat,
+                integrity_policy: options.integrityPolicy,
+                ...(options.maxSemanticNodes === undefined
+                  ? {}
+                  : { max_semantic_nodes: options.maxSemanticNodes }),
+                ...(options.maxSemanticNodesPerFile === undefined
+                  ? {}
+                  : {
+                      max_semantic_nodes_per_file:
+                        options.maxSemanticNodesPerFile,
+                    }),
+                ...(options.maxSemanticUnknowns === undefined
+                  ? {}
+                  : { max_semantic_unknowns: options.maxSemanticUnknowns }),
+                ...(options.maxSemanticUnknownsPerFile === undefined
+                  ? {}
+                  : {
+                      max_semantic_unknowns_per_file:
+                        options.maxSemanticUnknownsPerFile,
+                    }),
+                ...(sourcePaths.value === undefined
+                  ? {}
+                  : { source_paths: sourcePaths.value }),
+                ...(options.maxHeapMb === undefined
+                  ? {}
+                  : { max_heap_mb: options.maxHeapMb }),
+                ...(options.analysisTimeoutMs === undefined
+                  ? {}
+                  : { analysis_timeout_ms: options.analysisTimeoutMs }),
+              },
+              signal,
+            );
+          },
         ),
       ),
   });

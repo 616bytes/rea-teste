@@ -14,6 +14,7 @@ import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayP
 import { ok } from "./domain/result.js";
 import {
   linuxHopperEmbeddedPythonPackage,
+  linuxHopperEmbeddedPythonRuntime,
   readLinuxDistribution,
 } from "./application/LinuxHopper.js";
 import { execFileOutput } from "./process/ExecFileOutput.js";
@@ -85,7 +86,8 @@ export const inspectLinuxEmbeddedPythonRuntime = async (
   run: typeof execFileOutput = execFileOutput,
 ): Promise<DoctorCheck> => {
   const distribution = await readDistribution();
-  const packageName = linuxHopperEmbeddedPythonPackage(distribution);
+  const runtime = linuxHopperEmbeddedPythonRuntime("6.6.0");
+  const packageName = linuxHopperEmbeddedPythonPackage(distribution, "6.6.0");
   try {
     let linked: Awaited<ReturnType<typeof execFileOutput>> | undefined;
     let lastFailure: unknown;
@@ -98,7 +100,9 @@ export const inspectLinuxEmbeddedPythonRuntime = async (
       }
     }
     if (linked === undefined) throw lastFailure;
-    const available = /\blibpython3\.12\.so\.1\.0\b/u.test(linked.stdout);
+    const available =
+      runtime !== undefined &&
+      new RegExp(`\\b${runtime.soname}\\b`, "u").test(linked.stdout);
     return {
       name: "hopper-embedded-python",
       ok: available,
@@ -108,7 +112,7 @@ export const inspectLinuxEmbeddedPythonRuntime = async (
             ? "healthy"
             : "missing_dependency"
           : "unknown",
-      detail: `${packageName ?? "libpython3.12.so.1.0"} (${available ? "available" : "missing"})`,
+      detail: `${packageName ?? runtime?.soname ?? "unknown runtime"} (${available ? "available" : "missing"})`,
       ...(available || packageName === undefined
         ? {}
         : {

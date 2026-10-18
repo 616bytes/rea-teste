@@ -8,6 +8,7 @@ import {
   installLinuxHopper,
   linuxPackageManagerCommands,
   linuxHopperEmbeddedPythonPackage,
+  linuxHopperEmbeddedPythonRuntime,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
@@ -66,6 +67,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     outputTruncated: false,
   };
   launcherStatusValue: LinuxHopperLauncherStatus = "ready";
+  releaseVersion = "6.6.0";
   downloads: string[] = [];
   installed: Array<{ family: LinuxPackageFamily; archive: string }> = [];
   cleaned: string[] = [];
@@ -73,7 +75,12 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   distribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distributionValue);
   release = (family: LinuxPackageFamily) =>
-    Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
+    Promise.resolve(
+      ok({
+        ...releasesFor(new Uint8Array([1, 2, 3]))[family],
+        version: this.releaseVersion,
+      }),
+    );
   download = (url: string): Promise<LinuxHopperDownload> => {
     this.downloads.push(url);
     return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
@@ -124,6 +131,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   installPackage = (
     family: LinuxPackageFamily,
     archive: string,
+    _hopperVersion: string,
   ): Promise<LinuxPackageInstallOutcome> => {
     if (!this.verifiedBeforeInstall)
       throw new Error("Package manager ran before publisher verification");
@@ -316,6 +324,23 @@ it("only selects the verified Ubuntu 24.04 embedded runtime package", () => {
       hopperSetupSupported: true,
     }),
   ).toBe("python3.12-libs");
+  expect(linuxHopperEmbeddedPythonRuntime("6.6.0")).toEqual({
+    soname: "libpython3.12.so.1.0",
+  });
+  expect(linuxHopperEmbeddedPythonRuntime("99.2.1")).toBeUndefined();
+  expect(
+    linuxPackageManagerCommands(
+      "deb",
+      "/tmp/Hopper package",
+      true,
+      "24.04",
+      "99.2.1",
+    ),
+  ).not.toContainEqual(
+    expect.objectContaining({
+      args: expect.arrayContaining(["libpython3.12t64"]),
+    }),
+  );
 });
 
 describe("Linux Hopper package installation", () => {
@@ -339,6 +364,17 @@ describe("Linux Hopper package installation", () => {
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
     },
   );
+
+  it("rejects an unmapped future Hopper release before package mutation", async () => {
+    const host = new RecordingLinuxHost();
+    host.releaseVersion = "99.2.1";
+    await expect(installLinuxHopper(host)).resolves.toMatchObject({
+      status: "failed",
+      reason: "unsupported_hopper_build",
+    });
+    expect(host.downloads).toEqual([]);
+    expect(host.verifiedBeforeInstall).toBe(false);
+  });
 });
 
 describe("Linux Hopper installation failure classification", () => {
@@ -516,8 +552,8 @@ function releasesFor(
   bytes: Uint8Array,
 ): Record<LinuxPackageFamily, LinuxHopperRelease> {
   const release = (extension: string) => ({
-    version: "future-fixture",
-    filename: `https://www.hopperapp.com:443/downloader/public/Hopper-future-fixture-Linux-demo.${extension}`,
+    version: "6.6.0",
+    filename: `https://www.hopperapp.com:443/downloader/public/Hopper-6.6.0-Linux-demo.${extension}`,
     file_length: String(bytes.byteLength),
     file_hash: createHash("sha1").update(bytes).digest("hex"),
     main_exe_hash: "0".repeat(64),

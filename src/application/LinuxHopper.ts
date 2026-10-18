@@ -133,6 +133,7 @@ export interface LinuxHopperInstallHost {
   installPackage(
     family: LinuxPackageFamily,
     archive: string,
+    hopperVersion: string,
   ): Promise<LinuxPackageInstallOutcome>;
   verifyArchive(
     family: LinuxPackageFamily,
@@ -228,7 +229,10 @@ export type LinuxHopperLauncherStatus =
 
 export const linuxHopperEmbeddedPythonPackage = (
   distribution: LinuxDistribution | undefined,
+  hopperVersion = "6.6.0",
 ): string | undefined => {
+  if (linuxHopperEmbeddedPythonRuntime(hopperVersion) === undefined)
+    return undefined;
   if (distribution?.packageFamily === "rpm") return "python3.12-libs";
   if (
     distribution?.packageFamily === "deb" &&
@@ -238,6 +242,12 @@ export const linuxHopperEmbeddedPythonPackage = (
     return "libpython3.12t64";
   return undefined;
 };
+
+/** Runtime ABI verified against the authenticated Hopper 6.6.0 Linux build. */
+export const linuxHopperEmbeddedPythonRuntime = (
+  hopperVersion: string | undefined,
+): { readonly soname: "libpython3.12.so.1.0" } | undefined =>
+  hopperVersion === "6.6.0" ? { soname: "libpython3.12.so.1.0" } : undefined;
 
 /** Parse an os-release document without executing its shell syntax. */
 export const parseLinuxDistribution = (text: string): LinuxDistribution => {
@@ -320,6 +330,15 @@ export const installLinuxHopper = async (
               : "release_metadata",
         };
       const release = selected.value;
+      if (linuxHopperEmbeddedPythonRuntime(release.version) === undefined)
+        return {
+          status: "failed",
+          reason: "unsupported_hopper_build",
+          verificationFailure: new HopperReleaseError(
+            "unsupported_hopper_build",
+            `Hopper ${release.version} has no verified embedded Python runtime mapping.`,
+          ),
+        };
       const archiveDownload = await host.download(release.filename, options);
       if (!archiveDownload.ok) return { status: "failed", reason: "download" };
       temporary = await host.createTemporaryDirectory();
@@ -359,6 +378,7 @@ export const installLinuxHopper = async (
       const install = await host.installPackage(
         distribution.packageFamily,
         archive,
+        release.version,
       );
       if (install.status === "failed")
         return {
@@ -433,12 +453,13 @@ export const systemLinuxHopperInstallHost = (
     download: downloadHopperPackage,
     createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-")),
     writeArchive: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
-    installPackage: async (family, archive) =>
+    installPackage: async (family, archive, hopperVersion) =>
       installSystemPackage(
         family,
         archive,
         environment,
         (await readLinuxDistribution())?.versionId,
+        hopperVersion,
       ),
     verifyArchive: (family, release, archive, signal) =>
       publisher.verifyArchive(family, release, archive, signal),
@@ -524,12 +545,14 @@ const installSystemPackage = async (
   archive: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   versionId?: string,
+  hopperVersion = "6.6.0",
 ): Promise<LinuxPackageInstallOutcome> => {
   for (const command of linuxPackageManagerCommands(
     family,
     archive,
     process.getuid?.() === 0,
     versionId,
+    hopperVersion,
   )) {
     const output = await execFileBoundedOutput(
       command.executable,
@@ -574,6 +597,7 @@ export const linuxPackageManagerCommands = (
   archive: string,
   isRoot: boolean,
   versionId?: string,
+  hopperVersion = "6.6.0",
 ): readonly {
   readonly executable: string;
   readonly args: readonly string[];
@@ -584,7 +608,17 @@ export const linuxPackageManagerCommands = (
           "xvfb",
           "xauth",
           "python3",
-          ...(versionId === "24.04" ? ["libpython3.12t64"] : []),
+          ...(linuxHopperEmbeddedPythonPackage(
+            {
+              id: "ubuntu",
+              versionId: "24.04",
+              packageFamily: "deb",
+              hopperSetupSupported: true,
+            },
+            hopperVersion,
+          ) && versionId === "24.04"
+            ? ["libpython3.12t64"]
+            : []),
           "libx11-6",
           "libxtst6",
         ]
@@ -593,7 +627,16 @@ export const linuxPackageManagerCommands = (
             "xorg-x11-server-Xvfb",
             "xorg-x11-xauth",
             "python3",
-            "python3.12-libs",
+            ...(linuxHopperEmbeddedPythonPackage(
+              {
+                id: "fedora",
+                packageFamily: "rpm",
+                hopperSetupSupported: true,
+              },
+              hopperVersion,
+            )
+              ? ["python3.12-libs"]
+              : []),
             "libX11",
             "libXtst",
           ]

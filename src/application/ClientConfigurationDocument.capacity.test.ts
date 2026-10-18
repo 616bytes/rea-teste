@@ -10,6 +10,43 @@ const registration = { command: "rea", args: ["mcp"] };
 
 describe("TOML configuration source capacity", () => {
   it.each(["\n", "\r\n"])(
+    "preserves large interior blank-line runs with %j breaks during registration and removal",
+    (newline) => {
+      const original =
+        `model = "local-control"${newline}` +
+        newline.repeat(140_000) +
+        `[mcp_servers.other]${newline}command = "other"${newline}` +
+        `# trailing spaces  \t${newline}`;
+      const parsed = parseClientConfiguration(original, "toml");
+      const desired = withClientServers(parsed, {
+        ...parsed.servers,
+        rea: registration,
+      });
+      const configured = serializeClientConfiguration(
+        desired,
+        "toml",
+        original,
+      );
+      expect(configured.startsWith(original)).toBe(true);
+      expect(parseClientConfiguration(configured, "toml").document).toEqual(
+        desired,
+      );
+      expect(serializeClientConfiguration(desired, "toml", configured)).toBe(
+        configured,
+      );
+      const removed = serializeClientConfiguration(
+        parsed.document,
+        "toml",
+        configured,
+      );
+      expect(removed.startsWith(original)).toBe(true);
+      expect(parseClientConfiguration(removed, "toml").document).toEqual(
+        parsed.document,
+      );
+    },
+  );
+
+  it.each(["\n", "\r\n"])(
     "retains adjacent assignments and multiline values with %j breaks",
     (newline) => {
       const prefix = Array.from(

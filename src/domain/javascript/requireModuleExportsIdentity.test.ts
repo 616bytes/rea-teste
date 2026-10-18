@@ -464,3 +464,136 @@ it.each([
       .electron.browser_windows,
   ).toEqual([]);
 });
+
+it.each([
+  ["public Module constructor", 'const value=require("module");'],
+  ["Module prototype constructor", "const value=module.constructor;"],
+  ["Module self export", 'const value=require("module").Module;'],
+  ["Module default import", 'import value from "node:module";'],
+  ["Module named import", 'import {Module as value} from "module";'],
+  ["Module internal loader", 'const value=require("module")._load;'],
+  ["Object constructor", "const value=Object;"],
+  ["Object intrinsic", "const value=Object.defineProperty;"],
+  [
+    "Object prototype intrinsic",
+    "const value=Object.prototype.hasOwnProperty;",
+  ],
+  ["Array constructor", "const value=Array;"],
+  ["require resolution function", "const value=require.resolve;"],
+  [
+    "created loader",
+    'const value=require("module").createRequire("/tmp/a.cjs");',
+  ],
+  ["function declaration", "function value(){}"],
+  ["arrow function", "const value=()=>{};"],
+  ["async function", "async function value(){}"],
+  ["generator function", "function* value(){}"],
+  ["async generator function", "async function* value(){}"],
+  ["class constructor", "class value{}"],
+  ["object method", "const object={method(){}};const value=object.method;"],
+  ["class static method", "class C{static method(){}}const value=C.method;"],
+  [
+    "class prototype method",
+    "class C{method(){}}const value=C.prototype.method;",
+  ],
+  ["class static field", "class C{static method=()=>{}}const value=C.method;"],
+  [
+    "object getter result",
+    "const object={get method(){return ()=>{}}};const value=object.method;",
+  ],
+  [
+    "class getter result",
+    "class C{static get method(){return ()=>{}}}const value=C.method;",
+  ],
+  [
+    "returned function",
+    "function make(){return function(){};}const value=make();",
+  ],
+  ["bound function", "function f(){}const value=f.bind(null);"],
+  ["bound arrow", "const value=(()=>{}).bind(null);"],
+  ["bound intrinsic", "const value=Object.assign.bind(null);"],
+  ["bound async function", "async function f(){}const value=f.bind(null);"],
+  ["Function factory", "const value=Function();"],
+  ["Function constructor", "const value=new Function();"],
+  ["object literal constructor", "const value=({}).constructor;"],
+  ["array literal constructor", "const value=[].constructor;"],
+])("rejects a shared helper changed through %s", (_name, setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(
+      `${setup}value.call.call=other;new (require.call.call(require,null,"electron").BrowserWindow)({});`,
+    ).electron.browser_windows,
+  ).toEqual([]);
+});
+
+it.each([
+  ["function constructor", "require.constructor.prototype.call=other;"],
+  ["helper constructor", "require.call.constructor.prototype.call=other;"],
+  ["Module function prototype", 'require("module").__proto__.call=other;'],
+  [
+    "ordinary function prototype",
+    "function f(){};Object.getPrototypeOf(f).call=other;",
+  ],
+  [
+    "async function prototype chain",
+    "async function f(){};Object.getPrototypeOf(Object.getPrototypeOf(f)).call=other;",
+  ],
+  [
+    "generator function prototype chain",
+    "function* f(){};Object.getPrototypeOf(Object.getPrototypeOf(f)).call=other;",
+  ],
+  [
+    "derived class prototype chain",
+    "class B{};class C extends B{};C.__proto__.__proto__.call=other;",
+  ],
+  [
+    "async constructor parent",
+    "async function f(){};f.constructor.__proto__.prototype.call=other;",
+  ],
+])("rejects an inherited helper changed through %s", (_name, setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(
+      `${setup}new (require.call(null,"electron").BrowserWindow)({});`,
+    ).electron.browser_windows,
+  ).toEqual([]);
+});
+
+it.each([
+  'const M=require("module");M.call=other;',
+  'const M=require("module");M.prototype.call=other;',
+  "Object.assign.call=other;",
+  "function f(){};f.call=other;",
+  "function f(){};f.prototype.call=other;",
+  "function f(){};f.constructor=other;",
+  "async function f(){};Object.getPrototypeOf(f).call=other;",
+  "function* f(){};f.prototype.call=other;",
+  "Object.getPrototypeOf(Function.prototype).call=other;",
+  "class B{};class C extends B{};C.__proto__.call=other;",
+  "const object={method(){}};object.method.call=other;",
+  "class C{static method(){}}C.method.call=other;",
+  "class C{method(){}}C.prototype.method.call=other;",
+  "const object={get method(){return {call:{}}}};object.method.call.call=other;",
+  "class C{static get method(){return {call:{}}}}C.method.call.call=other;",
+  "class C{static method(){};static method={call:{}}}C.method.call.call=other;",
+  "class C{method(){};static method={call:{}}}C.method.call.call=other;",
+  "class B{static method(){}}class C extends B{static method={call:{}}}C.method.call.call=other;",
+  "class C{static method={call:{}};static method(){}}C.method.call.call=other;",
+  "async function f(){};const bound=f.bind(null);Object.getPrototypeOf(bound).call=other;",
+  "const object={constructor:{call:{}}};object.constructor.call.call=other;",
+  "const object={__proto__:{constructor:{call:{}}}};object.constructor.call.call=other;",
+  "const array=[{call:{}}];array[0].call.call=other;",
+  "const array=[];array.length.call.call=other;",
+])("keeps unrelated own callable properties separate: %s", (setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(
+      `${setup}new (require.call.call(require,null,"electron").BrowserWindow)({});`,
+    ).electron.browser_windows,
+  ).toHaveLength(1);
+});
+
+it("retains a helper captured before a shared function property replacement", () => {
+  expect(
+    analyzeJavaScriptStaticSource(
+      'const invoke=require.call.call;const M=require("module");M.call.call=other;new (Reflect.apply(invoke,require,[null,"electron"]).BrowserWindow)({});',
+    ).electron.browser_windows,
+  ).toHaveLength(1);
+});

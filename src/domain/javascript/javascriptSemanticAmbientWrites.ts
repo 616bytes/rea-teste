@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -15,16 +16,24 @@ import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticRequireOrigin,
-  semanticPossibleFunctionValueIdentities,
+  semanticRequireFunctionValue,
 } from "./javascriptSemanticRequireOrigin.js";
+import {
+  semanticPossibleFunctionValueIdentities,
+  semanticSourceFunctionValueIdentities,
+  semanticOrdinaryFunctionValueIdentities,
+  semanticLiteralInheritedValueIdentities,
+} from "./javascriptSemanticFunctionValues.js";
 import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   semanticBindingAtRead,
+  semanticDefiniteMutationPrecedesRead,
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -35,8 +44,12 @@ import {
   semanticIterationSources,
   type SemanticIterationSource,
 } from "./javascriptSemanticIterationSources.js";
-import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import {
+  createSemanticFunctionValueReferences,
+  createSemanticReturnedReferences,
+} from "./javascriptSemanticReturnedReferences.js";
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -94,6 +107,10 @@ interface AmbientReferenceFacts {
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
   >;
+  readonly replacements: WeakMap<
+    t.Node,
+    Map<string, SemanticIterationSource[]>
+  >;
   readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
   readonly freshObject: (node: t.Node) => boolean;
 }
@@ -110,15 +127,55 @@ export const createAmbientPathResolver = (
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
   const returnedReferences = createSemanticReturnedReferences(state);
+  const functionReferences = createSemanticFunctionValueReferences(state);
   const receiverReferences = createSemanticReceiverReferences(state);
-  return (
+  const intrinsics = createSemanticModuleInterop(state);
+  const functionGroups = new Map<string, readonly (t.Function | t.Class)[]>();
+  const functionPaths = new WeakMap<t.Node, readonly string[]>();
+  const functionInterop = createSemanticModuleInterop(state, {
+    intrinsicPath: (node) => {
+      const intrinsic = intrinsics.intrinsicPath(node);
+      if (intrinsic !== undefined) return intrinsic;
+      const prior = functionPaths.get(node);
+      if (prior !== undefined) return prior;
+      const references = functionReferences(node);
+      const projection = references[0]?.projection;
+      if (
+        projection === undefined ||
+        projection.some((key) => key === null) ||
+        references.some(
+          (reference) =>
+            JSON.stringify(reference.projection) !== JSON.stringify(projection),
+        )
+      )
+        return undefined;
+      const id = String(functionGroups.size);
+      functionGroups.set(
+        id,
+        references.map(({ node }) => node),
+      );
+      const path = [
+        "intrinsic",
+        "source-function",
+        id,
+        ...projection.map(String),
+      ];
+      functionPaths.set(node, path);
+      return path;
+    },
+  });
+  const resolve = (
     node: t.Node,
     capture?: t.Node,
     escapedContents = false,
     projection: AmbientProjection = [],
     localIdentity?: (node: t.Node, path: AmbientProjection) => void,
+    initialBinding?: JavaScriptSemanticBindingState,
   ): readonly AmbientPath[] => {
-    const prior = possibleWrites ? undefined : cached.get(node);
+    const prior =
+      possibleWrites || initialBinding !== undefined
+        ? undefined
+        : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
     // The caller's write site selects initializers for the written target.
@@ -128,11 +185,13 @@ export const createAmbientPathResolver = (
       suffix: AmbientProjection;
       captures: AmbientCaptures;
       readsAtSelf?: true;
+      binding?: JavaScriptSemanticBindingState;
     }[] = [
       {
         node,
         suffix: projection,
         captures: (projection ?? []).map(() => capture ?? node),
+        ...(initialBinding === undefined ? {} : { binding: initialBinding }),
       },
     ];
     // Join projections at their producing expression, rather than enumerating
@@ -212,7 +271,10 @@ export const createAmbientPathResolver = (
     while (pending.length > 0) {
       const current = pending.pop();
       if (current === undefined) break;
-      const { root, members } = electronMemberPath(current.node);
+      const { root, members } =
+        current.binding === undefined
+          ? electronMemberPath(current.node)
+          : { root: current.node, members: [] };
       let suffix: AmbientProjection =
         current.suffix === undefined
           ? undefined
@@ -287,6 +349,26 @@ export const createAmbientPathResolver = (
       };
       if (!t.isIdentifier(root) && facts?.freshObject(root)) {
         localIdentity?.(root, suffix);
+        const firstKey = suffix?.[0];
+        const selectedAt = captures[0];
+        let replacement: SemanticIterationSource | undefined;
+        if (typeof firstKey === "string" && selectedAt !== undefined)
+          for (const source of facts.replacements.get(root)?.get(firstKey) ??
+            [])
+            if (
+              semanticDefiniteMutationPrecedesRead(
+                source.mutation,
+                selectedAt,
+                state.parentsByNode,
+              ) &&
+              (replacement === undefined ||
+                semanticEffectTiming(
+                  source.mutation,
+                  replacement.mutation,
+                  state,
+                ) === "before")
+            )
+              replacement = source;
         for (const [source, path] of facts?.stores.get(root) ?? []) {
           const selected =
             suffix === undefined ||
@@ -307,6 +389,18 @@ export const createAmbientPathResolver = (
           )
             continue;
           if (semanticReferenceSourcesInactive(source, state, "syntax-only"))
+            continue;
+          // A definite first-slot replacement also cuts paths through its old
+          // contents. Unknown order and captured earlier slots remain possible.
+          if (
+            replacement !== undefined &&
+            path?.[0] === firstKey &&
+            semanticEffectTiming(
+              replacement.mutation,
+              source.mutation,
+              state,
+            ) === "before"
+          )
             continue;
           const selectedAt =
             path === undefined ? undefined : captures[path.length - 1];
@@ -363,22 +457,89 @@ export const createAmbientPathResolver = (
             });
         continue;
       }
-      if (t.isIdentifier(root)) {
+      if (possibleWrites && (t.isFunction(root) || t.isClass(root))) {
+        // A derived class inherits its constructor prototype from its base,
+        // rather than directly from Function.prototype.
+        if (
+          t.isClass(root) &&
+          root.superClass != null &&
+          suffix?.[0] === "__proto__"
+        )
+          continueWith(root.superClass, suffix.slice(1), captures.slice(1));
+        else
+          for (const identity of semanticSourceFunctionValueIdentities(
+            root,
+            suffix ?? [null],
+          ))
+            retain(identity);
+      }
+      if (
+        possibleWrites &&
+        suffix !== undefined &&
+        typeof suffix[0] === "string" &&
+        ((t.isObjectExpression(root) &&
+          staticObjectProperty(root, suffix[0]).status === "missing" &&
+          staticObjectProperty(root, "__proto__").status === "missing") ||
+          (t.isArrayExpression(root) &&
+            suffix[0] !== "length" &&
+            semanticArrayIndex(suffix[0]) === null))
+      )
+        for (const identity of semanticLiteralInheritedValueIdentities(
+          t.isArrayExpression(root) ? "array" : "object",
+          suffix,
+        ))
+          retain(identity);
+      if (
+        possibleWrites &&
+        suffix !== undefined &&
+        (t.isObjectExpression(root) ||
+          t.isClass(root) ||
+          t.isNewExpression(root))
+      )
+        // One projection walk avoids retaining every prefix of helper chains.
+        for (const { node: target, projection } of functionReferences(
+          root,
+          suffix,
+        )) {
+          const remaining = projection.map((key) =>
+            key === null ? null : String(key),
+          );
+          for (const identity of semanticSourceFunctionValueIdentities(
+            target,
+            remaining,
+          ))
+            retain(identity);
+        }
+      if (current.binding !== undefined || t.isIdentifier(root)) {
         // The wrapper module object is distinct from globalThis.module. Keep
         // its identity through the same alias/projection owner used for writes.
-        if (isUnshadowedGlobal(root, state, "module")) {
+        if (
+          current.binding === undefined &&
+          isUnshadowedGlobal(root, state, "module")
+        ) {
           retain(["commonjs-module", ...(suffix ?? [])]);
           continue;
         }
-        if (globalObjectName(root, state) !== undefined) {
+        if (
+          current.binding === undefined &&
+          globalObjectName(root, state) !== undefined
+        ) {
           retain(["global", ...(suffix ?? [])]);
           continue;
         }
-        if (isUnshadowedGlobal(root, state, root.name)) {
+        if (
+          current.binding === undefined &&
+          t.isIdentifier(root) &&
+          isUnshadowedGlobal(root, state, root.name)
+        ) {
           retain(["global", root.name, ...(suffix ?? [])]);
           continue;
         }
-        const binding = resolveSemanticBindingState(state, root, root.name);
+        const binding =
+          current.binding ??
+          (t.isIdentifier(root)
+            ? resolveSemanticBindingState(state, root, root.name)
+            : undefined);
         if (binding === undefined) continue;
         const stable = semanticStableInitializer(binding, state);
         const readAt = current.readsAtSelf ? root : capture;
@@ -480,6 +641,46 @@ export const createAmbientPathResolver = (
         possibleWrites &&
         (t.isCallExpression(root) || t.isOptionalCallExpression(root))
       ) {
+        if (suffix === undefined || suffix.length > 0) {
+          const bound = functionInterop.boundIntrinsic(root);
+          if (bound?.path[1] === "source-function" && bound.path.length === 3) {
+            for (const target of functionGroups.get(bound.path[2]!) ?? []) {
+              if (
+                t.isClass(target) &&
+                target.superClass != null &&
+                suffix?.[0] === "__proto__"
+              )
+                continueWith(
+                  target.superClass,
+                  suffix.slice(1),
+                  captures.slice(1),
+                );
+              else
+                for (const identity of semanticSourceFunctionValueIdentities(
+                  target,
+                  suffix ?? [null],
+                  true,
+                ))
+                  retain(identity);
+            }
+          } else if (
+            bound !== undefined ||
+            functionInterop.intrinsicInvocation(root)?.path.join(".") ===
+              "intrinsic.Function"
+          )
+            for (const identity of semanticOrdinaryFunctionValueIdentities(
+              suffix ?? [null],
+            ))
+              retain(identity);
+        }
+        if (
+          (suffix === undefined || suffix.length > 0) &&
+          semanticRequireFunctionValue(root, state)
+        )
+          for (const identity of semanticOrdinaryFunctionValueIdentities(
+            suffix ?? [null],
+          ))
+            retain(identity);
         const origin =
           semanticRequireOrigin(root, state)?.origin ??
           semanticRequireShimOrigin(root, state)?.origin;
@@ -489,6 +690,16 @@ export const createAmbientPathResolver = (
             : moduleConstructorPath(origin, suffix);
         if (path !== undefined) retain(path);
       }
+      if (
+        possibleWrites &&
+        t.isNewExpression(root) &&
+        intrinsics.intrinsicPath(root.callee)?.join(".") ===
+          "intrinsic.Function"
+      )
+        for (const identity of semanticOrdinaryFunctionValueIdentities(
+          suffix ?? [null],
+        ))
+          retain(identity);
       if (
         possibleWrites &&
         (t.isCallExpression(root) ||
@@ -635,10 +846,44 @@ export const createAmbientPathResolver = (
       }
     }
     const paths = [...result.values()];
-    if (!possibleWrites) cached.set(node, paths);
+    if (!possibleWrites && initialBinding === undefined)
+      cached.set(node, paths);
     return paths;
   };
+  return Object.assign(
+    (
+      node: t.Node,
+      capture?: t.Node,
+      escapedContents = false,
+      projection: AmbientProjection = [],
+      localIdentity?: (node: t.Node, path: AmbientProjection) => void,
+    ) => resolve(node, capture, escapedContents, projection, localIdentity),
+    {
+      binding: (binding: JavaScriptSemanticBindingState, capture: t.Node) =>
+        resolve(capture, capture, true, [], undefined, binding),
+    },
+  );
 };
+
+const completedAmbientResolvers = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReturnType<typeof createAmbientPathResolver>
+>();
+
+export const semanticAmbientIdentitySourcesReady = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => completedAmbientResolvers.has(state);
+
+/** Opaque lexical consumers use the same possible reference graph as writes. */
+export const semanticAmbientBindingPaths = (
+  binding: JavaScriptSemanticBindingState,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly AmbientPath[] =>
+  (
+    completedAmbientResolvers.get(state) ??
+    createAmbientPathResolver(state, true)
+  ).binding(binding, capture);
 
 /**
  * Index source-local writes through ambient identities and stable aliases.
@@ -657,6 +902,11 @@ export function* indexJavaScriptAmbientWritesSteps(
   const browserReceiverMethods = new Set<string>();
   const storedSites = new WeakSet<t.Node>();
   const storedReferences: SemanticIterationSource[] = [];
+  const replacementSources: SemanticIterationSource[] = [];
+  const replacements = new WeakMap<
+    t.Node,
+    Map<string, SemanticIterationSource[]>
+  >();
   const writes: { node: t.Node; path: AmbientPath }[] = [];
   const targets: { node: t.Node; capture: t.Node }[] = [];
   const escapes: {
@@ -679,6 +929,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   });
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
+    replacements,
     freshObject: interop.isFreshObject,
     prototypeTarget: (node) => {
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
@@ -716,6 +967,20 @@ export function* indexJavaScriptAmbientWritesSteps(
           writeSite,
           state.parentsByNode.get(writeSite) ?? null,
         )) {
+          // Fresh direct receivers identify one concrete slot. Keep replacement
+          // evidence apart from reference edges, including primitive tombstones.
+          if (
+            source.kind === "reference-store" &&
+            source.target !== undefined &&
+            t.isAssignmentExpression(source.mutation, { operator: "=" }) &&
+            source.mutation.left === source.target &&
+            semanticStaticPropertyKey(
+              source.target.property,
+              source.target.computed,
+            ) !== null &&
+            interop.isFreshObject(source.target.object)
+          )
+            replacementSources.push(source);
           // Direct primitive values cannot retain an ambient object identity.
           // A projection may select a reference from a boxed primitive. Keeping
           // direct primitives in the alias graph makes every receiver escape
@@ -775,6 +1040,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       }
     },
   );
+  // Build all possible references before accepting strong replacements. A
+  // superseded alias can still carry an earlier escape that freezes its owner.
   const pendingStores = new Set(storedReferences);
   const dependents = new WeakMap<t.Node, Set<SemanticIterationSource>>();
   while (pendingStores.size > 0) {
@@ -820,31 +1087,354 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
-  for (const source of storedReferences) {
-    if (source.target === undefined) continue;
-    let local = false;
-    const ambient = ambientWrites(
-      source.target.object,
-      source.mutation,
-      false,
-      [],
-      () => {
-        local = true;
-      },
-    );
-    if (!local || ambient.length > 0)
-      escapes.push({
-        node: source.mutation,
-        target: source.node,
-        browserReceiver: false,
-        projection: source.projection.map((key) =>
-          key === null || typeof key === "object" ? null : String(key),
-        ),
+  type DataSlot = "own" | "missing" | "unknown";
+  const ordinaryContainers = new WeakMap<t.Node, boolean>();
+  const dataSlots = new WeakMap<t.Node, Map<string, DataSlot>>();
+  const dataSlot = (root: t.Node, key: string): DataSlot => {
+    if (key === "__proto__") return "unknown";
+    let ordinary = ordinaryContainers.get(root);
+    if (ordinary === undefined) {
+      ordinary = t.isArrayExpression(root)
+        ? !root.elements.some(t.isSpreadElement)
+        : t.isObjectExpression(root) &&
+          !root.properties.some(
+            (property) =>
+              t.isObjectProperty(property) &&
+              !property.computed &&
+              !property.shorthand &&
+              semanticStaticPropertyKey(property.key, false) === "__proto__",
+          );
+      ordinaryContainers.set(root, ordinary);
+    }
+    if (!ordinary) return "unknown";
+    if (t.isArrayExpression(root))
+      return key === "length" ? "unknown" : "missing";
+    const slots = dataSlots.get(root) ?? new Map<string, DataSlot>();
+    let slot = slots.get(key);
+    if (slot === undefined) {
+      const property = staticObjectProperty(root, key);
+      slot =
+        property.status === "explicit"
+          ? "own"
+          : property.status === "missing"
+            ? "missing"
+            : "unknown";
+      slots.set(key, slot);
+      dataSlots.set(root, slots);
+    }
+    return slot;
+  };
+  const resolveWeakTargets = () =>
+    targets.map(({ node, capture }) => {
+      const local = new Map<t.Node, AmbientProjection>();
+      const paths = ambientWrites(node, capture, false, [], (root, path) => {
+        local.set(
+          root,
+          local.has(root) ? joinAmbientProjection(local.get(root), path) : path,
+        );
       });
+      return { paths, local };
+    });
+  let weakTargets: ReturnType<typeof resolveWeakTargets> | undefined;
+  const completedTargets = () => (weakTargets ??= resolveWeakTargets());
+  let memberWrites:
+    | WeakMap<t.Node, Map<string | null, Set<t.Node>>>
+    | undefined;
+  const writesToMember = (root: t.Node, key: string): readonly t.Node[] => {
+    if (memberWrites === undefined) {
+      memberWrites = new WeakMap();
+      const resolved = completedTargets();
+      for (const { node, path } of writes) {
+        if (path[0] !== "pending-target") continue;
+        for (const [owner, projection] of resolved[Number(path[1])]?.local ??
+          []) {
+          const member =
+            projection === undefined
+              ? undefined
+              : [...projection, ...path.slice(2)];
+          if (member !== undefined && member.length > 1) continue;
+          const byKey =
+            memberWrites.get(owner) ?? new Map<string | null, Set<t.Node>>();
+          const memberKey = member?.[0] ?? null;
+          const sites = byKey.get(memberKey) ?? new Set<t.Node>();
+          sites.add(node);
+          byKey.set(memberKey, sites);
+          memberWrites.set(owner, byKey);
+        }
+      }
+    }
+    const byKey = memberWrites.get(root);
+    return [...(byKey?.get(key) ?? []), ...(byKey?.get(null) ?? [])];
+  };
+  interface ReceiverSlot {
+    readonly root: t.Node;
+    readonly key: string;
+    readonly slot: "own" | "missing";
+  }
+  interface StoreReceiver extends ReceiverSlot {
+    readonly guards: readonly ReceiverSlot[];
+  }
+  const freshRoot = (node: t.Node, capture: t.Node): t.Node | null => {
+    if (!interop.isFreshObject(node)) return null;
+    const identities = new Map<t.Node, AmbientProjection>();
+    const ambient = ambientWrites(node, capture, false, [], (root, path) => {
+      identities.set(
+        root,
+        identities.has(root)
+          ? joinAmbientProjection(identities.get(root), path)
+          : path,
+      );
+    });
+    if (ambient.length !== 0 || identities.size !== 1) return null;
+    for (const [root, path] of identities) if (path?.length === 0) return root;
+    return null;
+  };
+  const receiverFacts = new WeakMap<
+    SemanticIterationSource,
+    StoreReceiver | null
+  >();
+  const storeReceiver = (
+    source: SemanticIterationSource,
+  ): StoreReceiver | null => {
+    const cached = receiverFacts.get(source);
+    if (cached !== undefined) return cached;
+    // Recursive store dependencies cannot establish their own completeness.
+    receiverFacts.set(source, null);
+    // Finding one local alternative does not establish complete receiver
+    // identity. Returned, mixed, accessor, and prototype receivers may consume
+    // the RHS even when their other alternatives are fresh local containers.
+    const target = source.target;
+    if (target === undefined) return null;
+    const key = semanticStaticPropertyKey(target.property, target.computed);
+    if (key === null) return null;
+    const path = electronMemberPath(target.object);
+    let root = freshRoot(path.root, source.mutation);
+    if (root === null) return null;
+    const guards: ReceiverSlot[] = [];
+    // Member receivers need complete contents, not merely one recovered local
+    // alternative. Follow only exact fresh stores in the completed weak graph.
+    for (const member of path.members) {
+      if (member === null) return null;
+      const slot = dataSlot(root, member);
+      if (slot === "unknown") return null;
+      guards.push({ root, key: member, slot });
+      let selected: t.Node | null = null;
+      let definite = false;
+      const accepted = new Set<t.Node>();
+      for (const [stored, projection] of stores.get(root) ?? []) {
+        if (
+          semanticEffectTiming(source.mutation, stored.mutation, state) ===
+            "after" ||
+          semanticReferenceSourcesInactive(stored, state, "syntax-only")
+        )
+          continue;
+        if (projection === undefined) return null;
+        if (projection.length !== 1) continue;
+        if (projection[0] === null) return null;
+        if (projection[0] !== member) continue;
+        if (stored.projection.length !== 0) return null;
+        const receiver = storeReceiver(stored);
+        const value = freshRoot(stored.node, stored.node);
+        if (
+          receiver?.root !== root ||
+          receiver.key !== member ||
+          value === null ||
+          (selected !== null && selected !== value)
+        )
+          return null;
+        selected = value;
+        guards.push(...receiver.guards);
+        accepted.add(stored.mutation);
+        definite ||= semanticDefiniteMutationPrecedesRead(
+          stored.mutation,
+          source.mutation,
+          state.parentsByNode,
+        );
+      }
+      // Primitive and unknown writes are intentionally absent from reference
+      // edges. The existing write index still excludes them from a fresh proof.
+      if (
+        writesToMember(root, member).some(
+          (site) =>
+            semanticEffectTiming(source.mutation, site, state) !== "after" &&
+            !accepted.has(site),
+        )
+      )
+        return null;
+      const initial = staticObjectProperty(root, member);
+      if (initial.status === "explicit") {
+        const value = freshRoot(initial.property.value, initial.property.value);
+        if (value === null || (selected !== null && selected !== value))
+          return null;
+        selected = value;
+        definite = true;
+      }
+      if (selected === null || !definite) return null;
+      root = selected;
+    }
+    const slot = dataSlot(root, key);
+    if (slot === "unknown") return null;
+    guards.push({ root, key, slot });
+    const receiver: StoreReceiver = { root, key, slot, guards };
+    receiverFacts.set(source, receiver);
+    return receiver;
+  };
+  const receiverUsers = new WeakMap<t.Node, Set<SemanticIterationSource>>();
+  const inheritedReceiverUsers = new Set<SemanticIterationSource>();
+  const pendingReferenceEscapes = new Set(storedReferences);
+  const escapedReferences = new WeakSet<SemanticIterationSource>();
+  let hasReceiverProofs = false;
+  for (const source of storedReferences) {
+    const receiver = storeReceiver(source);
+    if (receiver === null) continue;
+    hasReceiverProofs = true;
+    for (const guard of receiver.guards) {
+      const users =
+        receiverUsers.get(guard.root) ?? new Set<SemanticIterationSource>();
+      users.add(source);
+      receiverUsers.set(guard.root, users);
+      if (guard.slot === "missing") inheritedReceiverUsers.add(source);
+    }
+  }
+  for (const source of replacementSources)
+    if (storeReceiver(source) !== null) hasReceiverProofs = true;
+  const descriptorEffects = new WeakMap<t.Node, Set<t.Node>>();
+  const prototypeEffects = new Set<t.Node>();
+  const retainDescriptorEffect = (root: t.Node, site: t.Node): void => {
+    const effects = descriptorEffects.get(root) ?? new Set<t.Node>();
+    if (effects.has(site)) return;
+    effects.add(site);
+    descriptorEffects.set(root, effects);
+    for (const source of receiverUsers.get(root) ?? [])
+      if (!escapedReferences.has(source)) pendingReferenceEscapes.add(source);
+  };
+  const retainPrototypeEffect = (site: t.Node): void => {
+    if (prototypeEffects.has(site)) return;
+    prototypeEffects.add(site);
+    for (const source of inheritedReceiverUsers)
+      if (!escapedReferences.has(source)) pendingReferenceEscapes.add(source);
+  };
+  const mayReachPrototype = (path: AmbientPath): boolean =>
+    ["Object", "Array"].some((owner) =>
+      ["global", owner, "prototype"].every(
+        (key, index) =>
+          path[index] === undefined ||
+          path[index] === null ||
+          path[index] === key,
+      ),
+    );
+  // Resolve each discovered escape once against the completed weak graph.
+  // Its descriptor effects recheck only stores depending on that receiver.
+  const resolvedEscapes: {
+    browserReceiver: boolean;
+    paths: readonly AmbientPath[];
+  }[] = [];
+  const resolveEscape = (escape: (typeof escapes)[number]): void => {
+    const paths = ambientWrites(
+      escape.target,
+      escape.node,
+      true,
+      escape.projection,
+      !hasReceiverProofs
+        ? undefined
+        : (root, path) => {
+            if (path === undefined || path.length === 0)
+              retainDescriptorEffect(root, escape.node);
+            else if (path.includes("__proto__"))
+              retainPrototypeEffect(escape.node);
+          },
+    );
+    if (hasReceiverProofs && paths.some(mayReachPrototype))
+      retainPrototypeEffect(escape.node);
+    resolvedEscapes.push({ browserReceiver: escape.browserReceiver, paths });
+  };
+  for (const escape of escapes) resolveEscape(escape);
+  if (hasReceiverProofs) {
+    // Existing write targets also own delete/prototype evidence. Resolve each
+    // target once here, rather than scanning all writes for every stored slot.
+    const weakTargets = completedTargets();
+    for (const [index, target] of weakTargets.entries())
+      for (const path of target.local.values())
+        if (path === undefined || path.includes("__proto__"))
+          retainPrototypeEffect(targets[index]!.capture);
+    for (const { node, path } of writes) {
+      const target =
+        path[0] === "pending-target" ? weakTargets[Number(path[1])] : undefined;
+      const paths =
+        target === undefined
+          ? [path]
+          : target.paths.map((identity) => [...identity, ...path.slice(2)]);
+      if (paths.some(mayReachPrototype)) retainPrototypeEffect(node);
+      if (
+        t.isUnaryExpression(node, { operator: "delete" }) ||
+        path.slice(2).some((key) => key === null || key === "__proto__")
+      )
+        for (const [root, projection] of target?.local ?? [])
+          if (projection === undefined || projection.length === 0)
+            retainDescriptorEffect(root, node);
+    }
+  }
+  const effectMayPrecede = (
+    mutation: t.Node,
+    effects: ReadonlySet<t.Node> | undefined,
+  ): boolean => {
+    for (const site of effects ?? [])
+      if (semanticEffectTiming(mutation, site, state) !== "after") return true;
+    return false;
+  };
+  const inertReceiver = (
+    source: SemanticIterationSource,
+  ): StoreReceiver | null => {
+    const receiver = storeReceiver(source);
+    return receiver !== null &&
+      receiver.guards.every(
+        (guard) =>
+          !effectMayPrecede(
+            source.mutation,
+            descriptorEffects.get(guard.root),
+          ) &&
+          (guard.slot === "own" ||
+            !effectMayPrecede(source.mutation, prototypeEffects)),
+      )
+      ? receiver
+      : null;
+  };
+  // An escaped RHS may invalidate another tentative receiver proof. Each store
+  // escapes at most once; only affected receiver/prototype users are revisited.
+  while (pendingReferenceEscapes.size > 0) {
+    const source = pendingReferenceEscapes.values().next().value;
+    if (source === undefined) break;
+    pendingReferenceEscapes.delete(source);
+    if (escapedReferences.has(source) || inertReceiver(source) !== null)
+      continue;
+    escapedReferences.add(source);
+    resolveEscape({
+      node: source.mutation,
+      target: source.node,
+      browserReceiver: false,
+      projection: source.projection.map((key) =>
+        key === null || typeof key === "object" ? null : String(key),
+      ),
+    });
+    yield;
+  }
+  // Only final inert data writes replace prior references. Primitive tombstones
+  // remain replacement evidence and never become reference edges.
+  for (const source of replacementSources) {
+    const receiver = inertReceiver(source);
+    if (receiver === null) continue;
+    const byKey =
+      replacements.get(receiver.root) ??
+      new Map<string, SemanticIterationSource[]>();
+    const sources = byKey.get(receiver.key) ?? [];
+    sources.push(source);
+    byKey.set(receiver.key, sources);
+    replacements.set(receiver.root, byKey);
   }
   // Resolve possible identities against one completed store snapshot before
   // publishing any writes. Incremental publication would invalidate loader
   // origin indexes for every target and replay a full source scan each time.
+  completedAmbientResolvers.set(state, ambientWrites);
   const targetPaths = targets.map(({ node, capture }) =>
     ambientWrites(node, capture),
   );
@@ -860,8 +1450,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWriteEffects.push({ path: resolved, node });
     }
   }
-  for (const { node, target, browserReceiver, projection } of escapes)
-    for (const path of ambientWrites(target, node, true, projection))
+  for (const { paths, browserReceiver } of resolvedEscapes)
+    for (const path of paths)
       // Only proven browser APIs keep their global receiver from user code.
       if (!(browserReceiver && path.length === 1 && path[0] === "global"))
         state.ambientEscapes.retain([...path, null]);

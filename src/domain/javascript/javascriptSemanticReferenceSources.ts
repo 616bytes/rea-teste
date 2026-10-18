@@ -48,15 +48,15 @@ export const semanticReferenceSourcesInactive = (
   state: JavaScriptSemanticAnalysisState,
   mode: "effects" | "syntax-only" = "effects",
 ): boolean =>
-  mode === "syntax-only"
-    ? reference.fallbackSources?.some(
-        (source) =>
-          referenceSelectionStable(source, state) &&
-          syntaxReferenceSourceDefined(source),
-      ) === true
-    : reference.requiredSources?.some(
-        (source) => selectedDefaultInput(source, state)?.presence === "absent",
-      ) === true ||
+  reference.fallbackSources?.some(
+    (source) =>
+      referenceSelectionStable(source, state) &&
+      syntaxReferenceSourceDefined(source),
+  ) === true ||
+  (mode === "effects" &&
+    (reference.requiredSources?.some(
+      (source) => selectedDefaultInput(source, state)?.presence === "absent",
+    ) === true ||
       reference.fallbackSources?.some((source) => {
         // Selection precedes effects through the chosen reference. A later escape
         // cannot make a fallback that was excluded at destructuring reachable.
@@ -68,7 +68,7 @@ export const semanticReferenceSourcesInactive = (
             slot.value.status === "object" ||
             slot.value.status === "array")
         );
-      }) === true;
+      }) === true));
 
 interface PatternSelectionFacts {
   readonly effects: readonly t.Node[];
@@ -442,7 +442,9 @@ const syntaxReferenceSourceDefined = (
   return (
     readExactJavaScriptLiteral(node).found ||
     t.isObjectExpression(node) ||
-    t.isArrayExpression(node)
+    t.isArrayExpression(node) ||
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node)
   );
 };
 

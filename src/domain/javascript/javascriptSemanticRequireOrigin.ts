@@ -3,7 +3,11 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createAmbientPathResolver,
+  semanticAmbientBindingPaths,
+  semanticAmbientIdentitySourcesReady,
+} from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticCopiedReferencePath,
   semanticReferenceSourcesInactive,
@@ -22,6 +26,7 @@ import {
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   semanticStaticPropertyKey,
@@ -38,6 +43,10 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  INVOCATION_HELPERS,
+  semanticFunctionValueIdentity,
+} from "./javascriptSemanticFunctionValues.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
@@ -283,6 +292,8 @@ const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
   {
     readonly ambientCount: number;
+    readonly ambientSourcesReady: boolean;
+    readonly opaqueScopeCount: number;
     readonly writes: readonly ModuleDelegateWrite[];
   }
 >();
@@ -304,10 +315,22 @@ const writesModuleRequire = (
 ): readonly ModuleDelegateWrite[] => {
   const cached = moduleRequireWrites.get(state);
   const ambientCount = state.ambientWriteEffects.length;
-  if (cached?.ambientCount === ambientCount) return cached.writes;
+  const ambientSourcesReady = semanticAmbientIdentitySourcesReady(state);
+  const opaqueScopeCount = state.opaqueEffects.byScope.size;
+  if (
+    cached?.ambientCount === ambientCount &&
+    cached.ambientSourcesReady === ambientSourcesReady &&
+    cached.opaqueScopeCount === opaqueScopeCount
+  )
+    return cached.writes;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
-  moduleRequireWrites.set(state, { ambientCount, writes: [] });
+  moduleRequireWrites.set(state, {
+    ambientCount,
+    ambientSourcesReady,
+    opaqueScopeCount,
+    writes: [],
+  });
   const writes: ModuleDelegateWrite[] = [];
   const interop = createSemanticModuleInterop(state);
   // Ambient indexing owns container stores and intrinsic prototype aliases.
@@ -401,6 +424,58 @@ const writesModuleRequire = (
       isModuleObject(init, next, path),
     );
   };
+  // Direct eval can reach the wrapper's live delegate through the module
+  // binding or visible captured contents even when the saved loader is shadowed.
+  // Its text is opaque: both the instance/prototype method and Module._load can
+  // change. Keeping these in the shared index preserves invocation/capture
+  // semantics for wrappers, saved delegates, and createRequire results.
+  for (const [scopeId, effects] of state.opaqueEffects.byScope) {
+    let visible: JavaScriptSemanticBindingState[] | undefined;
+    const visibleBindings = (): readonly JavaScriptSemanticBindingState[] => {
+      if (visible !== undefined) return visible;
+      visible = [];
+      const names = new Set<string>();
+      let scope = state.scopesById.get(scopeId);
+      while (scope !== undefined) {
+        for (const binding of scope.bindings.values()) {
+          if (names.has(binding.name)) continue;
+          names.add(binding.name);
+          visible.push(binding);
+        }
+        scope =
+          scope.parentScopeId === null
+            ? undefined
+            : state.scopesById.get(scope.parentScopeId);
+      }
+      return visible;
+    };
+    for (const effect of effects) {
+      const moduleBinding = resolveSemanticBindingState(
+        state,
+        effect,
+        "module",
+      );
+      const seesWrapperModule =
+        moduleBinding === undefined
+          ? !semanticResolutionBlocked(state, effect, "module")
+          : isUnmodifiedCommonJsWrapperBinding(effect, "module", state);
+      if (
+        !seesWrapperModule &&
+        !visibleBindings().some((binding) =>
+          semanticAmbientBindingPaths(binding, effect, state).some(
+            (path) =>
+              isModuleDelegateWrite([...path, "require"], effect, interop) ||
+              isModuleDelegateWrite([...path, "_load"], effect, interop),
+          ),
+        )
+      )
+        continue;
+      writes.push(
+        { node: effect, delegate: "require", shared: true },
+        { node: effect, delegate: "_load", shared: true },
+      );
+    }
+  }
   traverseJavaScriptAst(state.program, {
     enter: (node) => {
       const target = t.isAssignmentExpression(node)
@@ -475,7 +550,12 @@ const writesModuleRequire = (
       }
     },
   });
-  moduleRequireWrites.set(state, { ambientCount, writes });
+  moduleRequireWrites.set(state, {
+    ambientCount,
+    ambientSourcesReady,
+    opaqueScopeCount,
+    writes,
+  });
   return writes;
 };
 
@@ -752,65 +832,6 @@ const semanticHostRequireBindingIntact = (
   return !semanticResolutionBlocked(state, reference, "require");
 };
 
-const INVOCATION_HELPERS = ["call", "apply", "bind"];
-
-/** Resolve exact or possible inherited function values with a bounded frontier.
- * Each unknown property can select a helper or the function prototype; these
- * four identities are joined after every segment rather than enumerating paths. */
-const functionValueIdentities = (
-  path: readonly (string | null)[],
-  possible: boolean,
-): readonly (readonly string[])[] => {
-  let rootLength: number;
-  if (path[0] === "global" && ["require", "Function"].includes(path[1] ?? ""))
-    rootLength = 2;
-  else if (path[0] === "global" && path[1] === "Reflect" && path[2] === "apply")
-    rootLength = 3;
-  else if (path[0] === "commonjs-module") {
-    let end = 1;
-    while (path[end] === "__proto__") end += 1;
-    if (path[end] === "require") rootLength = end + 1;
-    else if (path[end] === "constructor" && path[end + 1] === "createRequire")
-      rootLength = end + 2;
-    else return [];
-  } else return [];
-  let identities = [path.slice(0, rootLength) as readonly string[]];
-  for (const key of path.slice(rootLength)) {
-    const keys =
-      key === null && possible
-        ? [...INVOCATION_HELPERS, "__proto__", "prototype"]
-        : [key];
-    const selected = new Map<string, readonly string[]>();
-    for (const identity of identities)
-      for (const property of keys) {
-        let value: readonly string[] | undefined;
-        if (property !== null && INVOCATION_HELPERS.includes(property))
-          value = ["global", "Function", "prototype", property];
-        else if (
-          (property === "prototype" &&
-            identity.join(".") === "global.Function") ||
-          (property === "__proto__" &&
-            identity.join(".") !== "global.Function.prototype")
-        )
-          value = ["global", "Function", "prototype"];
-        if (value !== undefined) selected.set(value.join("."), value);
-      }
-    identities = [...selected.values()];
-    if (identities.length === 0) break;
-  }
-  return identities;
-};
-
-/** Strict reads must establish every preceding property capture separately. */
-const semanticFunctionValueIdentity = (
-  path: readonly (string | null)[],
-): readonly string[] | undefined => functionValueIdentities(path, false)[0];
-
-/** Write collectors retain possible shared function objects beside nominal paths. */
-export const semanticPossibleFunctionValueIdentities = (
-  path: readonly (string | null)[],
-): readonly (readonly string[])[] => functionValueIdentities(path, true);
-
 const HOST_MODULE = "node-wrapper-module";
 const HOST_LOADER = "node-host-loader";
 
@@ -1073,6 +1094,15 @@ const hostLoaderInvocations = new WeakMap<
   ReturnType<typeof createSemanticModuleInterop>
 >();
 const activeHostInvocations = new WeakSet<t.Node>();
+
+/** A proven loader/factory value is callable even when used only as a receiver. */
+export const semanticRequireFunctionValue = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const path = hostLoaderPath(node, state);
+  return path?.length === 3 && path[1] === HOST_LOADER;
+};
 
 /** Share call/apply/bind argument normalization with all other intrinsic users. */
 const hostLoaderInvocation = (

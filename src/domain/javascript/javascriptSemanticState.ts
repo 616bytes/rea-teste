@@ -542,7 +542,8 @@ export const isUnmodifiedCommonJsWrapperBinding = (
   return binding !== undefined && binding.initializers.length === 0;
 };
 
-/** Program `var` redeclarations retain wrapper identity until a source write. */
+/** Program `var` redeclarations retain wrapper identity until a source write.
+ * Resolve the name at any lexical site, including an opaque direct-eval call. */
 export const commonJsWrapperBindingDeclaration = (
   node: t.Node,
   name: string,
@@ -552,8 +553,7 @@ export const commonJsWrapperBindingDeclaration = (
   // specifier resolution mode does not establish that distinction.
   if (
     state.program.sourceType !== "script" ||
-    !["module", "exports", "require"].includes(name) ||
-    !t.isIdentifier(node, { name })
+    !["module", "exports", "require"].includes(name)
   )
     return undefined;
   const binding = resolveSemanticBindingState(state, node, name);

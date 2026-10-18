@@ -627,6 +627,42 @@ const bindingReadPosition = (
   return result;
 };
 
+/** A straight-line mutation covers this read within the same activation.
+ * Ordering alone does not prove coverage: skipped branches retain earlier values.
+ */
+export const semanticDefiniteMutationPrecedesRead = (
+  mutation: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (
+    t.isAssignmentExpression(mutation) &&
+    semanticBranchMayBeSkipped(mutation, mutation.right)
+  )
+    return false;
+  const source = directMutationPosition(mutation, parents);
+  const position = bindingReadPosition(read, parents);
+  if (source === null || position.repeating) return false;
+  for (
+    let context: BindingReadPosition | undefined = position;
+    context !== undefined;
+    context = context.outer
+  ) {
+    const target = context.position;
+    if (
+      target !== null &&
+      (positionPrecedes(source, target) ||
+        (source.body === target.body &&
+          source.index === target.index &&
+          source.declaratorIndex === target.declaratorIndex &&
+          semanticExpressionEvaluationOrder(mutation, read, parents) ===
+            "before"))
+    )
+      return true;
+  }
+  return false;
+};
+
 /** Select a local alias at its read, before any later straight-line reassignment. */
 type SemanticBindingRead = {
   readonly status: "ordered" | "unresolved";

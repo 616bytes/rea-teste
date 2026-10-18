@@ -6,12 +6,14 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
   resolveSemanticBindingState,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
@@ -26,6 +28,12 @@ interface Candidate {
   readonly node: t.Node;
   readonly path: readonly (string | number | null)[];
   readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
+  readonly instance?: true;
+}
+
+interface CallableReference {
+  readonly node: t.Function | t.Class;
+  readonly projection: readonly (string | number | null)[];
 }
 
 type InitializerContext = ReadonlySet<JavaScriptSemanticInitializer>;
@@ -108,21 +116,193 @@ interface ObjectTargetUnknown {
   readonly previous: ObjectTargetUnknown | undefined;
 }
 
-/** Resolve possible local callable identities without claiming call execution. */
-export const createSemanticCallableTargets = (
+const callableInitializersAt = (
+  node: t.Identifier,
   state: JavaScriptSemanticAnalysisState,
-  mode: "callable" | "contents" = "callable",
-): ((callee: t.Node) => readonly t.Function[]) => {
-  const results = new WeakMap<t.Node, readonly t.Function[]>();
+): {
+  readonly initializers: readonly JavaScriptSemanticInitializer[];
+  readonly definite: boolean;
+} => {
+  const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined) return { initializers: [], definite: false };
+  const selected = semanticBindingAtRead(binding, node, state.parentsByNode);
+  return {
+    initializers: [
+      ...selected.binding.initializers,
+      ...selected.binding.referenceInitializers.filter(
+        (initializer) =>
+          !semanticReferenceSourcesInactive(initializer, state, "syntax-only"),
+      ),
+    ],
+    definite:
+      selected.hasDefiniteInitializer ||
+      semanticStableInitializer(selected.binding, state) !== undefined,
+  };
+};
+
+type ClassMember = t.ClassMethod | t.ClassProperty;
+type ClassMemberLayer = "static" | "prototype" | "fields";
+interface ClassTargetIndex {
+  readonly static: readonly ClassMember[];
+  readonly prototype: readonly ClassMember[];
+  readonly fields: readonly ClassMember[];
+  readonly constructorMethod?: t.ClassMethod;
+}
+interface ClassLineage {
+  readonly classes: readonly t.Class[];
+  readonly unknownBase?: t.Node;
+}
+
+/** Only a complete, unprojected local capture proves one superclass identity. */
+const definiteClassAt = (
+  expression: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Class | undefined => {
+  let node = unwrapJavaScriptExpression(expression).node;
+  const seen = new Set<JavaScriptSemanticInitializer>();
+  while (t.isIdentifier(node)) {
+    const selected = callableInitializersAt(node, state);
+    const initializer = selected.initializers[0];
+    if (
+      !selected.definite ||
+      selected.initializers.length !== 1 ||
+      initializer === undefined ||
+      initializer.projection.length > 0 ||
+      seen.has(initializer)
+    )
+      return undefined;
+    seen.add(initializer);
+    node = unwrapJavaScriptExpression(initializer.node).node;
+  }
+  return t.isClass(node) ? node : undefined;
+};
+
+const classLineage = (
+  node: t.Class,
+  state: JavaScriptSemanticAnalysisState,
+  cache: WeakMap<t.Class, ClassLineage>,
+): ClassLineage => {
+  const prior = cache.get(node);
+  if (prior !== undefined) return prior;
+  const classes = [node];
+  const seen = new Set<t.Class>(classes);
+  let current = node;
+  let unknownBase: t.Node | undefined;
+  while (current.superClass != null) {
+    const base = definiteClassAt(current.superClass, state);
+    if (base === undefined) {
+      unknownBase = current.superClass;
+      break;
+    }
+    if (seen.has(base)) break;
+    seen.add(base);
+    classes.push(base);
+    current = base;
+  }
+  const result = {
+    classes,
+    ...(unknownBase === undefined ? {} : { unknownBase }),
+  };
+  cache.set(node, result);
+  return result;
+};
+
+/** Methods/accessors form descriptors; fields initialize afterward. */
+const classTargetIndex = (
+  node: t.Class,
+  cache: WeakMap<t.Class, ClassTargetIndex>,
+): ClassTargetIndex => {
+  const prior = cache.get(node);
+  if (prior !== undefined) return prior;
+  const methods = node.body.body.filter(t.isClassMethod);
+  const fields = node.body.body.filter(t.isClassProperty);
+  const constructor = methods.find((member) => member.kind === "constructor");
+  const result = {
+    static: [
+      ...methods.filter((member) => member.static),
+      ...fields.filter((member) => member.static),
+    ],
+    prototype: methods.filter(
+      (member) => !member.static && member.kind !== "constructor",
+    ),
+    fields: fields.filter((member) => !member.static),
+    ...(constructor === undefined ? {} : { constructorMethod: constructor }),
+  };
+  cache.set(node, result);
+  return result;
+};
+
+const selectClassTargets = (
+  members: readonly ClassMember[],
+  key: string | number | null | undefined,
+): { readonly values: readonly t.Node[]; readonly own: boolean } => {
+  const values: t.Node[] = [];
+  let own = false;
+  let setter = false;
+  for (const member of members.toReversed()) {
+    const name = semanticStaticPropertyKey(member.key, member.computed);
+    if (key != null && name !== null && name !== String(key)) continue;
+    const exact = key != null && name === String(key);
+    if (exact) own = true;
+    if (t.isClassMethod(member, { kind: "set" })) {
+      if (exact) setter = true;
+      continue;
+    }
+    // A setter pairs with an earlier getter, but replaces an earlier data slot.
+    if (exact && setter && !t.isClassMethod(member, { kind: "get" })) break;
+    const value = t.isClassMethod(member) ? member : member.value;
+    if (value != null) values.push(value);
+    if (exact) break;
+  }
+  return { values, own };
+};
+
+const definitelyConstructedObject = (expression: t.Node | null): boolean => {
+  if (expression === null) return false;
+  const node = unwrapJavaScriptExpression(expression).node;
+  return (
+    t.isObjectExpression(node) ||
+    t.isArrayExpression(node) ||
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node) ||
+    t.isClassExpression(node) ||
+    t.isNewExpression(node) ||
+    t.isRegExpLiteral(node)
+  );
+};
+
+/** Resolve possible local callable identities without claiming call execution. */
+const createSemanticCallableReferences = (
+  state: JavaScriptSemanticAnalysisState,
+  mode: "callable" | "contents" | "function-values",
+): ((
+  callee: t.Node,
+  projection?: readonly (string | number | null)[],
+) => readonly CallableReference[]) => {
+  const results = new WeakMap<
+    t.Node,
+    Map<string, readonly CallableReference[]>
+  >();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
-  return (callee) => {
-    const existing = results.get(callee);
+  const classTargets = new WeakMap<t.Class, ClassTargetIndex>();
+  const classLineages = new WeakMap<t.Class, ClassLineage>();
+  return (callee, projection = []) => {
+    const projectionKey = JSON.stringify(projection);
+    const existing = results.get(callee)?.get(projectionKey);
     if (existing !== undefined) return existing;
-    const functions = new Set<t.Function>();
+    const functions = new Map<
+      t.Function | t.Class,
+      Map<string, CallableReference>
+    >();
+    const retain = (node: t.Function | t.Class, path: Candidate["path"]) => {
+      const paths = functions.get(node) ?? new Map();
+      paths.set(JSON.stringify(path), { node, projection: path });
+      functions.set(node, paths);
+    };
     const work: ExpansionTask[] = [
       {
         kind: "visit",
-        item: { node: callee, path: [], initializers: new Set() },
+        item: { node: callee, path: projection, initializers: new Set() },
         parent: null,
       },
     ];
@@ -139,7 +319,7 @@ export const createSemanticCallableTargets = (
       }
       const { item, parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;
-      const pathKey = JSON.stringify(item.path);
+      const pathKey = JSON.stringify([item.instance === true, item.path]);
       const covered = expanded
         .get(node)
         ?.get(pathKey)
@@ -159,22 +339,14 @@ export const createSemanticCallableTargets = (
       work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
       if (t.isIdentifier(node)) {
-        const binding = resolveSemanticBindingState(state, node, node.name);
-        if (binding === undefined) continue;
-        const selected = semanticBindingAtRead(
-          binding,
-          node,
-          state.parentsByNode,
-        ).binding;
-        for (const initializer of [
-          ...selected.initializers,
-          ...selected.referenceInitializers,
-        ]) {
+        for (const initializer of callableInitializersAt(node, state)
+          .initializers) {
           if (item.initializers.has(initializer)) {
             frame.blockers.add(initializer);
             continue;
           }
           pending.push({
+            ...item,
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
             initializers: new Set([...item.initializers, initializer]),
@@ -217,9 +389,36 @@ export const createSemanticCallableTargets = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...item, node: last });
-      } else if (t.isFunction(node) && item.path.length === 0)
-        functions.add(node);
-      else if (
+      } else if (t.isFunction(node) && item.instance === true) {
+        // An ordinary constructor's new object is distinct from the callable.
+        // Only an explicit returned value can supply a callable result here.
+        for (const result of semanticCallableResultExpressions(node))
+          if (result.node !== null)
+            pending.push({
+              node: result.node,
+              path: item.path,
+              initializers: item.initializers,
+            });
+      } else if (
+        mode === "function-values" &&
+        (t.isObjectMethod(node) || t.isClassMethod(node)) &&
+        (node.kind === "get" || node.kind === "set")
+      ) {
+        // A property read selects an accessor's result, not its function.
+        if (node.kind === "get")
+          for (const result of semanticCallableResultExpressions(node))
+            if (result.node !== null)
+              pending.push({
+                node: result.node,
+                path: item.path,
+                initializers: item.initializers,
+              });
+      } else if (
+        t.isFunction(node) &&
+        (item.path.length === 0 || mode === "function-values")
+      ) {
+        retain(node, item.path);
+      } else if (
         t.isObjectExpression(node) &&
         (item.path.length > 0 || mode === "contents")
       )
@@ -245,37 +444,94 @@ export const createSemanticCallableTargets = (
             pending.push({ ...item, node: element, path });
         });
       } else if (t.isNewExpression(node))
-        pending.push({ ...item, node: node.callee });
+        pending.push({ ...item, node: node.callee, instance: true });
       else if (t.isClass(node)) {
-        // A class's prototype exposes the same instance methods as `new C()`.
-        const [key, ...path] =
-          item.path[0] === "prototype" ? item.path.slice(1) : item.path;
-        const contents = mode === "contents" && key === undefined;
-        for (const member of node.body.body) {
-          if (t.isClassMethod(member)) {
-            if (
-              contents ||
-              (item.path.length === 0 && member.kind === "constructor") ||
-              (key !== undefined &&
-                (key === null ||
-                  semanticStaticPropertyKey(member.key, member.computed) ===
-                    String(key)))
-            )
-              pending.push({ ...item, node: member, path });
-          } else if (
-            t.isClassProperty(member) &&
-            member.value !== null &&
-            member.value !== undefined &&
-            (contents ||
-              (key !== undefined &&
-                (key === null ||
-                  semanticStaticPropertyKey(member.key, member.computed) ===
-                    String(key))))
+        const prototype = item.path[0] === "prototype";
+        const [key, ...path] = prototype ? item.path.slice(1) : item.path;
+        const lineage = classLineage(node, state, classLineages);
+        const value = (node: t.Node, path: Candidate["path"]) =>
+          pending.push({ node, path, initializers: item.initializers });
+        const select = (layer: ClassMemberLayer): boolean => {
+          for (const owner of lineage.classes) {
+            const selected = selectClassTargets(
+              classTargetIndex(owner, classTargets)[layer],
+              key,
+            );
+            for (const selectedValue of selected.values)
+              value(selectedValue, path);
+            if (selected.own) return true;
+          }
+          return false;
+        };
+        if (
+          mode === "function-values" &&
+          item.instance !== true &&
+          !prototype &&
+          key === undefined
+        )
+          retain(node, []);
+        else if (mode === "contents" && key === undefined) {
+          for (const owner of lineage.classes) {
+            const index = classTargetIndex(owner, classTargets);
+            for (const member of [
+              ...index.static,
+              ...index.prototype,
+              ...index.fields,
+            ]) {
+              const selected = t.isClassMethod(member) ? member : member.value;
+              if (selected != null) value(selected, []);
+            }
+          }
+        } else if (item.instance === true && !prototype) {
+          const constructor = classTargetIndex(
+            node,
+            classTargets,
+          ).constructorMethod;
+          const results =
+            constructor === undefined
+              ? []
+              : semanticCallableResultExpressions(constructor);
+          for (const result of results)
+            if (result.node !== null) value(result.node, item.path);
+          const replaced =
+            constructor !== undefined &&
+            results.length === 1 &&
+            constructor.body.body.some(
+              (statement) => statement === results[0]!.site,
+            ) &&
+            definitelyConstructedObject(results[0]!.node);
+          if (!replaced && key !== undefined) {
+            // Every inherited field is an own slot on the new object, so base
+            // fields precede even a derived prototype method or accessor.
+            if (!select("fields")) {
+              select("prototype");
+              if (lineage.unknownBase !== undefined)
+                pending.push({ ...item, node: lineage.unknownBase });
+            }
+          }
+        } else if (key === undefined) {
+          if (!prototype)
+            for (const owner of lineage.classes) {
+              const constructor = classTargetIndex(
+                owner,
+                classTargets,
+              ).constructorMethod;
+              if (constructor === undefined) continue;
+              value(constructor, []);
+              break;
+            }
+        } else if (!select(prototype ? "prototype" : "static")) {
+          if (!prototype && key === "__proto__" && node.superClass != null)
+            pending.push({ ...item, node: node.superClass, path });
+          else if (lineage.unknownBase !== undefined)
+            pending.push({ ...item, node: lineage.unknownBase });
+          if (
+            mode === "function-values" &&
+            !prototype &&
+            !(key === "__proto__" && node.superClass != null)
           )
-            pending.push({ ...item, node: member.value, path });
+            retain(node, item.path);
         }
-        if (node.superClass !== null && node.superClass !== undefined)
-          pending.push({ ...item, node: node.superClass });
       }
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
@@ -283,11 +539,32 @@ export const createSemanticCallableTargets = (
           work.push({ kind: "visit", item: child, parent: frame });
       }
     }
-    const output = [...functions];
-    results.set(callee, output);
+    const output = [...functions.values()].flatMap((paths) => [
+      ...paths.values(),
+    ]);
+    const byProjection = results.get(callee) ?? new Map();
+    byProjection.set(projectionKey, output);
+    results.set(callee, byProjection);
     return output;
   };
 };
+
+/** Resolve call targets, without retaining properties of their function values. */
+export const createSemanticCallableTargets = (
+  state: JavaScriptSemanticAnalysisState,
+  mode: "callable" | "contents" = "callable",
+) => {
+  const references = createSemanticCallableReferences(state, mode);
+  return (callee: t.Node): readonly t.Function[] =>
+    references(callee).flatMap(({ node }) =>
+      t.isFunction(node) ? [node] : [],
+    );
+};
+
+/** Select a callable once and leave its remaining value projection to its owner. */
+export const createSemanticFunctionValueReferences = (
+  state: JavaScriptSemanticAnalysisState,
+) => createSemanticCallableReferences(state, "function-values");
 
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (

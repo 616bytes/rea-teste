@@ -10,9 +10,11 @@ import {
   createSemanticReturnedReferences,
 } from "./javascriptSemanticReturnedReferences.js";
 import { semanticStrictContext } from "./javascriptSemanticOpaqueEffects.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
@@ -86,6 +88,32 @@ export const createSemanticReceiverReferences = (
     receivers = indexed;
     const targets = createSemanticCallableTargets(state);
     const contents = createSemanticCallableTargets(state, "contents");
+    const inactiveDefaults = new WeakSet<t.Node>();
+    const defaultSources = new Map<
+      t.AssignmentPattern,
+      Set<JavaScriptSemanticInitializer>
+    >();
+    for (const binding of state.bindingsById.values())
+      for (const reference of binding.referenceInitializers)
+        for (const source of reference.fallbackSources ?? []) {
+          if (source.selection === undefined) continue;
+          const sources = defaultSources.get(source.selection) ?? new Set();
+          sources.add(source);
+          defaultSources.set(source.selection, sources);
+        }
+    // Nested patterns can select from the original input or an outer default.
+    // The expression is inactive only when every retained input excludes it.
+    for (const [selection, sources] of defaultSources)
+      if (
+        [...sources].every((source) =>
+          semanticReferenceSourcesInactive(
+            { fallbackSources: [source] },
+            state,
+            "syntax-only",
+          ),
+        )
+      )
+        inactiveDefaults.add(selection.right);
     const intrinsics = createSemanticModuleInterop(state);
     const groups = new Map<
       string,
@@ -129,6 +157,7 @@ export const createSemanticReceiverReferences = (
       indexed.set(target, values);
     };
     traverseJavaScriptAst(state.program, {
+      skip: (node) => inactiveDefaults.has(node),
       enter: (node) => {
         if (t.isNewExpression(node)) {
           // Constructors receive a fresh instance, regardless of a returned object.
@@ -183,8 +212,29 @@ export const createSemanticReceiverReferences = (
     });
     // Recovered calls are not a complete use set: stored, returned or passed
     // callable values can be invoked through a receiver we did not recover.
+    const inactiveNodes = new WeakSet<t.Node>();
+    const inactiveTargets = new Set<t.Function>();
+    const storedSources: [t.Node, t.Node][] = [];
     traverseJavaScriptAst(state.program, {
       enter: (node, parent) => {
+        if (
+          inactiveDefaults.has(node) ||
+          (parent !== null && inactiveNodes.has(parent))
+        ) {
+          inactiveNodes.add(node);
+          if (t.isFunction(node)) inactiveTargets.add(node);
+          else if (
+            parent !== null &&
+            t.isIdentifier(node) &&
+            t.isReferenced(node, parent, state.parentsByNode.get(parent))
+          )
+            for (const target of contents(node)) inactiveTargets.add(target);
+          return;
+        }
+        if (parent !== null && t.isClass(node)) {
+          storedSources.push([node, parent]);
+          return;
+        }
         if (
           parent === null ||
           !(
@@ -219,11 +269,40 @@ export const createSemanticReceiverReferences = (
             parent.init === current &&
             t.isIdentifier(parent.id)) ||
           (t.isObjectProperty(parent) && parent.value === current)
-        )
+        ) {
+          storedSources.push([node, parent]);
           return;
+        }
         for (const target of contents(node)) retain(target, state.program);
       },
     });
+    // An explicitly unused default is a known non-invocation. Keep independent
+    // calls and escapes, and leave unobserved stored/exported uses unknown.
+    for (const [node, parent] of storedSources) {
+      if (inactiveTargets.size === 0) break;
+      const declaration = state.parentsByNode.get(parent);
+      // A local function initializer defines the target rather than using it.
+      if (
+        t.isFunction(node) &&
+        t.isVariableDeclarator(parent) &&
+        !t.isExportNamedDeclaration(
+          declaration === undefined
+            ? undefined
+            : state.parentsByNode.get(declaration),
+        )
+      )
+        continue;
+      for (const target of contents(node)) inactiveTargets.delete(target);
+    }
+    for (const target of inactiveTargets) {
+      const parent = state.parentsByNode.get(target);
+      if (
+        !indexed.has(target) &&
+        !t.isExportNamedDeclaration(parent) &&
+        !t.isExportDefaultDeclaration(parent)
+      )
+        retain(target);
+    }
   };
   const returned = createSemanticReturnedReferences(state);
   const inheritedReceiver = (owner: t.Node): readonly t.Node[] => {

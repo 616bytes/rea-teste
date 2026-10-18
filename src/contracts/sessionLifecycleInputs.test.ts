@@ -3,6 +3,25 @@ import { describe, expect, it } from "vitest";
 import { openBinaryInputSchema } from "./sessionLifecycleInputs.js";
 
 describe("open_binary raw-binary input contract", () => {
+  it("accepts an explicit Cortex profile and rejects unregistered variants", () => {
+    const input = {
+      path: "/tmp/cortex.bin",
+      format: "raw-binary",
+      architecture: "arm",
+      entry_point: "0x1002",
+      base_address: "0x1000",
+    };
+    expect(
+      openBinaryInputSchema.safeParse({
+        ...input,
+        processor_variant: "cortex-m",
+      }).success,
+    ).toBe(true);
+    expect(
+      openBinaryInputSchema.safeParse({ ...input, processor_variant: "thumb" })
+        .success,
+    ).toBe(false);
+  });
   it("accepts header detection without architecture", () => {
     expect(
       openBinaryInputSchema.safeParse({ path: "/tmp/fixture.bin" }).success,

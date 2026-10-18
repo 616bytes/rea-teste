@@ -31,7 +31,10 @@ import {
   admitRawBinary,
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryArchitecture,
+  RawProcessorVariant,
+} from "../domain/binaryTargetTypes.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
   createXmlPlistSignatureProbe,
@@ -66,6 +69,7 @@ export interface BinaryTargetResolverOptions {
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   readonly baseAddress?: string;
+  readonly processorVariant?: RawProcessorVariant;
   readonly signal?: AbortSignal;
 }
 
@@ -89,6 +93,7 @@ export const parseBinaryTarget = async (
     architecture,
     entryPoint,
     baseAddress,
+    processorVariant,
   } = options;
   const candidate = absoluteCallerPath(input, { cwd });
   try {
@@ -126,6 +131,7 @@ export const parseBinaryTarget = async (
           architecture,
           entryPoint,
           baseAddress,
+          processorVariant,
           fileBytes: metadata.size,
         });
         if (!admitted.ok)
@@ -149,6 +155,7 @@ export const parseBinaryTarget = async (
         architecture,
         entryPoint,
         baseAddress,
+        processorVariant,
       });
       if (pairing !== undefined)
         return err(

@@ -6,6 +6,12 @@ import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
 describe("raw-binary Ghidra language binding", () => {
+  it("selects Cortex only through the explicit ARM variant", () => {
+    expect(ghidraRawBinaryLanguage("arm", "cortex-m").languageId).toBe(
+      "ARM:LE:32:Cortex",
+    );
+    expect(ghidraRawBinaryLanguage("arm").languageId).toBe("ARM:LE:32:v7");
+  });
   it("maps the big-endian m68k family to the default 68000 language", () => {
     expect(ghidraRawBinaryLanguage("m68k")).toEqual({
       languageId: "68000:BE:32:default",
@@ -35,6 +41,38 @@ describe("raw-binary Ghidra language binding", () => {
       defaultAddressSpace: "ram",
     });
   });
+});
+
+it("requires observed Thumb mode at the selected Cortex-M entry", () => {
+  const f = fixtureRawBinaryLoadImage();
+  f.target = { ...f.target, processorVariant: "cortex-m" };
+  f.observation.language_id = "ARM:LE:32:Cortex";
+  const thumbContext = { name: "TMode", value_hex: "0x1" };
+  f.observation.entry_context = [
+    { address: f.target.entryPoint, registers: [thumbContext] },
+  ];
+  expect(
+    attestGhidraRawBinaryLoadImage(f.snapshot, f.target, f.observation),
+  ).toMatchObject({ ok: true, value: { status: "verified" } });
+  thumbContext.value_hex = "0x0";
+  expect(
+    attestGhidraRawBinaryLoadImage(f.snapshot, f.target, f.observation),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      status: "mismatch",
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "entry_context.TMode",
+          matched: false,
+        }),
+      ]),
+    },
+  });
+  f.observation.entry_context = [];
+  expect(
+    attestGhidraRawBinaryLoadImage(f.snapshot, f.target, f.observation),
+  ).toMatchObject({ ok: true, value: { status: "mismatch" } });
 });
 
 describe("raw-binary mapped-block state", () => {

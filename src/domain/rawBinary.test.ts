@@ -317,6 +317,11 @@ describe("raw-binary independent load base", () => {
 });
 
 describe("raw-binary selection pairing", () => {
+  it("rejects a processor variant outside raw imports", () => {
+    expect(rawBinarySelectionError({ processorVariant: "cortex-m" })).toBe(
+      "processor_variant applies only with format=raw-binary",
+    );
+  });
   it("rejects a load base for a header-detected target", () => {
     expect(rawBinarySelectionError({ baseAddress: "0x1000" })).toBe(
       "base_address applies only with format=raw-binary",
@@ -341,5 +346,58 @@ describe("raw-binary selection pairing", () => {
     expect(
       rawBinarySelectionError({ format: "dos-com", architecture: "x86" }),
     ).toBe("architecture and entry_point apply only with format=raw-binary");
+  });
+});
+
+describe("explicit Cortex-M admission", () => {
+  it("accepts halfword code entry only when Cortex-M is selected", () => {
+    const input = {
+      architecture: "arm",
+      baseAddress: "0x1000",
+      entryPoint: "0x1002",
+      fileBytes: 6,
+    };
+    expect(
+      admitRawBinary({ ...input, processorVariant: "cortex-m" }),
+    ).toMatchObject({
+      ok: true,
+      value: { processorVariant: "cortex-m", entryPoint: "0x1002" },
+    });
+    expect(admitRawBinary(input)).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("4-byte aligned") },
+    });
+  });
+  it("rejects an odd Thumb function pointer rather than silently clearing its bit", () => {
+    expect(
+      admitRawBinary({
+        architecture: "arm",
+        baseAddress: "0x1000",
+        entryPoint: "0x1003",
+        processorVariant: "cortex-m",
+        fileBytes: 8,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("odd Thumb function pointer") },
+    });
+  });
+  it.each([
+    ["x86", "cortex-m"],
+    ["arm64", "cortex-m"],
+    ["arm", "thumb"],
+    ["arm", null],
+  ])("rejects incompatible %s / %s", (architecture, processorVariant) => {
+    expect(
+      admitRawBinary({
+        architecture,
+        processorVariant,
+        entryPoint: "0x1000",
+        fileBytes: 8,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { constraint: "load_selection_rejected" },
+    });
   });
 });

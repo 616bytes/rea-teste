@@ -16,6 +16,7 @@ import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
   rawBinaryBaseAddressSchema,
+  rawProcessorVariantSchema,
 } from "../domain/rawBinary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
@@ -487,6 +488,7 @@ const rawLifecycleTargetSchema = z.object({
     .describe(
       "Canonical explicit load address of raw file offset 0, independent of the code entry.",
     ),
+  processor_variant: rawProcessorVariantSchema.optional(),
 });
 
 /** Exact structured-content schemas for target lifecycle operations. */

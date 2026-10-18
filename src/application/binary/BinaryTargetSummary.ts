@@ -13,6 +13,9 @@ export const binaryTargetSummary = (target: BinaryTarget) => ({
         ...(target.baseAddress === undefined
           ? {}
           : { base_address: target.baseAddress }),
+        ...(target.processorVariant === undefined
+          ? {}
+          : { processor_variant: target.processorVariant }),
       }
     : {}),
 });

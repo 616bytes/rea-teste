@@ -111,6 +111,12 @@ describe("analysis snapshot target identity", () => {
     };
     const snapshot = snapshotTarget(target);
     const shiftedBase = { ...target, baseAddress: "0x7fffffc" };
+    const cortex = { ...target, processorVariant: "cortex-m" as const };
+    expect(snapshotMatchesTarget(snapshot, cortex)).toBe(false);
+    expect(snapshotTarget(cortex)).toHaveProperty(
+      "processor_variant",
+      "cortex-m",
+    );
     expect(snapshotMatchesTarget(snapshot, shiftedBase)).toBe(false);
     expect(snapshotTarget(shiftedBase)).toHaveProperty(
       "base_address",

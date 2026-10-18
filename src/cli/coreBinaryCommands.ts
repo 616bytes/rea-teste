@@ -223,6 +223,7 @@ const routesToJavaScriptAnalysis = async (
     readonly architecture?: string | undefined;
     readonly "entry-point"?: string | undefined;
     readonly "base-address"?: string | undefined;
+    readonly "processor-variant"?: string | undefined;
     readonly provider?: string | undefined;
   },
 ): Promise<boolean> =>
@@ -232,6 +233,7 @@ const routesToJavaScriptAnalysis = async (
   options.architecture === undefined &&
   options["entry-point"] === undefined &&
   options["base-address"] === undefined &&
+  options["processor-variant"] === undefined &&
   (await isJavaScriptApplicationPath(path));
 
 const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {

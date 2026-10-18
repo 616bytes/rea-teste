@@ -3,6 +3,8 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
+import ghidra.program.model.lang.Register;
+import java.math.BigInteger;
 
 /** Seed the caller-supplied raw-binary entry before default auto-analysis. */
 public final class ReaGhidraPrepareRaw extends GhidraScript {
@@ -45,6 +47,11 @@ public final class ReaGhidraPrepareRaw extends GhidraScript {
         if (entry == null || !block.contains(entry) ||
             !currentProgram.getMemory().getBlock(entry).equals(block)) {
             throw new IllegalArgumentException("Raw binary entry must lie inside the source-backed load block");
+        }
+        if (expectedLanguage.equals("ARM:LE:32:Cortex")) {
+            Register thumb = currentProgram.getRegister("TMode");
+            if (thumb == null || !BigInteger.ONE.equals(currentProgram.getProgramContext().getValue(thumb, entry, false)))
+                throw new IllegalStateException("Cortex-M entry must be in Thumb mode");
         }
         addEntryPoint(entry);
         if (!disassemble(entry) || createFunction(entry, "entry") == null) {

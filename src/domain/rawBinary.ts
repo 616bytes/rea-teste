@@ -4,7 +4,9 @@ import type {
   BinaryArchitecture,
   HeaderArchitecture,
   RawOnlyArchitecture,
+  RawProcessorVariant,
 } from "./binaryTargetTypes.js";
+import { RAW_PROCESSOR_VARIANTS } from "./binaryTargetTypes.js";
 import type { ExecutableFormatHint } from "./dosCom.js";
 import { err, ok, type Result } from "./result.js";
 
@@ -20,6 +22,7 @@ export const BINARY_ARCHITECTURES = [
 
 /** Provider-neutral CPU family for a caller-supplied raw-binary load. */
 export const binaryArchitectureSchema = z.enum(BINARY_ARCHITECTURES);
+export const rawProcessorVariantSchema = z.enum(RAW_PROCESSOR_VARIANTS);
 
 const RAW_BINARY_ENTRY_POINT = /^0x[0-9A-Fa-f]{1,16}$/u;
 
@@ -79,6 +82,7 @@ export interface RawBinaryAdmission {
   readonly entryPointSource: string;
   readonly baseAddress?: string;
   readonly baseAddressSource?: string;
+  readonly processorVariant?: RawProcessorVariant;
 }
 
 /** Resolve the canonical load base without reinterpreting caller input. */
@@ -110,6 +114,7 @@ export const admitRawBinary = (input: {
   readonly architecture: unknown;
   readonly entryPoint: unknown;
   readonly baseAddress?: unknown;
+  readonly processorVariant?: unknown;
   readonly fileBytes: number;
 }): Result<RawBinaryAdmission, RawBinaryAdmissionRejection> => {
   const architecture = binaryArchitectureSchema.safeParse(input.architecture);
@@ -117,6 +122,19 @@ export const admitRawBinary = (input: {
     return err({
       reason:
         "raw-binary format requires architecture (x86, x86_64, arm, arm64, 6502, or m68k)",
+      constraint: "load_selection_rejected",
+    });
+  const variant =
+    input.processorVariant === undefined
+      ? undefined
+      : rawProcessorVariantSchema.safeParse(input.processorVariant);
+  if (
+    variant !== undefined &&
+    (!variant.success || architecture.data !== "arm")
+  )
+    return err({
+      reason:
+        "raw-binary processor_variant must be cortex-m with architecture=arm",
       constraint: "load_selection_rejected",
     });
   if (typeof input.entryPoint !== "string")
@@ -141,11 +159,17 @@ export const admitRawBinary = (input: {
       constraint: "load_selection_rejected",
     });
   if (
-    (architecture.data === "arm" || architecture.data === "arm64") &&
+    (architecture.data === "arm64" ||
+      (architecture.data === "arm" && variant === undefined)) &&
     entry.value.value % 4n !== 0n
   )
     return err({
       reason: `raw-binary ${architecture.data} entry_point ${entry.value.canonical} must be 4-byte aligned`,
+      constraint: "load_selection_rejected",
+    });
+  if (variant !== undefined && entry.value.value % 2n !== 0n)
+    return err({
+      reason: `raw-binary cortex-m entry_point ${entry.value.canonical} must be 2-byte aligned; supply the code address, not an odd Thumb function pointer`,
       constraint: "load_selection_rejected",
     });
   // 68000-family instruction words are fetched from even addresses.
@@ -176,6 +200,7 @@ export const admitRawBinary = (input: {
     architecture: architecture.data,
     entryPoint: entry.value.canonical,
     entryPointSource: entry.value.source,
+    ...(variant?.success === true ? { processorVariant: variant.data } : {}),
     ...(input.baseAddress === undefined
       ? {}
       : {
@@ -191,6 +216,7 @@ export const rawBinarySelectionError = (input: {
   readonly architecture?: unknown;
   readonly entryPoint?: unknown;
   readonly baseAddress?: unknown;
+  readonly processorVariant?: unknown;
 }): string | undefined => {
   const hasArchitecture = input.architecture !== undefined;
   const hasEntry = input.entryPoint !== undefined;
@@ -199,6 +225,8 @@ export const rawBinarySelectionError = (input: {
       return "format=raw-binary requires architecture and entry_point";
     return undefined;
   }
+  if (input.processorVariant !== undefined)
+    return "processor_variant applies only with format=raw-binary";
   if (input.baseAddress !== undefined)
     return "base_address applies only with format=raw-binary";
   if (hasArchitecture || hasEntry)

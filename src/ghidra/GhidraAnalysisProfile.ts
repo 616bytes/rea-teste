@@ -123,7 +123,10 @@ export const resolveGhidraAnalysisProfile = async (
           ),
         ),
       );
-    const language = ghidraRawBinaryLanguage(target.architecture);
+    const language = ghidraRawBinaryLanguage(
+      target.architecture,
+      target.processorVariant,
+    );
     return Promise.resolve(
       ok({
         profile: createAnalysisProfile(provider, {
@@ -163,6 +166,12 @@ export const resolveGhidraAnalysisProfile = async (
           language_selection: "caller-supplied-v1",
           entry_point: target.entryPoint,
           base_address: rawBinaryBaseAddress(target),
+          ...(target.processorVariant === undefined
+            ? {}
+            : {
+                processor_variant: target.processorVariant,
+                entry_context: "thumb-tmode-1-before-analysis-v1",
+              }),
           entry_seed: "separate-load-base-and-entry-before-analysis-v2",
           ...analyzerParameters,
         }),

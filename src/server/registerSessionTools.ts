@@ -191,6 +191,9 @@ const registerOpenLifecycleTool = (
           ...(input.base_address === undefined
             ? {}
             : { baseAddress: input.base_address }),
+          ...(input.processor_variant === undefined
+            ? {}
+            : { processorVariant: input.processor_variant }),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),

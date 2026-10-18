@@ -374,7 +374,10 @@ export const attestGhidraRawBinaryLoadImage = (
     return err(
       "Ghidra raw-binary snapshot digest does not match the admitted target",
     );
-  const language = ghidraRawBinaryLanguage(target.architecture);
+  const language = ghidraRawBinaryLanguage(
+    target.architecture,
+    target.processorVariant,
+  );
   const baseAddress = rawBinaryBaseAddress(target);
   const base = BigInt(baseAddress);
   const entryOffset = Number(BigInt(target.entryPoint) - base);
@@ -474,6 +477,16 @@ export const attestGhidraRawBinaryLoadImage = (
       null,
   );
   check("relocation_records", [], observations.relocations);
+  if (target.processorVariant === "cortex-m") {
+    check(
+      "entry_context.TMode",
+      "0x1",
+      observations.entry_context
+        .find((context) => context.address === target.entryPoint)
+        ?.registers.find((register) => register.name === "TMode")?.value_hex ??
+        null,
+    );
+  }
   return ok(
     nativeLoadImageSchema.parse({
       status: checks.every((item) => item.matched) ? "verified" : "mismatch",
@@ -492,7 +505,13 @@ export const attestGhidraRawBinaryLoadImage = (
         "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied load base and code entry, and the bound Ghidra language with its fixed byte order. File offset 0 is mapped at the load base.",
         "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
         "Language-defined uninitialized memory, such as 6502 zero page and stack, is preserved as observations but is not attested as file-backed bytes.",
-        "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+        ...(target.processorVariant === "cortex-m"
+          ? [
+              "The explicit Cortex/Thumb profile verifies TMode=1 at the selected code entry. It does not validate a specific Cortex-M ISA subset, infer a device memory map, emulate reset or peripherals, or modify original executable bytes.",
+            ]
+          : [
+              "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+            ]),
         "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
       ],
     }),

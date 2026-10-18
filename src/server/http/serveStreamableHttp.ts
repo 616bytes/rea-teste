@@ -59,7 +59,12 @@ export interface StreamableHttpServer {
 export const hostHeaderAllowlist = (host: string): string[] | undefined =>
   LOOPBACK_HOSTS.has(host) ? localhostAllowedHostnames() : undefined;
 
-const jsonError = (status: number, code: number, message: string): Response =>
+/** A JSON-RPC error answered outside any session, so its id is null. */
+export const jsonRpcErrorResponse = (
+  status: number,
+  code: number,
+  message: string,
+): Response =>
   Response.json(
     { jsonrpc: "2.0", error: { code, message }, id: null },
     { status },
@@ -193,7 +198,8 @@ export const serveStreamableHttp = async (
   const slot = new McpSessionSlot(instance, logger);
   let stopped = false;
   const route = async (request: Request): Promise<Response> => {
-    if (stopped) return jsonError(503, -32000, "Server shutting down");
+    if (stopped)
+      return jsonRpcErrorResponse(503, -32000, "Server shutting down");
     const refused =
       allowedHosts === undefined
         ? undefined
@@ -206,7 +212,11 @@ export const serveStreamableHttp = async (
         candidate.path === pathname && candidate.method === request.method,
     );
     return match === undefined
-      ? jsonError(404, -32601, `No route for ${request.method} ${pathname}`)
+      ? jsonRpcErrorResponse(
+          404,
+          -32601,
+          `No route for ${request.method} ${pathname}`,
+        )
       : match.handle(request);
   };
   const httpServer = createHttpServer();
@@ -235,7 +245,7 @@ export const serveStreamableHttp = async (
       if (response.headersSent) response.destroy();
       else
         await writeWebResponse(
-          jsonError(500, -32603, "Internal server error"),
+          jsonRpcErrorResponse(500, -32603, "Internal server error"),
           response,
         ).catch(() => undefined);
     }

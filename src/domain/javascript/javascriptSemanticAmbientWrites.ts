@@ -62,6 +62,13 @@ interface AmbientReferenceFacts {
   >;
   readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
   readonly freshObject: (node: t.Node) => boolean;
+  readonly callableResult?: (
+    node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression
+      | t.TaggedTemplateExpression,
+  ) => readonly AmbientPath[];
 }
 
 /**
@@ -293,6 +300,15 @@ export const createAmbientPathResolver = (
           t.isTaggedTemplateExpression(root) ||
           (escapedContents && (t.isFunction(root) || t.isClass(root))))
       ) {
+        if (
+          t.isCallExpression(root) ||
+          t.isOptionalCallExpression(root) ||
+          t.isNewExpression(root) ||
+          t.isTaggedTemplateExpression(root)
+        ) {
+          for (const identity of facts?.callableResult?.(root) ?? [])
+            retain([...identity, ...(suffix ?? [])]);
+        }
         continueReturned(
           t.isFunction(root) || t.isClass(root)
             ? root
@@ -321,8 +337,9 @@ export const createAmbientPathResolver = (
       if (
         possibleWrites &&
         t.isAssignmentExpression(root) &&
-        root.operator === "="
+        ["=", "||=", "&&=", "??="].includes(root.operator)
       ) {
+        if (root.operator !== "=") continueWith(root.left);
         continueWith(root.right);
         continue;
       }
@@ -338,7 +355,7 @@ export const createAmbientPathResolver = (
               t.isExpression(property.value)
             )
               continueWith(property.value, []);
-            else if (t.isObjectMethod(property) && property.kind === "get")
+            else if (t.isObjectMethod(property) && property.kind !== "set")
               continueReturned(property, []);
           continue;
         }
@@ -423,6 +440,23 @@ export const createAmbientPathResolver = (
   };
 };
 
+export type AmbientPathResolver = ReturnType<typeof createAmbientPathResolver>;
+
+export interface AmbientInvocationObserver {
+  readonly observeInvocation: (
+    node: t.Node,
+    resolve: AmbientPathResolver,
+  ) => void;
+  readonly callableResult?: (
+    node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression
+      | t.TaggedTemplateExpression,
+    resolve: AmbientPathResolver,
+  ) => readonly AmbientPath[];
+}
+
 /**
  * Index source-local writes through ambient identities and stable aliases.
  * The shared invocation owner resolves intrinsic aliases, bind/call/apply and
@@ -432,7 +466,7 @@ export const createAmbientPathResolver = (
 export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-  observeOpaqueInvocation?: (node: t.Node) => void,
+  opaqueObserver?: AmbientInvocationObserver,
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
@@ -440,11 +474,15 @@ export function* indexJavaScriptAmbientWritesSteps(
   const storedReferences: SemanticIterationSource[] = [];
   const writes: { node: t.Node; path: AmbientPath }[] = [];
   const targets: { node: t.Node; capture: t.Node }[] = [];
-  const escapes: {
-    node: t.Node;
+  type EscapeTarget = {
     target: t.Node;
     browserReceiver: boolean;
     projection?: AmbientProjection;
+  };
+  const escapes: {
+    node: t.Node;
+    invocation?: true;
+    targets: EscapeTarget[];
   }[] = [];
   const stores = new WeakMap<
     t.Node,
@@ -458,26 +496,41 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
-  const ambientWrites = createAmbientPathResolver(state, true, {
-    stores,
-    freshObject: interop.isFreshObject,
-    prototypeTarget: (node) => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-        return undefined;
-      const invocation = interop.intrinsicInvocation(node);
-      if (
-        invocation?.kind !== "known" ||
-        invocation.path.length !== 3 ||
-        !["Object", "Reflect"].includes(invocation.path[1] ?? "") ||
-        invocation.path[2] !== "getPrototypeOf"
-      )
-        return undefined;
-      const target = invocation.arguments?.[0];
-      return t.isNode(target) && !t.isSpreadElement(target)
-        ? target
-        : undefined;
+  const ambientWrites: AmbientPathResolver = createAmbientPathResolver(
+    state,
+    true,
+    {
+      stores,
+      freshObject: interop.isFreshObject,
+      ...(opaqueObserver?.callableResult === undefined
+        ? {}
+        : {
+            callableResult: (
+              node:
+                | t.CallExpression
+                | t.OptionalCallExpression
+                | t.NewExpression
+                | t.TaggedTemplateExpression,
+            ) => opaqueObserver.callableResult?.(node, ambientWrites) ?? [],
+          }),
+      prototypeTarget: (node) => {
+        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+          return undefined;
+        const invocation = interop.intrinsicInvocation(node);
+        if (
+          invocation?.kind !== "known" ||
+          invocation.path.length !== 3 ||
+          !["Object", "Reflect"].includes(invocation.path[1] ?? "") ||
+          invocation.path[2] !== "getPrototypeOf"
+        )
+          return undefined;
+        const target = invocation.arguments?.[0];
+        return t.isNode(target) && !t.isSpreadElement(target)
+          ? target
+          : undefined;
+      },
     },
-  });
+  );
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (root, kind, writeSite) => {
@@ -508,10 +561,10 @@ export function* indexJavaScriptAmbientWritesSteps(
       writes.push({ node, path });
     },
     (node, invocation) => {
-      observeOpaqueInvocation?.(node);
+      const targets: EscapeTarget[] = [];
       // Escaping objects can change contents without replacing their identity.
       const retainEscape = (target: t.Node, browserReceiver = false) => {
-        escapes.push({ target, node, browserReceiver });
+        targets.push({ target, browserReceiver });
       };
       for (const argument of t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
@@ -542,6 +595,8 @@ export function* indexJavaScriptAmbientWritesSteps(
           browserReceiverMethods.add(browserMethod);
         retainEscape(callee.object, browserMethod !== undefined);
       }
+      if (targets.length > 0 || opaqueObserver !== undefined)
+        escapes.push({ node, invocation: true, targets });
     },
   );
   const pendingStores = new Set(storedReferences);
@@ -601,11 +656,15 @@ export function* indexJavaScriptAmbientWritesSteps(
     if (!local || ambient.length > 0)
       escapes.push({
         node: source.mutation,
-        target: source.node,
-        browserReceiver: false,
-        projection: source.projection.map((key) =>
-          key === null || typeof key === "object" ? null : String(key),
-        ),
+        targets: [
+          {
+            target: source.node,
+            browserReceiver: false,
+            projection: source.projection.map((key) =>
+              key === null || typeof key === "object" ? null : String(key),
+            ),
+          },
+        ],
       });
   }
   for (const { node, path } of writes) {
@@ -623,11 +682,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWriteEffects.push({ path: resolved, node });
     }
   }
-  for (const { node, target, browserReceiver, projection } of escapes)
-    for (const path of ambientWrites(target, node, true, projection))
-      // Only proven browser APIs keep their global receiver from user code.
-      if (!(browserReceiver && path.length === 1 && path[0] === "global"))
-        state.ambientEscapes.retain([...path, null]);
+  for (const { node, invocation, targets } of escapes) {
+    if (invocation) opaqueObserver?.observeInvocation(node, ambientWrites);
+    for (const { target, browserReceiver, projection } of targets)
+      for (const path of ambientWrites(target, node, true, projection))
+        // Only proven browser APIs keep their global receiver from user code.
+        if (!(browserReceiver && path.length === 1 && path[0] === "global"))
+          state.ambientEscapes.retain([...path, null]);
+  }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>

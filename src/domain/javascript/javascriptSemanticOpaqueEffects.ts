@@ -1,6 +1,11 @@
 import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
+import type {
+  AmbientInvocationObserver,
+  AmbientPathResolver,
+} from "./javascriptSemanticAmbientWrites.js";
+import { resolveJavaScriptIntrinsicInvocations } from "./javascriptIntrinsicInvocation.js";
+import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   semanticEffectTiming,
@@ -16,12 +21,17 @@ import {
 /** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
 export interface JavaScriptOpaqueScopeEffects {
   /** Cheap source evidence collected with declarations, before alias queries. */
-  mayReferenceGlobalEval: boolean;
+  mayReferenceGlobalCode: boolean;
   readonly sites: WeakSet<t.Node>;
   readonly sloppySites: WeakSet<t.Node>;
   readonly byScope: Map<string, t.CallExpression[]>;
   readonly children: Map<string, Set<string>>;
-  readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
+  readonly globalSites: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+    | t.TaggedTemplateExpression
+  )[];
 }
 
 export const indexSemanticOpaqueEffects = (
@@ -56,32 +66,195 @@ export const indexSemanticOpaqueEffects = (
  * neither retain a second call list nor create another alias resolver. */
 export const createSemanticOpaqueGlobalObserver = (
   state: JavaScriptSemanticAnalysisState,
-): ((node: t.Node) => void) | undefined => {
-  if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
-  const ambientPaths = createAmbientPathResolver(state, true);
+): AmbientInvocationObserver | undefined => {
+  if (!state.opaqueEffects.mayReferenceGlobalCode) return undefined;
+  let ambientPaths: AmbientPathResolver;
   let invocationSite: t.Node | undefined;
+  const resolvingResults = new WeakSet<t.Node>();
+  const boundValues: JavaScriptIntrinsicInvocation[] = [];
+  const boundKeys = new Map<string, number>();
+  const nodeIds = new WeakMap<t.Node, number>();
+  let nextNodeId = 0;
+  const nodeId = (node: t.Node | null | undefined): number => {
+    if (node === undefined) return -1;
+    // Parser recovery retains null argument holes; keep their position distinct.
+    if (node === null) return -2;
+    let id = nodeIds.get(node);
+    if (id === undefined) nodeIds.set(node, (id = nextNodeId++));
+    return id;
+  };
+  const paths = (node: t.Node): readonly (readonly string[])[] =>
+    ambientPaths(node, invocationSite).flatMap((path) => {
+      if (path.includes(null)) return [];
+      const complete = path as readonly string[];
+      if (complete[0] === "bound-global-callable") {
+        const bound = boundValues[Number(complete[1])];
+        return bound === undefined || complete.length === 2
+          ? []
+          : [[...bound.path, ...complete.slice(2)]];
+      }
+      if (complete[0] === "generated-function")
+        return [["intrinsic", "generated", "function", ...complete.slice(1)]];
+      if (complete[0] !== "global") return [];
+      return [
+        complete[1] === "eval" ||
+        (complete[1] === "Function" && complete[2] !== "prototype")
+          ? ["intrinsic", ...complete]
+          : ["intrinsic", ...complete.slice(1)],
+      ];
+    });
+  const bounds = (node: t.Node): readonly JavaScriptIntrinsicInvocation[] =>
+    ambientPaths(node, invocationSite).flatMap((path) => {
+      const bound =
+        path[0] === "bound-global-callable" && path.length === 2
+          ? boundValues[Number(path[1])]
+          : undefined;
+      return bound === undefined ? [] : [bound];
+    });
   const interop = createSemanticModuleInterop(state, {
+    // Mutation lookup only needs a capture when its identity is unambiguous.
     intrinsicPath: (node) => {
-      const paths = ambientPaths(node, invocationSite);
-      const path = paths.find((path) => path[1] === "eval") ?? paths[0];
-      if (path?.[0] !== "global" || path.some((key) => key === null))
-        return undefined;
-      // Keep the global callable owner for generic call/apply/bind resolution.
-      return path[1] === "eval"
-        ? ["intrinsic", ...(path as readonly string[])]
-        : ["intrinsic", ...(path.slice(1) as readonly string[])];
+      const candidates = paths(node);
+      return candidates.length === 1 ? candidates[0] : undefined;
     },
   });
-  return (node) => {
-    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-    invocationSite = node;
-    const invocation = interop.intrinsicInvocation(node);
-    if (invocation?.path.join(".") === "intrinsic.global.eval")
-      state.opaqueEffects.globalSites.push(node);
+  const identities = (
+    node: t.Node,
+  ): readonly JavaScriptIntrinsicInvocation[] => [
+    ...paths(node).map((path): JavaScriptIntrinsicInvocation => ({
+      kind: interop.intrinsicReadChanged(node, path) ? "opaque" : "known",
+      path,
+      arguments: [],
+    })),
+    ...bounds(node),
+  ];
+  const invocations = (
+    node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression
+      | t.TaggedTemplateExpression,
+  ): readonly JavaScriptIntrinsicInvocation[] => {
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+      return resolveJavaScriptIntrinsicInvocations(
+        node,
+        paths,
+        bounds,
+        interop.intrinsicReadChanged,
+      );
+    const callee = t.isTaggedTemplateExpression(node) ? node.tag : node.callee;
+    return identities(callee);
+  };
+  const retainBound = (
+    value: JavaScriptIntrinsicInvocation,
+  ): readonly string[] => {
+    const key = JSON.stringify([
+      value.kind,
+      value.path,
+      nodeId(value.receiver),
+      value.arguments?.map(nodeId),
+    ]);
+    let id = boundKeys.get(key);
+    if (id === undefined) {
+      id = boundValues.length;
+      boundValues.push(value);
+      boundKeys.set(key, id);
+    }
+    return ["bound-global-callable", String(id)];
+  };
+  return {
+    callableResult: (node, resolve) => {
+      if (resolvingResults.has(node)) return [];
+      resolvingResults.add(node);
+      const previousSite = invocationSite;
+      ambientPaths = resolve;
+      invocationSite = node;
+      try {
+        const results: (readonly string[])[] = [];
+        for (const invocation of invocations(node)) {
+          const path = invocation.path.join(".");
+          if (invocation.kind === "opaque") {
+            // A modified constructor/helper may return executable code too.
+            results.push(retainBound(invocation));
+            continue;
+          }
+          if (path === "intrinsic.global.Function")
+            results.push(["generated-function"]);
+          if (path === "intrinsic.Reflect.construct") {
+            const constructor = invocation.arguments?.[0];
+            if (
+              constructor !== undefined &&
+              identities(constructor).some(
+                (value) =>
+                  value.kind === "opaque" ||
+                  value.path.join(".") === "intrinsic.global.Function",
+              )
+            )
+              results.push(["generated-function"]);
+          }
+          if (
+            invocation.path.at(-1) !== "bind" ||
+            invocation.receiver === undefined
+          )
+            continue;
+          for (const target of identities(invocation.receiver)) {
+            const args = invocation.arguments;
+            const receiver = target.receiver ?? args?.[0] ?? undefined;
+            results.push(
+              retainBound({
+                kind:
+                  target.kind === "opaque" ||
+                  args === undefined ||
+                  args.some((arg) => t.isSpreadElement(arg))
+                    ? "opaque"
+                    : "known",
+                path: target.path,
+                ...(receiver === undefined ? {} : { receiver }),
+                arguments:
+                  target.arguments === undefined || args === undefined
+                    ? undefined
+                    : [...target.arguments, ...args.slice(1)],
+              }),
+            );
+          }
+        }
+        return results;
+      } finally {
+        invocationSite = previousSite;
+        resolvingResults.delete(node);
+      }
+    },
+    observeInvocation: (node, resolve) => {
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isNewExpression(node) &&
+        !t.isTaggedTemplateExpression(node)
+      )
+        return;
+      ambientPaths = resolve;
+      invocationSite = node;
+      if (
+        invocations(node).some((invocation) => {
+          const path = invocation.path.join(".");
+          return (
+            invocation.kind === "opaque" ||
+            path === "intrinsic.generated.function" ||
+            (path === "intrinsic.global.eval" &&
+              (t.isCallExpression(node) ||
+                t.isOptionalCallExpression(node) ||
+                (t.isTaggedTemplateExpression(node) &&
+                  (invocation.arguments?.length ?? 0) > 0)))
+          );
+        })
+      )
+        state.opaqueEffects.globalSites.push(node);
+    },
   };
 };
 
-/** Indirect eval can change globals, but cannot rebind its caller's locals. */
+/** Indirect eval and generated code can change globals without rebinding the
+ * caller's lexical locals. Creation alone is not an execution effect. */
 export const semanticOpaqueGlobalMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,

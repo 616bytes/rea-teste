@@ -11,6 +11,39 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
 
+const candidateSources = {
+  "escaped.mjs": `const box = {};
+  box.prototype = Map.prototype;
+  function patch(b) { b.prototype.get = fetch; }
+  patch(box); new Map().get("/escaped");`,
+  "returned.mjs": 'patch((() => Map.prototype)()); new Map().get("/returned");',
+  "opaque.mjs": 'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
+  "private.mjs":
+    'const box = {}; box.prototype = Map.prototype; new Map().get("/private");',
+  "returned-write.mjs":
+    'const prototype = (() => Map.prototype)(); prototype.get = fetch; new Map().get("/returned-write");',
+  "prototype.mjs":
+    'Object.getPrototypeOf(new Map()).get = fetch; new Map().get("/prototype");',
+  "indirect.mjs":
+    'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/indirect");',
+  "late-link.mjs":
+    'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/late-link");',
+  "constructor.mjs":
+    'new Map().constructor.prototype.get = fetch; new Map().get("/constructor");',
+  "getter.mjs":
+    'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/getter");',
+  "assignment.mjs":
+    'let run; (run = eval)("Map.prototype.get = fetch"); new Map().get("/assignment");',
+  "logical-assignment.mjs":
+    'let run; (run ??= eval)("Map.prototype.get = fetch"); new Map().get("/logical-assignment");',
+  "method.mjs":
+    'const box = { prototype() { return Map.prototype; } }; patch(box); new Map().get("/method");',
+  "stored-eval.mjs":
+    'const box = {}; box.run = eval; box.run("Map.prototype.get = fetch"); new Map().get("/stored-eval");',
+  "generated.mjs":
+    'Function("Map.prototype.get = fetch")(); new Map().get("/generated");',
+};
+
 it("reports a candidate endpoint through the worker boundary in the public CLI", async () => {
   const root = await createTestTempDirectory("rea-endpoint-candidate-cli-");
   // Retain ambiguous requests while excluding type-erased collection/config reads.
@@ -40,32 +73,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     (cache.open as any)("fixture-cache");
   `,
   );
-  for (const [name, source] of Object.entries({
-    "escaped.mjs": `const box = {};
-    box.prototype = Map.prototype;
-    function patch(b) { b.prototype.get = fetch; }
-    patch(box); new Map().get("/escaped");`,
-    "returned.mjs":
-      'patch((() => Map.prototype)()); new Map().get("/returned");',
-    "opaque.mjs":
-      'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
-    "private.mjs":
-      'const box = {}; box.prototype = Map.prototype; new Map().get("/private");',
-    "returned-write.mjs":
-      'const prototype = (() => Map.prototype)(); prototype.get = fetch; new Map().get("/returned-write");',
-    "prototype.mjs":
-      'Object.getPrototypeOf(new Map()).get = fetch; new Map().get("/prototype");',
-    "indirect.mjs":
-      'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/indirect");',
-    "late-link.mjs":
-      'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/late-link");',
-    "constructor.mjs":
-      'new Map().constructor.prototype.get = fetch; new Map().get("/constructor");',
-    "getter.mjs":
-      'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/getter");',
-    "assignment.mjs":
-      'let run; (run = eval)("Map.prototype.get = fetch"); new Map().get("/assignment");',
-  }))
+  for (const [name, source] of Object.entries(candidateSources))
     await writeFile(join(root, name), source);
   const { stdout } = await execute(
     process.execPath,
@@ -89,14 +97,18 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       "/assignment",
       "/constructor",
       "/escaped",
+      "/generated",
       "/getter",
       "/indirect",
       "/late-link",
+      "/logical-assignment",
+      "/method",
       "/network",
       "/opaque",
       "/prototype",
       "/returned",
       "/returned-write",
+      "/stored-eval",
       "session",
     ]);
   for (const value of [
@@ -104,13 +116,17 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     "/assignment",
     "/constructor",
     "/escaped",
+    "/generated",
     "/getter",
     "/indirect",
     "/late-link",
+    "/logical-assignment",
+    "/method",
     "/opaque",
     "/prototype",
     "/returned",
     "/returned-write",
+    "/stored-eval",
   ]) {
     const escaped = result.graph.nodes.find(
       ({ kind, observations }) =>

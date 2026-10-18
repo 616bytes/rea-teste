@@ -626,6 +626,7 @@ export const createSemanticModuleInterop = (
         intrinsicReadChanged,
       ),
     boundIntrinsic,
+    intrinsicReadChanged,
     staticString,
     isFreshObject,
     opaqueMutationPath,

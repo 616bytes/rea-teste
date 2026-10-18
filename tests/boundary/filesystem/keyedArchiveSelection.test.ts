@@ -340,11 +340,11 @@ it("keeps an archive readable when a non-finite real is an explicit unknown", as
   expect(result.objects).toContainEqual(
     expect.objectContaining({
       id: 1,
-      value: { $plist_type: "real", value: null },
+      value: { $plist_type: "real", value: "nan" },
     }),
   );
   expect(result.limitations).toContain(
-    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.',
+    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
   );
 });
 

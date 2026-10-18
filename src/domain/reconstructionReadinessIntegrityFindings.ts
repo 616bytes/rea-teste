@@ -6,6 +6,7 @@ import type {
   ReadinessFinding,
   ReconstructionReadinessInput,
 } from "./reconstructionReadinessSchemas.js";
+import { reconstructionObligationVerifierDiagnostics } from "./reconstructionObligationVerifier.js";
 
 export const readinessIntegrityFindings = (
   input: ReconstructionReadinessInput,
@@ -165,19 +166,26 @@ const closureFindings = (
         input.obligation_ledger.evidence_links,
       ),
     );
+  const evidence = new Map(
+    input.evidence_bundle.records.map((record) => [record.evidence_id, record]),
+  );
   for (const obligation of input.obligation_ledger.obligations) {
     if (!obligation.required || obligation.status !== "verified") continue;
     const verifier = obligation.binding?.verifier;
-    if (
-      verifier?.implementation_sha256 === undefined ||
-      !verifier.negative_controls?.some(({ status }) => status === "fail")
-    )
+    const diagnostics = reconstructionObligationVerifierDiagnostics(
+      obligation,
+      obligation.binding,
+      evidence,
+    );
+    for (const diagnostic of diagnostics)
       findings.push(
         finding(
-          "reconstruction-verifier-unchallenged",
+          diagnostic.code === "unchallenged-verifier"
+            ? "reconstruction-verifier-unchallenged"
+            : `reconstruction-${diagnostic.code}`,
           "verify-reconstruction-closure",
-          "unknown",
-          `${obligation.obligation_id} was verified by a ledger without a digest-bound failing negative control; rebuild the ledger from its manifest to reassess closure.`,
+          diagnostic.code === "vacuous-verifier" ? "fail" : "unknown",
+          `${obligation.obligation_id}: ${diagnostic.detail}`,
           obligation.binding === null
             ? []
             : [

@@ -114,6 +114,66 @@ const readyProcessLedgerRequest = (
   return ledgerRequest;
 };
 
+const buildWithSiblingControl = (
+  status: "fail" | "unknown" | "unsupported" | "skipped",
+  observed: "pass" | "missing",
+) => {
+  const input = readyProcessLedgerRequest();
+  const binding = input.manifest.bindings[0];
+  if (binding?.verifier === null || binding === undefined)
+    throw new Error("Expected verifier binding");
+  const defect = "The candidate drops the worker completion event.";
+  const fixtureId = "packaged.worker-defect";
+  const passingEvidence =
+    observed === "pass"
+      ? boundProofEvidence(
+          `sibling-${status}`,
+          {
+            obligation_ids: [binding.obligation_id],
+            fixture_ids: [fixtureId],
+            case_kinds: [],
+            verifier_ids: [binding.verifier.verifier_id],
+            claim_ids: [binding.verifier.claim_id],
+          },
+          "controlled-replay",
+          {
+            control: {
+              verifier_sha256: binding.verifier.implementation_sha256 ?? "",
+              defect,
+            },
+          },
+        )
+      : null;
+  const sibling = {
+    candidate: { kind: "fixture" as const, fixture_id: fixtureId },
+    defect,
+    status,
+    result_evidence_id: passingEvidence?.evidence_id ?? `ev_${"a".repeat(64)}`,
+  };
+  return build({
+    ...input,
+    evidence_bundle: request([
+      ...input.evidence_bundle.records,
+      ...(passingEvidence === null ? [] : [passingEvidence]),
+    ]).evidence_bundle,
+    manifest: {
+      ...input.manifest,
+      bindings: [
+        {
+          ...binding,
+          verifier: {
+            ...binding.verifier,
+            negative_controls: [
+              ...(binding.verifier.negative_controls ?? []),
+              sibling,
+            ],
+          },
+        },
+      ],
+    },
+  });
+};
+
 describe("reconstruction obligation ledger", () => {
   it("emits the complete deterministic ledger and closure identity", () => {
     const evidence = proofEvidence("review");
@@ -435,8 +495,41 @@ describe("reconstruction obligation verifier compatibility", () => {
   });
 });
 
+describe("reconstruction obligation mixed verifier controls", () => {
+  it("reports a passing sibling as vacuous even when its status is nonterminal", () => {
+    for (const status of ["unknown", "unsupported", "skipped"] as const) {
+      const result = buildWithSiblingControl(status, "pass");
+      expect(result.obligations[0]?.status).toBe("implemented");
+      expect(result.status).toBe("open");
+      expect(
+        result.obligations[0]?.diagnostics.map(({ code }) => code),
+      ).toContain("vacuous-verifier");
+    }
+  });
+
+  it("keeps closure open for nonterminal siblings with missing Evidence", () => {
+    for (const status of ["unknown", "unsupported", "skipped"] as const) {
+      const result = buildWithSiblingControl(status, "missing");
+      expect(result.obligations[0]?.status).toBe("implemented");
+      expect(result.status).toBe("open");
+      expect(
+        result.obligations[0]?.diagnostics.map(({ code }) => code),
+      ).toContain("missing-control-result");
+    }
+  });
+
+  it("reports a passing sibling as vacuous when the manifest claims fail", () => {
+    const result = buildWithSiblingControl("fail", "pass");
+    expect(result.obligations[0]?.status).toBe("implemented");
+    expect(result.status).toBe("open");
+    expect(
+      result.obligations[0]?.diagnostics.map(({ code }) => code),
+    ).toContain("vacuous-verifier");
+  });
+});
+
 describe("reconstruction obligation control Evidence", () => {
-  it("rejects a claimed failure when its Evidence shows a passing result", () => {
+  it("reports a vacuous verifier when a claimed failure has passing Evidence", () => {
     const input = readyProcessLedgerRequest();
     const binding = input.manifest.bindings[0];
     if (binding?.verifier === null || binding === undefined)
@@ -482,10 +575,7 @@ describe("reconstruction obligation control Evidence", () => {
     });
     expect(result.obligations[0]?.status).toBe("implemented");
     expect(result.obligations[0]?.diagnostics.map(({ code }) => code)).toEqual(
-      expect.arrayContaining([
-        "weak-control-evidence",
-        "unchallenged-verifier",
-      ]),
+      expect.arrayContaining(["vacuous-verifier", "unchallenged-verifier"]),
     );
   });
 

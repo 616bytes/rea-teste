@@ -334,7 +334,10 @@ Evidence must carry that digest, the same verifier/claim/obligation IDs, the
 candidate fixture ID or artifact SHA-256, and the stated `defect`. For a valid
 failure it must report `passed: false` and `failure_kind: "behavior-mismatch"`;
 an environment or execution failure is not evidence that the verifier detected
-the defect. A control that passes shows the verifier misses it. REA checks that
+the defect. Every listed control must be resolved; an `unknown`, `unsupported`,
+or `skipped` control keeps closure open even when another control fails. A
+control whose authenticated Evidence records a pass reports `vacuous-verifier`
+regardless of its declared status. REA checks that
 the control candidate differs from the bound positive fixture or artifact.
 Artifact controls also require a valid `candidate_sha256` in the passing
 verifier Evidence; missing or malformed identity keeps closure open because
@@ -342,10 +345,12 @@ the candidate difference cannot be established.
 Old manifests without controls still parse, but a freshly built ledger keeps
 their obligations open with `unchallenged-verifier`. Previously exported ledger
 Evidence retains its historical digest and status. When a readiness report
-consumes a historical `ready` ledger whose required verified obligations lack a
-digest-bound failing control, it marks reconstruction closure `unknown` and
-reports `reconstruction-verifier-unchallenged`. Rebuild from the manifest to
-reassess the obligations. REA reads these records; it never runs the verifier.
+consumes a historical `ready` ledger, it applies the same verifier and control
+Evidence assessment used when building a ledger. Missing authenticated failing
+controls report `reconstruction-verifier-unchallenged`; invalid identities,
+unresolved controls, and observed passing controls also block readiness. The
+historical ledger itself is not changed. Rebuild from the manifest to reassess
+the obligations. REA reads these records; it never runs the verifier.
 
 All referenced Evidence IDs must exist in the bundle. A green unit test cannot
 close a `packaged-process` obligation. A static-only source cannot close a

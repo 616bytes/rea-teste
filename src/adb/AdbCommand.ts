@@ -70,6 +70,16 @@ export interface AdbRunLimits {
   readonly maxOutputBytes: number;
 }
 
+/**
+ * Explicit identities for adb refusal projection. The target path operand and
+ * the selected device are different resources: device-state refusals must
+ * credit the device, while path-specific refusals keep the operand path.
+ */
+export interface AdbRunTargets {
+  /** Identity credited to recognized device-state refusals, such as offline or unauthorized. */
+  readonly deviceTarget?: string;
+}
+
 /** Run one bounded adb invocation and keep its exact failure shape. */
 export const runAdbCapture = async (
   operation: string,
@@ -78,6 +88,7 @@ export const runAdbCapture = async (
   arguments_: readonly string[],
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
+  targets?: AdbRunTargets,
 ): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
@@ -118,9 +129,14 @@ export const runAdbCapture = async (
     const excerpt = failure.stderr.trim().slice(0, STDERR_EXCERPT_BYTES);
     if (/unauthorized/iu.test(excerpt))
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(
+          operation,
+          targets?.deviceTarget ?? targetPath,
+          excerpt,
+          {
+            cause,
+          },
+        ),
       );
     if (
       /device[^\n]*not found|device offline|still authorizing|more than one device/iu.test(
@@ -128,9 +144,14 @@ export const runAdbCapture = async (
       )
     )
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(
+          operation,
+          targets?.deviceTarget ?? targetPath,
+          excerpt,
+          {
+            cause,
+          },
+        ),
       );
     if (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
@@ -207,6 +228,7 @@ export const probeAdbPathExistence = async (
   binary: string,
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
+  targets?: AdbRunTargets,
 ): Promise<Result<boolean, AnalysisError>> => {
   const probed = await runAdbCapture(
     operation,
@@ -215,6 +237,7 @@ export const probeAdbPathExistence = async (
     adbArguments(serial, ["shell", "test", "-e", path]),
     limits,
     signal,
+    targets,
   );
   if (probed.ok) {
     if (probed.value.stdout.length === 0 && probed.value.stderr.length === 0)

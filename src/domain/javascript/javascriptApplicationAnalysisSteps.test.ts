@@ -57,6 +57,33 @@ const issuesFrom = (action: () => unknown) => {
 };
 
 describe("immutable JavaScript result reuse", () => {
+  it.each(["hidden-extra", "changed-enumerability"])(
+    "preserves parsed results when the source has %s normalization",
+    (kind) => {
+      const input = example();
+      if (kind === "hidden-extra")
+        Object.defineProperty(input, "not_in_parsed_result", {
+          value: { unvalidated: true },
+          enumerable: false,
+        });
+      else Object.defineProperty(input, "input_path", { enumerable: false });
+      freezeJsonSnapshot(input);
+      const expected = javascriptApplicationAnalysisResultSchema.parse(input);
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        const parsed = complete(
+          parseOwnedJavaScriptApplicationAnalysisSteps(input),
+        );
+        expect(parsed).not.toBe(input);
+        expect(Object.hasOwn(parsed, "not_in_parsed_result")).toBe(false);
+        expect(
+          Object.getOwnPropertyDescriptor(parsed, "input_path")?.enumerable,
+        ).toBe(
+          Object.getOwnPropertyDescriptor(expected, "input_path")?.enumerable,
+        );
+      }
+    },
+  );
+
   it("borrows imported immutable results only after complete format validation", () => {
     const input = example();
     delete input.statistics.skipped_javascript_files;

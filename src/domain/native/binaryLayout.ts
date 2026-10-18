@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { isDeepStrictEqual } from "node:util";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
 import { localPathStringSchema } from "../localPath.js";
 import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
@@ -331,17 +330,11 @@ export const safeParseOwnedBinaryLayout = (
   )
     return { success: true, data: input as BinaryLayout };
   const parsed = binaryLayoutSchema.safeParse(input);
-  if (
-    parsed.success &&
-    typeof input === "object" &&
-    input !== null &&
-    isImmutableJsonSnapshot(input) &&
-    isDeepStrictEqual(input, parsed.data)
-  ) {
+  if (parsed.success && canBorrowParsedJsonSnapshot(input, parsed.data)) {
     // Preserve normalization if the schema changes: only unchanged, completely
     // validated data can be borrowed without retaining a duplicate layout.
     validatedImmutableLayouts.add(input);
-    return { success: true, data: input as BinaryLayout };
+    return { success: true, data: input };
   }
   return parsed;
 };

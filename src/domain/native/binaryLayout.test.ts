@@ -99,6 +99,21 @@ it("never treats sealing as format validity or caches a refused layout", () => {
   expect(safeParseOwnedBinaryLayout(value).success).toBe(false);
 });
 
+it("does not borrow hidden fields that the format parser removed", () => {
+  const value = report();
+  Object.defineProperty(value, "not_in_parsed_result", {
+    value: { unvalidated: true },
+    enumerable: false,
+  });
+  freezeJsonSnapshot(value);
+  for (let repeat = 0; repeat < 2; repeat += 1) {
+    const parsed = safeParseOwnedBinaryLayout(value);
+    if (!parsed.success) throw parsed.error;
+    expect(parsed.data).not.toBe(value);
+    expect(Object.hasOwn(parsed.data, "not_in_parsed_result")).toBe(false);
+  }
+});
+
 it("retains high linked values and NOBITS without inventing file backing", () => {
   const value = binaryLayoutSchema.parse(report());
   expect(value.entry_point.reported_value).toBe("0x20000000000001");

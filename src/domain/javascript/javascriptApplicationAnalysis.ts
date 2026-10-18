@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { isDeepStrictEqual } from "node:util";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
 import {
   javascriptApplicationGraphSchema,
@@ -206,14 +205,9 @@ export function* parseOwnedJavaScriptApplicationAnalysisSteps(
   // Borrow only if parsing preserved the exact representation. A future schema
   // default/normalization must still return its parsed value, without caching.
   // Admission follows full validation, including completion of yielding checks.
-  if (
-    typeof input === "object" &&
-    input !== null &&
-    isImmutableJsonSnapshot(input) &&
-    isDeepStrictEqual(input, result)
-  ) {
+  if (canBorrowParsedJsonSnapshot(input, result)) {
     validatedImmutableResults.add(input);
-    return input as JavaScriptApplicationAnalysisResult;
+    return input;
   }
   return result;
 }

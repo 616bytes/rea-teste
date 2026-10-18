@@ -83,4 +83,26 @@ describe("cooperative owned snapshot sealing", () => {
     value.child.value = Number.NaN;
     expect(jsonValueValidationIssue(value)).toBe("JSON numbers must be finite");
   });
+
+  it("never authenticates roots containing proxies or invokes their traps", () => {
+    let reflected = false;
+    const proxy = new Proxy(
+      { value: 1 },
+      {
+        getPrototypeOf() {
+          reflected = true;
+          throw new Error("must not reflect on a proxy");
+        },
+      },
+    );
+    const root = { child: proxy };
+    for (const input of [proxy, root]) {
+      expect(() => complete(freezeOwnedJsonSnapshotSteps(input))).toThrow(
+        "proxies",
+      );
+      expect(isImmutableJsonSnapshot(input)).toBe(false);
+      expect(immutableJsonSnapshotMember(input, "child")).toBeUndefined();
+    }
+    expect(reflected).toBe(false);
+  });
 });

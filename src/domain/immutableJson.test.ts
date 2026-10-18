@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  canBorrowParsedJsonSnapshot,
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
@@ -102,5 +103,102 @@ describe("owned immutable JSON snapshots", () => {
     expect(() => freezeJsonSnapshot({ number: Number.NaN })).toThrow(
       "JSON values",
     );
+  });
+
+  it("rejects proxy snapshots before reflecting on their mutable behavior", () => {
+    let reflected = false;
+    const proxy = new Proxy(
+      { value: 1 },
+      {
+        getPrototypeOf() {
+          reflected = true;
+          throw new Error("must not reflect on a proxy");
+        },
+      },
+    );
+    const root = { child: proxy };
+    for (const input of [proxy, root]) {
+      expect(() => freezeJsonSnapshot(input)).toThrow("proxies");
+      expect(isImmutableJsonSnapshot(input)).toBe(false);
+    }
+    expect(Object.isFrozen(root)).toBe(false);
+    expect(reflected).toBe(false);
+  });
+});
+
+describe("borrowing a parsed JSON snapshot", () => {
+  it("accepts reordered object fields but preserves arrays and exact scalars", () => {
+    const source = freezeJsonSnapshot({ second: [true, null], first: -0 });
+    expect(
+      canBorrowParsedJsonSnapshot(source, { first: -0, second: [true, null] }),
+    ).toBe(true);
+    expect(
+      canBorrowParsedJsonSnapshot(source, { first: 0, second: [true, null] }),
+    ).toBe(false);
+    expect(
+      canBorrowParsedJsonSnapshot(source, { first: -0, second: [null, true] }),
+    ).toBe(false);
+    expect(
+      canBorrowParsedJsonSnapshot(Object.freeze({ value: 1 }), { value: 1 }),
+    ).toBe(false);
+  });
+
+  it("preserves parser defaults, hidden-field removal and enumerability changes", () => {
+    const source = freezeJsonSnapshot({ observed: 1 });
+    expect(
+      canBorrowParsedJsonSnapshot(source, { observed: 1, defaulted: 0 }),
+    ).toBe(false);
+    const hidden = { observed: 1 };
+    Object.defineProperty(hidden, "unmodeled", { value: 2, enumerable: false });
+    freezeJsonSnapshot(hidden);
+    expect(canBorrowParsedJsonSnapshot(hidden, { observed: 1 })).toBe(false);
+    const nonenumerable = { observed: 1 };
+    Object.defineProperty(nonenumerable, "observed", { enumerable: false });
+    freezeJsonSnapshot(nonenumerable);
+    expect(canBorrowParsedJsonSnapshot(nonenumerable, { observed: 1 })).toBe(
+      false,
+    );
+  });
+
+  it("does not evaluate accessors introduced by a parsed representation", () => {
+    let accessed = false;
+    const source = freezeJsonSnapshot({ observed: 1 });
+    expect(
+      canBorrowParsedJsonSnapshot(source, {
+        get observed() {
+          accessed = true;
+          return 1;
+        },
+      }),
+    ).toBe(false);
+    expect(accessed).toBe(false);
+  });
+
+  it("declines parser-introduced proxies without reflecting on them", () => {
+    let reflected = false;
+    const parsed = new Proxy(
+      { value: 1 },
+      {
+        getPrototypeOf() {
+          reflected = true;
+          throw new Error("must not reflect on a proxy");
+        },
+      },
+    );
+    expect(
+      canBorrowParsedJsonSnapshot(freezeJsonSnapshot({ value: 1 }), parsed),
+    ).toBe(false);
+    expect(reflected).toBe(false);
+  });
+
+  it("compares deeply nested snapshots without depending on the call stack", () => {
+    let source: JsonValue = 1;
+    let parsed: JsonValue = 1;
+    for (let depth = 0; depth < 6_000; depth += 1) {
+      source = { child: source };
+      parsed = { child: parsed };
+    }
+    freezeJsonSnapshot(source);
+    expect(canBorrowParsedJsonSnapshot(source, parsed)).toBe(true);
   });
 });

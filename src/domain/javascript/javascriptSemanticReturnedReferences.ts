@@ -13,6 +13,7 @@ import {
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 
@@ -22,13 +23,32 @@ export interface SemanticReturnedReference {
   readonly projection: JavaScriptSemanticPropertyPath;
 }
 
+/**
+ * What one expansion chain has passed through: each initializer it followed
+ * (value 0) and each binding it read, with the projection depth at that
+ * first read. An initializer is followed at most once per chain.
+ *
+ * A binding re-read with a deeper projection has grown it through one of its
+ * own writes (`x = x.next`). The first such re-read still follows every write
+ * the read selects, so `x = root` resolves `root.next` and the ordinary
+ * expansion rules decide what a conditional, object or array write selects.
+ * Its depth is then recorded as `-(depth + 1)`, and a later re-read deeper
+ * than that first read is a cycle at the binding: nothing is followed. A
+ * binding therefore grows its projection once per chain, and a mesh of
+ * self-walking writes costs their count squared rather than every order.
+ */
+type ChainEntry =
+  | JavaScriptSemanticInitializer
+  | JavaScriptSemanticBindingState;
+type Chain = ReadonlyMap<ChainEntry, number>;
+
 interface Candidate {
   readonly node: t.Node;
   readonly path: readonly (string | number | null)[];
-  readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
+  readonly chain: Chain;
 }
 
-type InitializerContext = ReadonlySet<JavaScriptSemanticInitializer>;
+type InitializerContext = Chain;
 type CompletedExpansions = WeakMap<
   t.Node,
   Map<string, readonly InitializerContext[]>
@@ -39,7 +59,7 @@ interface ExpansionFrame {
   readonly node: t.Node;
   readonly pathKey: string;
   readonly parent: ExpansionFrame | null;
-  readonly blockers: Set<JavaScriptSemanticInitializer>;
+  readonly blockers: Map<ChainEntry, number>;
 }
 
 type ExpansionTask =
@@ -54,8 +74,8 @@ const contextContains = (
   context: InitializerContext,
   required: InitializerContext,
 ): boolean => {
-  for (const initializer of required)
-    if (!context.has(initializer)) return false;
+  for (const [entry, depth] of required)
+    if (context.get(entry) !== depth) return false;
   return true;
 };
 
@@ -64,9 +84,9 @@ const propagateBlockers = (
   parent: ExpansionFrame | null,
 ): void => {
   if (parent === null) return;
-  for (const initializer of blockers)
-    if (parent.item.initializers.has(initializer))
-      parent.blockers.add(initializer);
+  for (const [entry, depth] of blockers)
+    if (parent.item.chain.get(entry) === depth)
+      parent.blockers.set(entry, depth);
 };
 
 const completeExpansion = (
@@ -121,7 +141,7 @@ export const createSemanticReturnedReferences = (
     const work: ExpansionTask[] = [
       {
         kind: "visit",
-        item: { node: callee, path: [], initializers: new Set() },
+        item: { node: callee, path: [], chain: new Map() },
         parent: null,
       },
     ];
@@ -142,7 +162,7 @@ export const createSemanticReturnedReferences = (
       const covered = expanded
         .get(node)
         ?.get(pathKey)
-        ?.find((context) => contextContains(item.initializers, context));
+        ?.find((context) => contextContains(item.chain, context));
       if (covered !== undefined) {
         // Cached cycle dependencies must reach the caller's proof too.
         propagateBlockers(covered, parent);
@@ -153,7 +173,7 @@ export const createSemanticReturnedReferences = (
         node,
         pathKey,
         parent,
-        blockers: new Set(),
+        blockers: new Map(),
       };
       work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
@@ -165,18 +185,46 @@ export const createSemanticReturnedReferences = (
           node,
           state.parentsByNode,
         ).binding;
+        // A write that reads its own binding through a member (x = x.next)
+        // grows the projection on every pass. Each such write is followed
+        // once per chain, but a binding with several of them (t = t.child,
+        // t = t.return, t = t.sibling) is still walked in every order, and
+        // the paths of those orders are all distinct, so the work grows
+        // exponentially with the writes. Grow a binding's projection once per
+        // chain: when the binding is re-read with a longer projection, writes
+        // that read a binding already on the chain are cycle blockers at this
+        // binding, and only writes that leave the chain (x = root) continue.
+        // Re-reads at the same depth keep every write, as alias cycles and
+        // position-narrowed reads need.
+        const recorded = item.chain.get(binding);
+        const entered =
+          recorded === undefined
+            ? undefined
+            : recorded >= 0
+              ? recorded
+              : -recorded - 1;
+        const deeper = entered !== undefined && item.path.length > entered;
+        if (deeper && recorded !== undefined && recorded < 0) {
+          // Second deeper re-read: the chain already grew this binding once.
+          frame.blockers.set(binding, recorded);
+          continue;
+        }
+        const chain = new Map(item.chain);
+        if (recorded === undefined) chain.set(binding, item.path.length);
+        else if (deeper && entered !== undefined)
+          chain.set(binding, -(entered + 1));
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers,
         ]) {
-          if (item.initializers.has(initializer)) {
-            frame.blockers.add(initializer);
+          if (item.chain.has(initializer)) {
+            frame.blockers.set(initializer, 0);
             continue;
           }
           pending.push({
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
-            initializers: new Set([...item.initializers, initializer]),
+            chain: new Map(chain).set(initializer, 0),
           });
         }
       } else if (

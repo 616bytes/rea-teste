@@ -69,7 +69,7 @@ export const readLinuxResourceLimits = async (
   resourceScope?: ArtifactResourceScope,
 ): Promise<LinuxResourceLimits> => {
   const file = await open("/proc/self/limits", "r");
-  return await withArtifactFileHandle(
+  return withArtifactFileHandle(
     "/proc/self/limits",
     file,
     resourceScope,

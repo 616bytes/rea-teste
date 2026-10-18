@@ -35,6 +35,7 @@ import {
   syntaxMayCompleteNormally,
   syntaxAlwaysThrows,
   syntaxMayReachNextIteration,
+  syntaxMayContinue,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -463,6 +464,15 @@ const webSocketSuspensionPrefixes = new WeakMap<
   WeakMap<t.Node, ReadonlyMap<t.Node, WebSocketSuspension>>
 >();
 
+/** Break/return/throw paths bypass updates; only a continuing path can skip its wait. */
+const webSocketUpdateSuspension = (
+  body: t.BlockStatement,
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketSuspension | undefined =>
+  syntaxMayContinue(body)
+    ? undefined
+    : webSocketCompletedSuspension(body, state);
+
 /** Index sibling phases once rather than rescan a suspended body per socket. */
 const webSocketPrecedingSuspension = (
   parent: t.Node,
@@ -481,6 +491,8 @@ const webSocketPrecedingSuspension = (
     child === parent.right
   )
     return webSocketCompletedSuspension(parent.left, state);
+  if (t.isTryStatement(parent) && child === parent.handler)
+    return webSocketEveryExitSuspension(parent.block);
   if (t.isTryStatement(parent) && child === parent.finalizer) {
     const handler = webSocketMandatoryHandler(parent);
     return (
@@ -535,8 +547,8 @@ const webSocketPrecedingSuspension = (
     return (
       (t.isForStatement(parent) &&
       child === parent.update &&
-      !webSocketBodyMayJump(parent.body)
-        ? webSocketCompletedSuspension(parent.body, state)
+      t.isBlockStatement(parent.body)
+        ? webSocketUpdateSuspension(parent.body, state)
         : undefined) ??
       (parent.test == null
         ? undefined
@@ -877,6 +889,7 @@ const webSocketGeneratorConsumerPhase = (
   if (t.isSpreadElement(invocation)) return "same-turn";
   if (t.isArrayPattern(invocation))
     return semanticPatternSuspendsBeforeGeneratorRead({
+      executionFrames: (node) => webSocketExecutionContexts(node, state, true),
       read,
       body,
       pattern: invocation,
@@ -1170,6 +1183,7 @@ export const webSocketExecutionContexts = (
                 state,
                 (operand) =>
                   webSocketCompletedSuspension(operand, state) !== undefined,
+                (node) => webSocketExecutionContexts(node, state, true),
               )
             )
               suspendedOwner = webSocketSuspensionOwner(site, state);

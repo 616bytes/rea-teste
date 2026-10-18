@@ -76,12 +76,13 @@ const bindingInitializedBeforeRead = (
 };
 
 /** Parameters, private names and arbitrary setters still need different completion proofs. */
-const assignmentCanComplete = (
-  node: t.AssignmentExpression,
+export const semanticAssignmentTargetCanComplete = (
+  targetNode: t.Node,
+  read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
-  const target = unwrapJavaScriptExpression(node.left).node;
+  const target = unwrapJavaScriptExpression(targetNode).node;
   if (!t.isIdentifier(target)) return false;
   const binding = resolveSemanticBindingState(state, target, target.name);
   return (
@@ -89,7 +90,7 @@ const assignmentCanComplete = (
     ![...binding.declarationKinds].some(
       (kind) => kind === "const" || kind === "using" || kind === "await using",
     ) &&
-    bindingInitializedBeforeRead(binding, node, state, executionFrames)
+    bindingInitializedBeforeRead(binding, read, state, executionFrames)
   );
 };
 
@@ -110,7 +111,12 @@ const prefixCanComplete = (
   return (
     t.isAssignmentExpression(node) &&
     node.operator === "=" &&
-    assignmentCanComplete(node, state, executionFrames) &&
+    semanticAssignmentTargetCanComplete(
+      node.left,
+      node,
+      state,
+      executionFrames,
+    ) &&
     prefixCanComplete(node.right, state, executionFrames)
   );
 };
@@ -130,6 +136,11 @@ export const semanticExactResultOperand = (
   )
     return undefined;
   return javaScriptExactResultOperand(node, (assignment) =>
-    assignmentCanComplete(assignment, state, executionFrames),
+    semanticAssignmentTargetCanComplete(
+      assignment.left,
+      assignment,
+      state,
+      executionFrames,
+    ),
   );
 };

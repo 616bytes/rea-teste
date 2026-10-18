@@ -682,6 +682,78 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "completion-adoption-0.js",
+    source:
+      '(async()=>{const pending=(async()=>{await 0;new Socket("wss://example.test/review-latest")})();await((_unused)=>pending)(0);const Socket=globalThis.WebSocket})();',
+    present: false,
+  },
+  {
+    file: "completion-adoption-1.js",
+    source:
+      '(async()=>{const[[x],y=await 0]=(function*(){try{yield {__proto__:null};yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completion-adoption-2.js",
+    source:
+      'const fixed=0;(async()=>{let y;[fixed,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completion-adoption-3.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{break}catch{await 0;continue}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completion-adoption-4.js",
+    source:
+      '(async()=>{for(let i=0;i<1;new Socket("wss://example.test/review-latest"),i++){if(skip)break;await 0}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-adoption-5.js",
+    source:
+      '(async()=>{try{await 0;throw 0}catch{new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-adoption-6.js",
+    source:
+      '(async()=>{(+1)?.[await 0];new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-adoption-7.js",
+    source:
+      'new(class{},globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "completion-adoption-8.js",
+    source:
+      '(class{static run(){new Socket("wss://example.test/review-latest")}static #effect=(this.run=()=>{})}).run();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-adoption-9.js",
+    source:
+      "export {};const pending=import('ws');pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>pending)();new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
+    file: "completion-adoption-10.js",
+    source:
+      "export {};const pending=import('ws');const{WebSocket:Socket}=await(async()=>pending)();new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
+    file: "completion-adoption-11.js",
+    source:
+      "export {};const pending=import('ws');pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>await pending)();new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
     file: "argument-review-0.js",
     source:
       '(async()=>{maybe?.(await 0,new Socket("wss://example.test/review-latest"));})();const Socket=globalThis.WebSocket;',
@@ -1043,7 +1115,7 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(30);
+    expect(observations).toHaveLength(37);
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

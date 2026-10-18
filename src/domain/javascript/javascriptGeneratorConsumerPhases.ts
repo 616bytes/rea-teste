@@ -16,6 +16,8 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { semanticLiteralProjectionSlot } from "./javascriptSemanticLiteralProjection.js";
+import { semanticAssignmentTargetCanComplete } from "./javascriptSemanticExpressionResults.js";
+import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
 
 interface PatternWaitCache {
   readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
@@ -158,6 +160,49 @@ const nullishPatternValue = (
     value.node !== undefined &&
     t.isNullLiteral(patternValueNode(value.node)));
 
+/** Proven primitive failures and an own null prototype cannot acquire an iterator. */
+const noniterablePatternValue = (
+  value: PatternValue,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (nullishPatternValue(value, state)) return true;
+  if (!value.known || value.node === undefined) return false;
+  const node = patternValueNode(value.node);
+  const literal = readExactJavaScriptLiteral(node);
+  if (literal.found) {
+    const boxed =
+      typeof literal.value === "number"
+        ? "Number"
+        : typeof literal.value === "boolean"
+          ? "Boolean"
+          : "BigInt";
+    return (
+      typeof literal.value !== "string" &&
+      [boxed, "Object"].every(
+        (name) =>
+          !state.ambientWrites.covers(["global", name, "prototype", null]) &&
+          !state.ambientEscapes.covers(["global", name, "prototype", null]),
+      )
+    );
+  }
+  return (
+    t.isObjectExpression(node) &&
+    node.properties.every(
+      (property) =>
+        !t.isSpreadElement(property) &&
+        semanticStaticPropertyKey(property.key, property.computed) !== null,
+    ) &&
+    node.properties.some(
+      (property) =>
+        t.isObjectProperty(property) &&
+        !property.computed &&
+        !property.shorthand &&
+        semanticStaticPropertyKey(property.key, false) === "__proto__" &&
+        t.isNullLiteral(property.value),
+    )
+  );
+};
+
 /** Use the same mutation and iterator proof as ordinary literal projections. */
 const patternPropertyValue = (
   value: PatternValue,
@@ -254,6 +299,7 @@ const patternCompletedSuspension = (
   depth = 0,
   target?: t.Node,
   targetPath?: ReadonlySet<t.Node>,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): PatternCompletion => {
   if (depth >= 128) return "blocked";
   if (pattern === target) return "completed";
@@ -273,6 +319,7 @@ const patternCompletedSuspension = (
         depth + 1,
         target,
         targetPath,
+        executionFrames,
       ),
     );
   }
@@ -300,6 +347,7 @@ const patternCompletedSuspension = (
         depth + 1,
         target,
         targetPath,
+        executionFrames,
       );
       phase = combinePatternCompletion(phase, completion);
       if (patternBlocked(phase)) return phase;
@@ -308,7 +356,7 @@ const patternCompletedSuspension = (
   }
   if (t.isArrayPattern(pattern)) {
     // GetIterator runs even for an empty pattern, before later slots/defaults.
-    if (nullishPatternValue(value, state)) return "blocked";
+    if (noniterablePatternValue(value, state)) return "blocked";
     for (const [index, element] of pattern.elements.entries()) {
       if (element === null) continue;
       const completion = patternCompletedSuspension(
@@ -321,11 +369,35 @@ const patternCompletedSuspension = (
         depth + 1,
         target,
         targetPath,
+        executionFrames,
       );
       phase = combinePatternCompletion(phase, completion);
       if (patternBlocked(phase)) return phase;
       if (targetPath?.has(element)) return phase;
     }
+  }
+  if (t.isIdentifier(pattern) || t.isMemberExpression(pattern)) {
+    let owner: t.Node | undefined = pattern;
+    while (
+      owner !== undefined &&
+      !t.isAssignmentExpression(owner) &&
+      !t.isVariableDeclarator(owner) &&
+      !t.isFunction(owner)
+    )
+      owner = state.parentsByNode.get(owner);
+    if (
+      t.isAssignmentExpression(owner) &&
+      !semanticAssignmentTargetCanComplete(
+        pattern,
+        pattern,
+        state,
+        executionFrames,
+      )
+    )
+      return combinePatternCompletion(
+        patternExpressionCompletion(pattern, suspended),
+        "blocked",
+      );
   }
   return phase;
 };
@@ -337,6 +409,7 @@ export const semanticPatternSuspendsBeforeTarget = (
   target: t.Node,
   state: JavaScriptSemanticAnalysisState,
   completedSuspension: (node: t.Node) => boolean,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
   const path = new Set<t.Node>();
   let current: t.Node | undefined = target;
@@ -352,6 +425,7 @@ export const semanticPatternSuspendsBeforeTarget = (
           0,
           target,
           path,
+          executionFrames,
         ) === "suspended"
       );
     current = state.parentsByNode.get(current);
@@ -369,6 +443,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   maySuspend,
   completedSuspension,
   ownedResultEscape,
+  executionFrames,
 }: {
   readonly read: t.Node;
   readonly body: t.Node;
@@ -378,6 +453,9 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   readonly maySuspend: (node: t.Node) => boolean;
   readonly completedSuspension: (node: t.Node) => boolean;
   readonly ownedResultEscape?: t.Node;
+  readonly executionFrames?: (
+    node: t.Node,
+  ) => readonly SemanticExecutionFrame[];
 }): boolean => {
   const facts = generatorPrefixes(body, ordered, maySuspend, state);
   const count = facts.before.get(unwrapJavaScriptExpression(read).node);
@@ -428,6 +506,10 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
       },
       state,
       completedSuspension,
+      0,
+      undefined,
+      undefined,
+      executionFrames,
     );
     if (patternSuspended(completion)) firstWait ??= index;
     if (patternBlocked(completion)) {

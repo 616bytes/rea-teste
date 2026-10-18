@@ -4653,6 +4653,156 @@ const consumerRouteReviewCases = [
     "new({key:null.value},globalThis.WebSocket)(URL);",
     false,
   ],
+  [
+    "safe wrapper argument preserves blocking wait",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL)})();await((_unused)=>pending)(0);const Socket=globalThis.WebSocket})();",
+    false,
+  ],
+  [
+    "throwing wrapper argument skips blocking wait",
+    "(async()=>{const pending=(async()=>{await 0;new Socket(URL)})();try{await((_unused)=>pending)(null.value)}catch{}const Socket=globalThis.WebSocket})();",
+    true,
+  ],
+  [
+    "wrapper supplied parameter shadows promise",
+    "(async()=>{const pending=(async()=>{await ready;new Socket(URL)})();await((pending)=>pending)(0);const Socket=globalThis.WebSocket})();",
+    true,
+  ],
+  [
+    "null prototype pattern blocks later default",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield {__proto__:null};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "primitive noniterable pattern blocks later default",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield 1;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "string pattern permits later default",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield 'a';yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed pattern assignment blocks later default",
+    "const fixed=0;(async()=>{let y;[fixed,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "mutable pattern assignment permits later default",
+    "let fixed=0;(async()=>{let y;[fixed,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed assignment retains earlier wait",
+    "const fixed=0;(async()=>{let x;[x=await 0,fixed]=(function*(){try{yield undefined;yield 0}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unreachable catch cannot resume generator",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{break}catch{await 0;continue}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing catch can resume generator",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{throw 0}catch{await 0;continue}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "conditional break bypasses update not its wait",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++){if(skip)break;await 0}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "conditional continue bypasses update wait",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++){if(skip)continue;await 0}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "catch inherits preceding literal wait",
+    "(async()=>{try{await 0;throw 0}catch{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "catch before wait remains eager",
+    "(async()=>{try{null.value;await 0}catch{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "positive numeric receiver",
+    "(async()=>{(+1)?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "boolean unary receiver",
+    "(async()=>{(!0)?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "typeof unary receiver",
+    "(async()=>{(typeof 0)?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "empty class sequence prefix",
+    "new(class{},globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "inert method class sequence prefix",
+    "new(class{run(){throw 0}},globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "throwing class heritage prefix",
+    "new(class extends null.value{},globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
+    "throwing class static prefix",
+    "new(class{static x=null.value},globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
+    "private static effect retains dormant body metadata",
+    "(class{static run(){new Socket(URL)}static #effect=(this.run=()=>{})}).run();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "private inert static field keeps eager method",
+    "(class{static run(){new Socket(URL)}static #value=1}).run();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "changed then adopted by async return",
+    "export {};const pending=import('ws');pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>pending)();new Socket(URL);",
+    false,
+  ],
+  [
+    "unchanged promise adopted by async return",
+    "export {};const pending=import('ws');const{WebSocket:Socket}=await(async()=>pending)();new Socket(URL);",
+    true,
+  ],
+  [
+    "return await bypasses own promise then",
+    "export {};const pending=import('ws');pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>await pending)();new Socket(URL);",
+    true,
+  ],
+  [
+    "number prototype iterator leaves consumer phase unresolved",
+    "Number.prototype[Symbol.iterator]=function*(){yield 0};(async()=>{const[[x],y=await 0]=(function*(){try{yield 1;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null prototype with data still blocks iteration",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield {__proto__:null,x:1};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "own iterator on null prototype leaves consumer phase unresolved",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield {__proto__:null,*[Symbol.iterator](){yield 0}};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
 ] as const;
 describe("web bundle completed consumer routes", () => {
   it.each(consumerRouteReviewCases)(

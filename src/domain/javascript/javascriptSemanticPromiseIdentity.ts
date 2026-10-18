@@ -16,16 +16,24 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
-import { createUnconditionalEvaluationProof } from "./javascriptSymbolicControlFlow.js";
+import {
+  createUnconditionalEvaluationProof,
+  syntaxEvaluationCannotThrow,
+} from "./javascriptSymbolicControlFlow.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 
-/** A zero-argument literal wrapper can return a promise without allocating one. */
+/** Inert arguments and simple parameters preserve an exact literal return. */
 const directLiteralReturn = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  allowAsync = false,
 ): t.Node | undefined => {
   if (
     (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
-    node.arguments.length !== 0
+    !node.arguments.every(
+      (argument) =>
+        !t.isSpreadElement(argument) && syntaxEvaluationCannotThrow(argument),
+    )
   )
     return undefined;
   let callee = unwrapJavaScriptExpression(node.callee).node;
@@ -35,7 +43,7 @@ const directLiteralReturn = (
     callee = unwrapJavaScriptExpression(result).node;
   }
   return t.isArrowFunctionExpression(callee) || t.isFunctionExpression(callee)
-    ? semanticDirectFunctionReturn(callee)
+    ? semanticDirectFunctionReturn(callee, { allowAsync })
     : undefined;
 };
 
@@ -112,27 +120,47 @@ export const semanticPromiseSettlementDependency = (
     if (result === undefined || seen.has(result.node)) return undefined;
     seen.add(result.node);
     aliases.push(...result.aliases);
-    const call = unwrapJavaScriptExpression(result.node).node;
-    if (
-      (!t.isCallExpression(call) && !t.isOptionalCallExpression(call)) ||
-      call.arguments.length !== 0
-    )
-      return { node: result.node, aliases };
-    let callee = unwrapJavaScriptExpression(call.callee).node;
-    for (;;) {
-      const selected = semanticExactResultOperand(callee, state);
-      if (selected === undefined) break;
-      callee = unwrapJavaScriptExpression(selected).node;
-    }
-    if (
-      (!t.isFunctionExpression(callee) &&
-        !t.isArrowFunctionExpression(callee)) ||
-      !callee.async
-    )
-      return { node: result.node, aliases };
-    const returned = semanticDirectFunctionReturn(callee, { allowAsync: true });
+    const returned = directLiteralReturn(result.node, state, true);
     if (returned === undefined) return { node: result.node, aliases };
     const value = unwrapJavaScriptExpression(returned).node;
+    if (!t.isAwaitExpression(value)) {
+      // Async return adopts via Get(then), unlike awaiting a native promise.
+      // Request the same alias-aware effect index used by literal projections.
+      onLiteralProjection?.();
+      const adopted = semanticPromiseResultIdentity(
+        value,
+        state,
+        onLiteralProjection,
+      );
+      if (
+        state.ambientWrites.covers([
+          "global",
+          "Promise",
+          "prototype",
+          "then",
+        ]) ||
+        adopted === undefined ||
+        adopted.aliases.some(({ read }) => {
+          const binding = resolveSemanticBindingState(state, read, read.name);
+          return (
+            binding === undefined ||
+            binding.escapedPaths.some(
+              ({ path }) =>
+                path.length === 0 ||
+                (path.length === 1 &&
+                  semanticPropertyPathKeyMatches(path[0] ?? null, "then")),
+            ) ||
+            binding.memberWrites.some(
+              ({ path }) =>
+                path.length === 0 ||
+                (path.length === 1 &&
+                  semanticPropertyPathKeyMatches(path[0] ?? null, "then")),
+            )
+          );
+        })
+      )
+        return undefined;
+    }
     current = t.isAwaitExpression(value) ? value.argument : value;
   }
 };

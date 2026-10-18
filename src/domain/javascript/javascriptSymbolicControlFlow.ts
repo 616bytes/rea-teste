@@ -167,7 +167,10 @@ const syntaxTryCompletion = (
   complete: CompleteSyntax,
 ): SyntaxCompletion => {
   let completion = complete(node.block);
-  if (node.handler != null) {
+  if (
+    node.handler != null &&
+    completion.abrupt.some(({ kind }) => kind === "throw")
+  ) {
     const handler = complete(node.handler.body);
     // Expressions may throw even when their ordinary completion is known.
     // A catch must also exit before a try/catch can prove a definite exit.
@@ -215,11 +218,14 @@ const syntaxLoopCompletion = (
 ): SyntaxCompletion => ({
   // Loop termination is deliberately not proven from syntax alone.
   normal: true,
-  abrupt: complete(node.body).abrupt.filter(
-    (exit) =>
-      (exit.kind !== "break" && exit.kind !== "continue") ||
-      exit.label !== null,
-  ),
+  abrupt: [
+    { kind: "throw" },
+    ...complete(node.body).abrupt.filter(
+      (exit) =>
+        (exit.kind !== "break" && exit.kind !== "continue") ||
+        exit.label !== null,
+    ),
+  ],
 });
 
 const syntaxIfCompletion = (
@@ -233,7 +239,13 @@ const syntaxIfCompletion = (
   const alternate = complete(node.alternate);
   return {
     normal: consequent.normal || alternate.normal,
-    abrupt: [...consequent.abrupt, ...alternate.abrupt],
+    abrupt: [
+      ...consequent.abrupt,
+      ...alternate.abrupt,
+      ...(syntaxEvaluationCannotThrow(node.test)
+        ? []
+        : [{ kind: "throw" as const }]),
+    ],
   };
 };
 
@@ -249,7 +261,14 @@ const syntaxCompletion = (
   if (t.isReturnStatement(node) || t.isThrowStatement(node))
     return {
       normal: false,
-      abrupt: [{ kind: t.isReturnStatement(node) ? "return" : "throw" }],
+      abrupt: [
+        { kind: t.isReturnStatement(node) ? "return" : "throw" },
+        ...(t.isReturnStatement(node) &&
+        node.argument != null &&
+        !syntaxEvaluationCannotThrow(node.argument)
+          ? [{ kind: "throw" as const }]
+          : []),
+      ],
     };
   if (t.isBreakStatement(node) || t.isContinueStatement(node))
     return {
@@ -280,7 +299,9 @@ const syntaxCompletion = (
   if (t.isLabeledStatement(node))
     return syntaxLabeledCompletion(node, complete);
   if (t.isWithStatement(node)) return complete(node.body);
-  return normalCompletion;
+  return syntaxEvaluationCannotThrow(node)
+    ? normalCompletion
+    : { normal: true, abrupt: [{ kind: "throw" }] };
 };
 
 /** A selected case test can be skipped only through a normally completing predecessor. */
@@ -413,6 +434,12 @@ export const syntaxMayReachNextIteration = (body: t.Node): boolean => {
     )
   );
 };
+
+/** Only continues escaping nested owners can bypass this loop body's wait. */
+export const syntaxMayContinue = (body: t.Node): boolean =>
+  syntaxCompletion(body, 0).abrupt.some(
+    ({ kind }) => kind === "continue" || kind === "unknown",
+  );
 /** Narrow syntax-only completion proof; reads, calls and disposal remain uncertain. */
 export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
   const cached = nonthrowingEvaluations.get(node);
@@ -425,6 +452,22 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     t.isArrowFunctionExpression(node) ||
     t.isRegExpLiteral(node) ||
     t.isBigIntLiteral(node) ||
+    (t.isClassExpression(node) &&
+      node.superClass == null &&
+      (node.decorators?.length ?? 0) === 0 &&
+      node.body.body.every(
+        (member) =>
+          (t.isClassMethod(member) ||
+            t.isClassPrivateMethod(member) ||
+            t.isClassProperty(member) ||
+            t.isClassPrivateProperty(member)) &&
+          (!("computed" in member) || !member.computed) &&
+          (member.decorators?.length ?? 0) === 0 &&
+          (!(t.isClassProperty(member) || t.isClassPrivateProperty(member)) ||
+            !member.static ||
+            member.value == null ||
+            syntaxEvaluationCannotThrow(member.value)),
+      )) ||
     (t.isUnaryExpression(node, { operator: "-" }) &&
       (t.isNumericLiteral(node.argument) || t.isBigIntLiteral(node.argument)));
   if (t.isObjectExpression(node))

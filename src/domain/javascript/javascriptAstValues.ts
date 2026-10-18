@@ -306,7 +306,16 @@ export const semanticFinalClassMember = (
     )
       continue;
     // Accessor definitions and private names are not public data selections.
-    if (t.isClassPrivateProperty(member)) continue;
+    if (t.isClassPrivateProperty(member)) {
+      if (
+        member.value != null &&
+        !readExactJavaScriptLiteral(member.value).found &&
+        !t.isFunctionExpression(member.value) &&
+        !t.isArrowFunctionExpression(member.value)
+      )
+        return undefined;
+      continue;
+    }
     if (t.isClassAccessorProperty(member)) return undefined;
     const name = semanticStaticPropertyKey(member.key, member.computed);
     if (

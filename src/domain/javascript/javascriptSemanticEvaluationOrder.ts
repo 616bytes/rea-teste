@@ -168,9 +168,8 @@ const optionalOperationMaySkip = (
     !t.isRegExpLiteral(receiver) &&
     !t.isBigIntLiteral(receiver) &&
     !(
-      t.isUnaryExpression(receiver, { operator: "-" }) &&
-      (t.isNumericLiteral(receiver.argument) ||
-        t.isBigIntLiteral(receiver.argument))
+      t.isUnaryExpression(receiver) &&
+      ["+", "-", "~", "!", "typeof", "delete"].includes(receiver.operator)
     ) &&
     !t.isNewExpression(receiver)
   );

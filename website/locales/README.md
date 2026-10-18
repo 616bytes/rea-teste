@@ -130,6 +130,9 @@ website messages remain untranslated and use the labeled, nonindexable English
 fallback described above; the README translation does not establish website
 translation coverage.
 
+Azerbaijani (`az`) follows the same arrangement: a translated README and a
+pending website catalog that uses the labeled, nonindexable English fallback.
+
 The first catalogs started with machine-assisted drafts. They include editorial
 corrections to navigation, prompts and technical terminology. Traditional Chinese
 started from the Simplified Chinese draft and is maintained independently.

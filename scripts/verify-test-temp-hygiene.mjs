@@ -1,26 +1,11 @@
 import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const vitestPath = resolve(repositoryRoot, "node_modules/vitest/vitest.mjs");
-const OWNED_ENTRY = /^(?:rea-|bb-session-)/u;
-
-const findOwnedEntries = async (root, directory = root) => {
-  const owned = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name);
-    if (OWNED_ENTRY.test(entry.name)) {
-      owned.push(relative(root, path));
-      continue;
-    }
-    if (entry.isDirectory())
-      owned.push(...(await findOwnedEntries(root, path)));
-  }
-  return owned;
-};
 
 const canonicalTemporaryRoot = await realpath(tmpdir());
 const isolatedTemporaryRoot = await mkdtemp(
@@ -53,7 +38,9 @@ try {
     );
   }
 
-  const residues = await findOwnedEntries(isolatedTemporaryRoot);
+  // This run owns the entire fresh root. Caller-selected prefixes and tool
+  // caches do not change ownership; list entries without following symlinks.
+  const residues = (await readdir(isolatedTemporaryRoot)).sort();
   if (residues.length > 0) {
     failures.push(`Owned temporary residues:\n${residues.join("\n")}`);
   }

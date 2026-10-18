@@ -1570,3 +1570,89 @@ it("keeps distinct nearest bodies while reusing nested read ancestries", () => {
       .sort(),
   );
 });
+
+it.each(
+  [
+    {
+      setup: "const getter={get:()=>({})};getter.get=()=>module;",
+      value: "getter.get()",
+    },
+    {
+      setup:
+        "const getter={get:()=>({})};const alias=getter;alias.get=()=>module;",
+      value: "getter.get()",
+    },
+    {
+      setup:
+        "const getter={get:()=>({})};Object.defineProperty(getter,'get',{value:()=>module});",
+      value: "getter.get()",
+    },
+    {
+      setup:
+        "const getter={get:()=>({})};Object.defineProperty(getter,'get',{get(){return ()=>module}});",
+      value: "getter.get()",
+    },
+    {
+      setup: "const getter={get:()=>({})};patch(getter);",
+      value: "getter.get()",
+    },
+    { setup: "const get=flag?()=>({}):unknown;", value: "get()" },
+    {
+      setup: "const getter=[()=>({})];getter[0]=()=>module;",
+      value: "getter[0]()",
+    },
+    {
+      setup: "const getter={...unknown,get:()=>({})};",
+      value: "getter[choice]()",
+    },
+    { setup: "class Box{owner=module}", value: "new Box()" },
+  ].flatMap((entry) => [false, true].map((written) => ({ ...entry, written }))),
+)(
+  "does not use partial callable references as a complete result proof: $value / $written / $setup",
+  ({ setup, value, written }) => {
+    const input = written
+      ? `const box={};box.owner=${value};Object.assign({},box.owner);`
+      : `Object.assign({},${value});`;
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup}Object.assign=(t,v)=>{(v.owner??v).require=replacement};${input}require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each(
+  [
+    { setup: "function get(){return {}}", value: "get()" },
+    { setup: "const getter={get:()=>({})};", value: "getter.get()" },
+    { setup: "const getter={get(){return {}}};", value: "getter.get()" },
+    {
+      setup: "const getter={get:()=>({})};const alias=getter;",
+      value: "alias.get()",
+    },
+    { setup: "const getter=[()=>({})];", value: "getter[0]()" },
+    { setup: "const get=flag?()=>({}):()=>({});", value: "get()" },
+  ].flatMap((entry) => [false, true].map((written) => ({ ...entry, written }))),
+)(
+  "requires complete local call targets for module-free results: $value / $written",
+  ({ setup, value, written }) => {
+    const input = written
+      ? `const box={};box.owner=${value};Object.assign({},box.owner);`
+      : `Object.assign({},${value});`;
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup}Object.assign=(t,v)=>{v.require=replacement};${input}require('fs').readFileSync('kept');`,
+      ).configurationOperations.map((x) => x.key),
+    ).toEqual(value === "get()" ? ["kept"] : []);
+  },
+);
+it.each([true, false])(
+  "retains a bound intrinsic this receiver containing module: %s",
+  (moduleReceiver) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const get=Object.prototype.valueOf.bind(${moduleReceiver ? "module" : "{}"});Object.assign=(t,f)=>{f().require=replacement};Object.assign({},get);require('fs').readFileSync('kept');`,
+      ).configurationOperations.map((x) => x.key),
+    ).toEqual(moduleReceiver ? [] : ["kept"]);
+  },
+);

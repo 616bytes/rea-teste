@@ -29,6 +29,10 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import { semanticObjectPropertyReferences } from "./javascriptSemanticObjectReferences.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import {
+  resolveLocalCallables,
+  type LocalCallableResolution,
+} from "./javascriptSemanticCallResolution.js";
 import { createSemanticAmbientEffectQuery } from "./javascriptSemanticEffectQueries.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -412,6 +416,10 @@ const writesModuleRequire = (
   // Accessors and unproven descriptor/source maps remain conservative.
   const ambientEffectAt = createSemanticAmbientEffectQuery(state);
   const returnedReferences = createSemanticReturnedReferences(state);
+  const callableById = new Map(
+    state.callables.map((callable) => [callable.callableId, callable]),
+  );
+  const callableCache = new WeakMap<t.Identifier, LocalCallableResolution>();
   const inheritedDescriptorFieldChanged = (
     field: string,
     at: t.Node,
@@ -1176,7 +1184,10 @@ const writesModuleRequire = (
         const bound = interop.boundIntrinsic(value);
         if (bound?.kind === "known") {
           pending.push(
-            ...(bound.arguments ?? []).map((node) => ({
+            ...[
+              ...(bound.receiver === undefined ? [] : [bound.receiver]),
+              ...(bound.arguments ?? []),
+            ].map((node) => ({
               node,
               path: [],
               readAt: node,
@@ -1184,10 +1195,20 @@ const writesModuleRequire = (
           );
           continue;
         }
-        const results = returnedReferences(value.callee);
         // A callable result can carry module even with no arguments. Unknown
-        // results cannot prove that an overwritten intrinsic received no module.
-        if (results.length === 0 && !interop.isFreshObject(value)) return true;
+        // or partial candidates cannot prove absence. Use the call-target
+        // owner's completeness contract; returned references only expose
+        // positive possibilities and intentionally do not prove method slots.
+        const callable = resolveLocalCallables({
+          node: value.callee,
+          state,
+          callableById,
+          bindingCache: callableCache,
+          seenInitializers: new Set(),
+        });
+        if (!callable.complete) return true;
+        const results = returnedReferences(value.callee);
+        if (results.length === 0) return true;
         pending.push(
           ...value.arguments.map((node) => ({ node, path: [], readAt })),
           ...results.map((reference) => ({

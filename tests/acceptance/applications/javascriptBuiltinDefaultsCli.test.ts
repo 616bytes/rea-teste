@@ -14,6 +14,9 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const getter={get:()=>({})};getter.get=()=>module;const box={};box.owner=getter.get();Object.assign=(t,v)=>{v.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong-replaced-getter');",
+    "class Box{owner=module}Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},new Box());require('fs').readFileSync('wrong-constructor-module-field');",
+    "const get=Object.prototype.valueOf.bind(module);Object.assign=(t,f)=>{f().require=replacement};Object.assign({},get);require('fs').readFileSync('wrong-bound-this');",
     "const fs=require('fs');Reflect.set=(Reflect.set(fs,'readFileSync',custom,{}),other);fs.readFileSync('nested-write-kept.json');",
     "Reflect.set(module,'require',replacement,(0,{}));require('fs').readFileSync('fresh-sequence-receiver.json');",
     "const fs=require('fs');Reflect.set(fs,'reviewHook',1,{fs});fs.readFileSync('late-prototype-kept.json');Object.defineProperty(Object.prototype,'reviewHook',{set(v){this.fs.readFileSync=custom}});",

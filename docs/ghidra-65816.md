@@ -9,6 +9,18 @@ REA admits `65816` as a raw-only architecture so single-file Super Nintendo ROM 
   - https://github.com/achan1989/ghidra-65816 (archived)
 - A caller-supplied single-file ROM that you own or are authorised to analyse.
 
+### Installing the extension
+
+REA runs Ghidra in an isolated environment and does **not** search the user's normal Ghidra profile or home directory for extensions.
+
+Place the extension under the selected Ghidra installation:
+
+```text
+$GHIDRA_INSTALL_DIR/Ghidra/Extensions/<extension-name>
+```
+
+Then restart any REA session so the isolated runtime picks it up. See also `docs/ghidra-psp.md` for the same isolated-extension pattern.
+
 ## Usage
 
 Open the ROM as a raw binary and explicitly select the architecture and entry point:
@@ -33,6 +45,10 @@ Common starting load addresses (for a headerless image):
 
 REA does not auto-detect LoROM vs HiROM or interleave multi-file ROM sets in this version. Supply the correct load address yourself.
 
+### Load base vs reset entry
+
+The raw-binary path uses a single `entry_point` value both as the load base (where file offset 0 is mapped) and as the seeded entry function. On a real SNES ROM the reset vector often points somewhere other than the first ROM byte. Using `0x8000` maps the file correctly but invents the entry; supplying the real reset address shifts every file-backed address. For v1, prefer images where the desired entry is at file offset 0, or accept the limitation.
+
 ## Important: SMC copier header
 
 Many `.smc` files contain a 512-byte copier header at the start. REA's raw-binary loader maps the file contiguously from the given entry point; it does **not** strip this header.
@@ -44,6 +60,7 @@ If you load a headered `.smc` at `0x8000` without removing the first 512 bytes, 
 - No automatic memory map / LoROM-HiROM detection. A simple contiguous raw load does not implement SNES banked addressing; addresses beyond the first bank may not match a real cartridge mapping.
 - No multi-file or interleaved ROM support.
 - No automatic SMC header stripping.
+- Single `entry_point` serves as both load base and entry; no separate base/entry values.
 - No emulation.
 - Decompilation quality depends on the installed 65816 SLEIGH module and on correctly setting the M/X flag state in Ghidra for the region being analysed.
 - Analysis is read-only.
@@ -52,4 +69,5 @@ If you load a headered `.smc` at `0x8000` without removing the first 512 bytes, 
 ## Related
 
 - Issue: https://github.com/morluto/rea/issues/4794
-- Existing raw-binary path used by `6502`.
+- Existing raw-binary path used by `6502` and `m68k`.
+- Canonical raw-binary guide: `docs/raw-binary.md`.

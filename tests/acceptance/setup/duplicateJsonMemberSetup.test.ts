@@ -261,3 +261,38 @@ cliTest(
     });
   },
 );
+
+for (const [layout, servers] of [
+  ["one native entry", `"rea": ${openCodeOwned}`],
+  [
+    "repeated native entries",
+    `"rea": ${openCodeOwned}, "rea": ${openCodeOwned}`,
+  ],
+] as const)
+  cliTest(
+    `uninstall keeps ${layout} when OpenCode would fall back to a foreign V1 entry`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory("rea-json-duplicate-");
+      const config = join(home, ".config/opencode/opencode.json");
+      // Without the native entry, OpenCode loads the V1 `mcp.rea` member.
+      const original = `{\n  "mcp": {\n    "servers": {${servers}},\n    "rea": ${openCodeForeign}\n  }\n}\n`;
+      await writeConfiguration(config, original);
+
+      const removed = await runIn(cli, home)(["uninstall", "--json"]);
+      expect(removed.exitCode, removed.stdout).toBe(1);
+      expect(removed.json).toMatchObject({
+        status: "failed",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            name: "opencode",
+            status: "failed",
+            detail: expect.stringContaining("would activate it"),
+          }),
+        ]),
+      });
+      expect(await readFile(config, "utf8")).toBe(original);
+      await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );

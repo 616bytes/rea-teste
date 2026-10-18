@@ -285,8 +285,8 @@ export const systemUninstallHost = (
           read.original,
           client,
         );
-        if (removal.shadowsUnownedMember)
-          return item(client.name, "failed", SHADOWED_UNOWNED_MEMBER_DETAIL);
+        if (removal.blocked !== undefined)
+          return item(client.name, "failed", removal.blocked);
         if (!removal.removeNative && removal.legacyPath === undefined)
           return undefined;
         // A removal the running package would revert, or redirect into its
@@ -463,21 +463,17 @@ const clientRegistrationRemoval = (
   readonly removeNative: boolean;
   readonly legacyPath: readonly string[] | undefined;
   /**
-   * REA's effective entry repeats a member REA does not own. Removing the
-   * entry would make that duplicate active, so nothing is removed.
+   * Why nothing is removed: removing REA's entry would activate an entry REA
+   * does not own, either an earlier repeat or an OpenCode V1 fallback.
    */
-  readonly shadowsUnownedMember: boolean;
+  readonly blocked: string | undefined;
 } => {
   const name = PRODUCT_IDENTITY.mcpServerKey;
   if (
     parsed.dialect === "dsh" &&
     dshDocument(parsed.document).hasUnknownStructure
   )
-    return {
-      removeNative: false,
-      legacyPath: undefined,
-      shadowsUnownedMember: false,
-    };
+    return { removeNative: false, legacyPath: undefined, blocked: undefined };
   // Removal deletes every repeated member of the name, so each must be owned.
   // The repeats are located only once an owned entry needs this check.
   let shadowed: ShadowedClientServers | undefined;
@@ -500,21 +496,29 @@ const clientRegistrationRemoval = (
     legacyPath === undefined
       ? "absent"
       : removal(parsed.legacyServers, (members) => members.legacyServers);
-  const shadowsUnownedMember =
-    native === "shadows_unowned" || legacy === "shadows_unowned";
+  // OpenCode loads the V1 member once the native entry is gone, so removing
+  // the native entry must not expose a V1 member REA cannot remove.
+  const blocked =
+    native === "shadows_unowned" || legacy === "shadows_unowned"
+      ? SHADOWED_UNOWNED_MEMBER_DETAIL
+      : native === "removable" && legacy === "foreign"
+        ? UNOWNED_LEGACY_FALLBACK_DETAIL
+        : undefined;
   return {
     removeNative:
-      !shadowsUnownedMember &&
+      blocked === undefined &&
       ((parsed.dialect === "dsh" &&
         dshDocument(parsed.document).carriesEntry) ||
         native === "removable"),
     legacyPath:
-      !shadowsUnownedMember && legacy === "removable" ? legacyPath : undefined,
-    shadowsUnownedMember,
+      blocked === undefined && legacy === "removable" ? legacyPath : undefined,
+    blocked,
   };
 };
 
 const SHADOWED_UNOWNED_MEMBER_DETAIL = `Configuration repeats the "${PRODUCT_IDENTITY.mcpServerKey}" member, and an earlier duplicate is not REA-owned; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`;
+
+const UNOWNED_LEGACY_FALLBACK_DETAIL = `OpenCode falls back to the V1 "mcp.${PRODUCT_IDENTITY.mcpServerKey}" entry, which is not REA-owned; removing REA's native registration would activate it, so no change was made. Remove or replace that V1 entry manually, then rerun uninstall.`;
 
 /** Preserve the bytes uninstall is about to edit and return the backup holding them. */
 const backupClientConfiguration = async (
@@ -569,10 +573,12 @@ const removeClient = async (
     );
   if (!registrationPresent(parsed))
     return item(client.name, "skipped", "REA registration is absent.");
-  const { removeNative, legacyPath, shadowsUnownedMember } =
-    clientRegistrationRemoval(parsed, original, client);
-  if (shadowsUnownedMember)
-    return item(client.name, "failed", SHADOWED_UNOWNED_MEMBER_DETAIL);
+  const { removeNative, legacyPath, blocked } = clientRegistrationRemoval(
+    parsed,
+    original,
+    client,
+  );
+  if (blocked !== undefined) return item(client.name, "failed", blocked);
   const removeLegacy = legacyPath !== undefined;
   if (!removeNative && !removeLegacy)
     return item(

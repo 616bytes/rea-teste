@@ -380,6 +380,8 @@ while being updated stops the remaining removals. JSON clients read the last of
 repeated `rea` members, so uninstall removes every repeat in the table the
 client reads when REA owns each one; if an earlier repeat is not REA-owned,
 removal would activate it, so the operation stops before anything is removed.
+The same applies to an OpenCode V1 `mcp.rea` entry that REA does not own,
+which OpenCode loads once the native `mcp.servers.rea` entry is gone.
 Repeats inside an inactive earlier copy of the server table stay unchanged.
 A purge path that is a
 symbolic link is retained and reported rather than followed. Uninstall checks

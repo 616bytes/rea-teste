@@ -47,6 +47,7 @@ export interface MutableOccurrence {
   encrypted: boolean;
   hash_status: ArtifactOccurrence["hash_status"];
   source_location: ArtifactOccurrence["source_location"];
+  dotnet_bundle?: NonNullable<ArtifactOccurrence["dotnet_bundle"]>;
   limitations: string[];
 }
 
@@ -107,7 +108,13 @@ export const createOccurrence = (
     source_location:
       entry.byteOffset === null || entry.declaredSize === null
         ? null
-        : { offset: entry.byteOffset, length: entry.declaredSize },
+        : {
+            offset: entry.byteOffset,
+            length: entry.byteLength ?? entry.declaredSize,
+          },
+    ...(entry.dotnetBundle === undefined
+      ? {}
+      : { dotnet_bundle: { ...entry.dotnetBundle } }),
     limitations: [...entry.limitations],
   };
 };
@@ -243,7 +250,7 @@ export const rootOccurrenceFor = (
   artifact_kind:
     metadata.format === "directory" ||
     isZipPackageFormat(metadata.format) ||
-    ["asar", "dmg", "pkg"].includes(metadata.format)
+    ["asar", "dmg", "pkg", "dotnet-bundle"].includes(metadata.format)
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,

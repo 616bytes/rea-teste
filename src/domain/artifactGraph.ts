@@ -37,6 +37,7 @@ const artifactKindSchema = z.enum([
 
 /** Recognized storage or application formats; unknown bytes remain explicit. */
 const artifactFormatSchema = z.enum([
+  "dotnet-bundle",
   "dmg",
   "zip",
   "pkg",
@@ -136,6 +137,14 @@ export const artifactOccurrenceSchema = z.object({
   encrypted: z.boolean(),
   hash_status: z.enum(["verified", "mismatched", "not-hashed", "unavailable"]),
   source_location: artifactByteRangeSchema.nullable(),
+  /** Omitted by historical Evidence and non-.NET readers. This is observed manifest metadata. */
+  dotnet_bundle: z
+    .object({
+      major_version: z.number().int().min(0),
+      minor_version: z.number().int().min(0),
+      file_type: z.number().int().min(0).max(255),
+    })
+    .exactOptional(),
   limitations: z.array(z.string()),
 });
 

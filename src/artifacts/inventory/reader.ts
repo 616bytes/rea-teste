@@ -1,4 +1,5 @@
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import { DotnetBundleArtifactReader } from "../DotnetBundleArtifactReader.js";
 import type {
   ArtifactReader,
   ArtifactReaderTraversal,
@@ -26,6 +27,8 @@ export const createReader = (
   if (isZipPackageFormat(format))
     return new ZipArtifactReader(path, format, undefined, rootSource);
   switch (format) {
+    case "dotnet-bundle":
+      return new DotnetBundleArtifactReader(path, rootSource);
     case "directory":
       return new DirectoryArtifactReader(path);
     case "asar":

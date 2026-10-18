@@ -21,6 +21,7 @@ import {
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { findDotnetBundleHeader } from "../dotnet/DotnetBundle.js";
 import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
 import type { HashResult } from "../ArtifactHash.js";
 import {
@@ -115,7 +116,9 @@ export const classifyAndHashRootForInventory = async (
       options.signal,
     );
     const retainSource =
-      isZipPackageFormat(format) || format === "mach-o-universal";
+      isZipPackageFormat(format) ||
+      format === "mach-o-universal" ||
+      format === "dotnet-bundle";
     outcome = {
       kind: "completed",
       value: {
@@ -176,8 +179,14 @@ const classifyRootFormat = async (
   }
   prefix = Buffer.concat(chunks);
   // ASAR is chosen from its header pickle; any other suffix is a role hint.
-  return classifyArtifactContent(path, prefix, (await handle.stat()).size)
-    .format;
+  const size = (await handle.stat()).size;
+  const format = classifyArtifactContent(path, prefix, size).format;
+  if (
+    ["pe", "elf", "mach-o"].includes(format) &&
+    (await findDotnetBundleHeader(handle, size, signal)) !== undefined
+  )
+    return "dotnet-bundle";
+  return format;
 };
 
 /** App Pack is a verified ZIP root role; nested .app members retain their observed format. */

@@ -14,7 +14,8 @@ import { promisify } from "node:util";
 import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
 import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { projectRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { browserWorkerEvidenceScopeSchema } from "../../../src/domain/browserWorkerEvidenceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -2106,6 +2107,68 @@ it.each(["attached", "url", "type"] as const)(
     });
   },
 );
+
+it.each(["target_id", "allowed_origins", "include_script_sources"] as const)(
+  "reports contradictory page %s at its caller parameter in both Evidence consumers",
+  async (field) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const original = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    const evidence = createEvidence(undefined, original.provider, {
+      predicateType: original.predicate_type,
+      operation: original.operation,
+      parameters: {
+        ...original.parameters,
+        [field]:
+          field === "target_id"
+            ? "another-page"
+            : field === "allowed_origins"
+              ? []
+              : false,
+      },
+      result: original.normalized_result,
+      confidence: original.confidence,
+      authority: original.authority,
+      environment: original.environment,
+      limitations: original.limitations,
+    });
+    const checked = browserWorkerEvidenceScopeSchema.safeParse(evidence);
+    expect(checked.success).toBe(false);
+    if (checked.success) throw new Error("Expected contradictory selection");
+    expect(checked.error.issues).toContainEqual(
+      expect.objectContaining({ path: ["parameters", field] }),
+    );
+    expect(() => parseRuntimeCaptures([evidence])).toThrow();
+    expect(() => selectScriptCapture(evidence)).toThrow();
+  },
+);
+
+it("reports a contradictory page origin at the captured target", async () => {
+  const { provider, input } = await fixture();
+  const captured = await provider.inspectPage(input);
+  if (!captured.ok) throw captured.error;
+  captured.value.target.origin = "https://foreign.example";
+  const evidence = createBrowserEvidence(
+    "inspect_web_page",
+    input,
+    captured.value,
+    provider.identity(),
+  );
+  const checked = browserWorkerEvidenceScopeSchema.safeParse(evidence);
+  expect(checked.success).toBe(false);
+  if (checked.success) throw new Error("Expected contradictory origin");
+  expect(checked.error.issues).toContainEqual(
+    expect.objectContaining({ path: ["normalized_result", "target"] }),
+  );
+  expect(() => parseRuntimeCaptures([evidence])).toThrow(/origin scope/u);
+  expect(() => selectScriptCapture(evidence)).toThrow(/origin scope/u);
+});
 
 it.each(["target", "script", "origin"] as const)(
   "rejects out-of-scope worker %s in Evidence consumers",

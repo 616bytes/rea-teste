@@ -2,7 +2,10 @@ import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
-const MAX_STRINGS = 2_000;
+export const MAX_STRINGS = 2_000;
+export const MAX_SELECTED_LOCALES = 20;
+export const MAX_AGGREGATE_STRINGS = 10_000;
+export const AGGREGATE_STRINGS_XML_MAX_BYTES = 32 * 1024 * 1024;
 const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
   "car",
   "desk",
@@ -66,10 +69,24 @@ export const apktoolInputSchemas = {
       .describe(
         `Project res/values/strings.xml entries (bounded to ${String(MAX_STRINGS)} entries)`,
       ),
+    string_tables_only: z
+      .boolean()
+      .optional()
+      .describe(
+        "Return selected strings only in string_tables, leaving top-level strings empty. Omit to preserve the primary strings field.",
+      ),
     locale: androidLocaleQualifierSchema
       .optional()
       .describe(
         "Project strings from res/values-<locale>/strings.xml instead of the default table",
+      ),
+    locales: z
+      .array(androidLocaleQualifierSchema)
+      .min(1)
+      .max(MAX_SELECTED_LOCALES)
+      .optional()
+      .describe(
+        `Project multiple localized string tables from res/values-<locale>/strings.xml alongside the default table (bounded to ${String(MAX_SELECTED_LOCALES)} locales)`,
       ),
   }),
 } as const;
@@ -102,6 +119,46 @@ const client = z.strictObject({
   apktool_version: z.string().min(1).nullable(),
 });
 
+/** An individual projected Android string table from an Apktool decode. */
+export const stringTableSchema = z.strictObject({
+  locale: z
+    .string()
+    .nullable()
+    .describe(
+      "null for default res/values/strings.xml, or the locale qualifier",
+    ),
+  status: z
+    .enum(["present", "missing", "oversized", "malformed", "skipped"])
+    .describe(
+      "Table availability: present, missing from APK, oversized, malformed XML, or skipped due to limits",
+    ),
+  strings: z.array(
+    z.strictObject({
+      name: z.string().min(1),
+      value: z.string(),
+    }),
+  ),
+  total_count: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe(
+      "Total valid string entries before output limits, or null if the table was not examined or was malformed",
+    ),
+  unparsed_count: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe(
+      "Entries skipped due to nested markup or missing attributes, or null if the table was not examined or was malformed",
+    ),
+  coverage: z.enum(["complete", "partial"]),
+});
+
+export type StringTable = z.infer<typeof stringTableSchema>;
+
 /** Portable Apktool observations with explicit coverage limitations. */
 export const apktoolResultSchemas = {
   inspect_apktool_client: z.strictObject({
@@ -127,15 +184,29 @@ export const apktoolResultSchemas = {
       package_name: z.string().nullable(),
     }),
     manifest: z.string().nullable(),
-    strings: z.array(
-      z.strictObject({
-        name: z.string().min(1),
-        value: z.string(),
-      }),
-    ),
+    strings: z
+      .array(
+        z.strictObject({
+          name: z.string().min(1),
+          value: z.string(),
+        }),
+      )
+      .describe(
+        "Primary string entries; empty when include_strings is false or string_tables_only is true. An unrequested field does not establish an empty table.",
+      ),
     locale: z.string().nullable(),
     locales: z.array(z.string().min(1)),
+    string_tables: z
+      .array(stringTableSchema)
+      .optional()
+      .describe(
+        "Selected table facts, included when locales is supplied or string_tables_only is true",
+      ),
     decoded_file_count: z.number().int().nonnegative(),
     coverage: z.enum(["complete", "partial"]),
   }),
 } as const;
+
+export type ApktoolDecodeResult = z.infer<
+  typeof apktoolResultSchemas.decode_android_resources
+>;

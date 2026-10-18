@@ -28,7 +28,7 @@ export const browserWorkerEvidenceScopeSchema = z
     if (target.target_id !== parameters.target_id)
       context.addIssue({
         code: "custom",
-        path: ["normalized_result", "target", "target_id"],
+        path: ["parameters", "target_id"],
         message:
           "Browser Evidence target disagrees with its recorded selection",
       });
@@ -39,10 +39,16 @@ export const browserWorkerEvidenceScopeSchema = z
         path: ["normalized_result", "target", "url"],
         message: "Browser Evidence URL must be sanitized",
       });
-    if (sanitizedTarget.origin !== target.origin || !allowed.has(target.origin))
+    if (sanitizedTarget.origin !== target.origin)
       context.addIssue({
         code: "custom",
         path: ["normalized_result", "target"],
+        message: "Browser Evidence target is outside its recorded origin scope",
+      });
+    else if (!allowed.has(target.origin))
+      context.addIssue({
+        code: "custom",
+        path: ["parameters", "allowed_origins"],
         message: "Browser Evidence target is outside its recorded origin scope",
       });
     if (
@@ -51,7 +57,7 @@ export const browserWorkerEvidenceScopeSchema = z
     )
       context.addIssue({
         code: "custom",
-        path: ["normalized_result", "scripts"],
+        path: ["parameters", "include_script_sources"],
         message:
           "Browser Evidence contains source without source-capture selection",
       });

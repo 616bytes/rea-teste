@@ -75,7 +75,6 @@ const registerTargetList = (
             },
             context.provider.identity().id,
             "list_browser_targets",
-            undefined,
             signal,
           );
         }),
@@ -133,7 +132,6 @@ const registerPageInspection = (
             },
             context.provider.identity().id,
             "inspect_web_page",
-            undefined,
             signal,
           );
         }),
@@ -192,7 +190,6 @@ const registerBundleAnalysis = (
             },
             context.provider.identity().id,
             "analyze_web_bundle",
-            undefined,
             signal,
           );
         }),
@@ -244,7 +241,6 @@ const registerObservationSession = (
             },
             context.provider.identity().id,
             "observe_web_session",
-            undefined,
             signal,
           );
         }),

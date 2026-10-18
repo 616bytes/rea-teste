@@ -38,6 +38,24 @@ const results: Readonly<Record<string, unknown>> = {
     strings: [{ name: "app_name", value: "ApktoolProbe" }],
     locale: null,
     locales: ["de"],
+    string_tables: [
+      {
+        locale: null,
+        status: "present",
+        strings: [{ name: "app_name", value: "ApktoolProbe" }],
+        total_count: 1,
+        unparsed_count: 0,
+        coverage: "complete",
+      },
+      {
+        locale: "de",
+        status: "present",
+        strings: [{ name: "app_name", value: "ApktoolProbe DE" }],
+        total_count: 1,
+        unparsed_count: 0,
+        coverage: "complete",
+      },
+    ],
     decoded_file_count: 5,
     coverage: "complete",
   },
@@ -45,14 +63,17 @@ const results: Readonly<Record<string, unknown>> = {
 
 it("advertises exact valid Apktool schemas and records inline evidence through MCP", async () => {
   const requestedLocales: (string | undefined)[] = [];
+  const tableOnlySelections: (boolean | undefined)[] = [];
   const provider: ApktoolResourceAnalysisPort = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
     async close() {},
     async execute(request) {
-      if (request.operation === "decode_android_resources")
+      if (request.operation === "decode_android_resources") {
         requestedLocales.push(request.input.locale);
+        tableOnlySelections.push(request.input.string_tables_only);
+      }
       return ok(createAnalysisExecution(results[request.operation], identity));
     },
   };
@@ -112,5 +133,24 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
   expect(evidence.normalized_result).toMatchObject({
     metadata: { package_name: "com.rea.apktool.probe", version_name: "1.2.3" },
     coverage: "complete",
+    string_tables: [
+      { locale: null, status: "present" },
+      { locale: "de", status: "present" },
+    ],
   });
+
+  const batched = await client.callTool({
+    name: "decode_android_resources",
+    arguments: {
+      path: "/targets/probe.apk",
+      locales: ["de"],
+      string_tables_only: true,
+    },
+  });
+  expect(batched.isError).not.toBe(true);
+  expect(parseEvidence(batched.structuredContent).parameters).toMatchObject({
+    locales: ["de"],
+    string_tables_only: true,
+  });
+  expect(tableOnlySelections).toEqual([undefined, undefined, undefined, true]);
 });

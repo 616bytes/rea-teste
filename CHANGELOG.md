@@ -2,13 +2,19 @@
 
 ## [6.7.0](https://github.com/morluto/rea/compare/rea-agents-6.6.0...rea-agents-6.7.0) (2026-10-18)
 
+### Highlights
 
-### Bug Fixes
+- Client configuration edits follow the duplicate-member semantics used by MCP clients.
 
-* **setup:** edit the duplicate JSON member that clients read ([#4957](https://github.com/morluto/rea/issues/4957)) ([b83b9ca](https://github.com/morluto/rea/commit/b83b9caf4a5f0241a5fd370792f1aed1bffbb2cf)), closes [#4952](https://github.com/morluto/rea/issues/4952)
-* **tests:** budget CLI coverage from parsed options ([6b18078](https://github.com/morluto/rea/commit/6b180783ed04ebc87548c8385c80e05725804c47)), closes [#4960](https://github.com/morluto/rea/issues/4960)
-* **tests:** inherit server identity deadline policy ([bb212ff](https://github.com/morluto/rea/commit/bb212ffecb47e129cc569b9867b2b6e7c9b65685)), closes [#4967](https://github.com/morluto/rea/issues/4967)
-* **tests:** isolate command finalization module mocks ([8cbaf6c](https://github.com/morluto/rea/commit/8cbaf6c7021b97dd4de6b5771c35fbed06b240e9)), closes [#4959](https://github.com/morluto/rea/issues/4959)
+### Changes
+
+- Includes the [6.6.0 changes and migration notes](https://github.com/morluto/rea/releases/tag/rea-agents-6.6.0). That version was tagged but was not published to npm.
+
+### Fixes
+
+- **Client configuration:** Setup edits the last repeated JSON/JSONC member, matching the value clients actually read. Setup and uninstall refuse a removal that would reactivate a shadowed duplicate, preserving the original configuration. ([#4957](https://github.com/morluto/rea/pull/4957), [morluto/rea#4952](https://github.com/morluto/rea/issues/4952)). Thanks @kaoru0822-kitauji, @xu91102.
+
+Full contribution record: [4 commits and 1 merged PR](https://github.com/morluto/rea/blob/rea-agents-6.7.0/docs/releases/6.7.0.contributions.json).
 
 ## [6.6.0](https://github.com/morluto/rea/compare/rea-agents-6.5.0...rea-agents-6.6.0) (2026-10-18)
 

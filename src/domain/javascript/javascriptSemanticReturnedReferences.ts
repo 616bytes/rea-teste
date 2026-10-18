@@ -108,16 +108,17 @@ interface ObjectTargetUnknown {
   readonly previous: ObjectTargetUnknown | undefined;
 }
 
-/** Resolve local result references conservatively, without claiming call execution. */
-export const createSemanticReturnedReferences = (
+/** Resolve possible local callable identities without claiming call execution. */
+export const createSemanticCallableTargets = (
   state: JavaScriptSemanticAnalysisState,
-): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
-  const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
+  mode: "callable" | "contents" = "callable",
+): ((callee: t.Node) => readonly t.Function[]) => {
+  const results = new WeakMap<t.Node, readonly t.Function[]>();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   return (callee) => {
     const existing = results.get(callee);
     if (existing !== undefined) return existing;
-    const functions = new Set<t.Node>();
+    const functions = new Set<t.Function>();
     const work: ExpansionTask[] = [
       {
         kind: "visit",
@@ -218,9 +219,15 @@ export const createSemanticReturnedReferences = (
         if (last !== undefined) pending.push({ ...item, node: last });
       } else if (t.isFunction(node) && item.path.length === 0)
         functions.add(node);
-      else if (t.isObjectExpression(node))
+      else if (
+        t.isObjectExpression(node) &&
+        (item.path.length > 0 || mode === "contents")
+      )
         selectObjectTargets(node, item, pending, objectTargets);
-      else if (t.isArrayExpression(node)) {
+      else if (
+        t.isArrayExpression(node) &&
+        (item.path.length > 0 || mode === "contents")
+      ) {
         const [key, ...path] = item.path;
         const index =
           key === undefined || key === null ? null : semanticArrayIndex(key);
@@ -240,10 +247,14 @@ export const createSemanticReturnedReferences = (
       } else if (t.isNewExpression(node))
         pending.push({ ...item, node: node.callee });
       else if (t.isClass(node)) {
-        const [key, ...path] = item.path;
+        // A class's prototype exposes the same instance methods as `new C()`.
+        const [key, ...path] =
+          item.path[0] === "prototype" ? item.path.slice(1) : item.path;
+        const contents = mode === "contents" && key === undefined;
         for (const member of node.body.body) {
           if (t.isClassMethod(member)) {
             if (
+              contents ||
               (item.path.length === 0 && member.kind === "constructor") ||
               (key !== undefined &&
                 (key === null ||
@@ -255,10 +266,11 @@ export const createSemanticReturnedReferences = (
             t.isClassProperty(member) &&
             member.value !== null &&
             member.value !== undefined &&
-            key !== undefined &&
-            (key === null ||
-              semanticStaticPropertyKey(member.key, member.computed) ===
-                String(key))
+            (contents ||
+              (key !== undefined &&
+                (key === null ||
+                  semanticStaticPropertyKey(member.key, member.computed) ===
+                    String(key))))
           )
             pending.push({ ...item, node: member.value, path });
         }
@@ -271,24 +283,29 @@ export const createSemanticReturnedReferences = (
           work.push({ kind: "visit", item: child, parent: frame });
       }
     }
-    const output = [...functions].flatMap((node) => {
-      const callables = t.isClass(node)
-        ? node.body.body.filter(
-            (member) =>
-              t.isClassMethod(member) && member.kind === "constructor",
-          )
-        : [node];
-      return callables.flatMap((callable) =>
-        semanticCallableResultExpressions(callable).flatMap(
-          ({ node, delegated }) =>
-            node === null
-              ? []
-              : [{ node, projection: delegated ? [null] : [] }],
-        ),
-      );
-    });
+    const output = [...functions];
     results.set(callee, output);
     return output;
+  };
+};
+
+/** Resolve local result references conservatively, without claiming call execution. */
+export const createSemanticReturnedReferences = (
+  state: JavaScriptSemanticAnalysisState,
+): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
+  const targets = createSemanticCallableTargets(state);
+  const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
+  return (callee) => {
+    const prior = results.get(callee);
+    if (prior !== undefined) return prior;
+    const references = targets(callee).flatMap((callable) =>
+      semanticCallableResultExpressions(callable).flatMap(
+        ({ node, delegated }) =>
+          node === null ? [] : [{ node, projection: delegated ? [null] : [] }],
+      ),
+    );
+    results.set(callee, references);
+    return references;
   };
 };
 

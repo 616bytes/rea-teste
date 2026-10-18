@@ -78,7 +78,8 @@ export const indexSemanticOpaqueEffects = (
     const callee = unwrapJavaScriptExpression(node.callee).node;
     if (!isUnshadowedGlobal(callee, state, "eval")) continue;
     state.opaqueEffects.sites.add(node);
-    if (!strictEval(node, state)) state.opaqueEffects.sloppySites.add(node);
+    if (!semanticStrictContext(node, state))
+      state.opaqueEffects.sloppySites.add(node);
     const sites = state.opaqueEffects.byScope.get(scopeId) ?? [];
     sites.push(node);
     state.opaqueEffects.byScope.set(scopeId, sites);
@@ -314,7 +315,8 @@ const activation = (
   return scope?.scopeId ?? scopeId;
 };
 
-const strictEval = (
+/** Runtime syntax, rather than erased TypeScript imports, establishes strictness. */
+export const semanticStrictContext = (
   site: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
@@ -323,7 +325,10 @@ const strictEval = (
     node !== undefined;
     node = state.parentsByNode.get(node)
   ) {
-    if (t.isClass(node) || (t.isProgram(node) && node.sourceType === "module"))
+    if (
+      t.isClass(node) ||
+      (t.isProgram(node) && javaScriptRuntimeContext(node) === "module")
+    )
       return true;
     const directives = t.isProgram(node)
       ? node.directives

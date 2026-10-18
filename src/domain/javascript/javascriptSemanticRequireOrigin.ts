@@ -38,10 +38,14 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  semanticGlobalBindingReadMayHaveChanged,
+  semanticOpaqueBindingReadMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
-  readonly call: t.CallExpression;
+  readonly call: t.CallExpression | t.OptionalCallExpression;
 }
 
 export type JavaScriptRequireLoaderFact =
@@ -277,8 +281,17 @@ const globalProcessReplacements = new WeakMap<
 >();
 const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  { readonly ambientCount: number; readonly writes: readonly t.Node[] }
+  {
+    readonly ambientCount: number;
+    readonly writes: readonly ModuleDelegateWrite[];
+  }
 >();
+
+interface ModuleDelegateWrite {
+  readonly node: t.Node;
+  readonly delegate: "require" | "_load";
+  readonly shared: boolean;
+}
 
 /** Each property is read at its own capture, including shallow-copy slots. */
 type ModuleProjection = readonly {
@@ -288,20 +301,25 @@ type ModuleProjection = readonly {
 
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
-): readonly t.Node[] => {
+): readonly ModuleDelegateWrite[] => {
   const cached = moduleRequireWrites.get(state);
   const ambientCount = state.ambientWriteEffects.length;
   if (cached?.ambientCount === ambientCount) return cached.writes;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
   moduleRequireWrites.set(state, { ambientCount, writes: [] });
-  const writes: t.Node[] = [];
+  const writes: ModuleDelegateWrite[] = [];
   const interop = createSemanticModuleInterop(state);
   // Ambient indexing owns container stores and intrinsic prototype aliases.
   // Queries made during indexing must be refreshed when those facts arrive.
   for (const { node, path } of state.ambientWriteEffects)
     if (node !== undefined && isModuleDelegateWrite(path, node, interop))
-      writes.push(node);
+      writes.push({
+        node,
+        delegate:
+          path.length === 3 && path[1] === "constructor" ? "_load" : "require",
+        shared: path[1] === "constructor" || path[1] === "__proto__",
+      });
   const projectionMayAliasModule = createModuleProjectionWriteQuery(
     state,
     interop,
@@ -402,7 +420,7 @@ const writesModuleRequire = (
           key === "require" ||
           (key === "__proto__" && t.isAssignmentExpression(node))
         )
-          writes.push(node);
+          writes.push({ node, delegate: "require", shared: false });
       }
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
@@ -427,20 +445,21 @@ const writesModuleRequire = (
             key === undefined ||
             (key === "__proto__" && owner === "Reflect" && method === "set")
           )
-            writes.push(node);
+            writes.push({ node, delegate: "require", shared: false });
         } else if (
           (owner === "Object" || owner === "Reflect") &&
           method === "setPrototypeOf" &&
           isModuleObject(args?.[0] ?? t.nullLiteral())
         ) {
           // The CommonJS delegate can be inherited from Module.prototype.
-          writes.push(node);
+          writes.push({ node, delegate: "require", shared: false });
         } else if (
           owner === "Object" &&
           method === "defineProperties" &&
           isModuleObject(args?.[0] ?? t.nullLiteral())
         ) {
-          if (objectMayDefineDelegate(args?.[1])) writes.push(node);
+          if (objectMayDefineDelegate(args?.[1]))
+            writes.push({ node, delegate: "require", shared: false });
         } else if (
           owner === "Object" &&
           method === "assign" &&
@@ -451,7 +470,7 @@ const writesModuleRequire = (
               ?.slice(1)
               .some((source) => objectMayDefineDelegate(source, true))
           )
-            writes.push(node);
+            writes.push({ node, delegate: "require", shared: false });
         }
       }
     },
@@ -638,7 +657,7 @@ export const semanticHostRequireModuleWritesIntact = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   !writesModuleRequire(state).some(
-    (write) =>
+    ({ node: write }) =>
       !semanticTopLevelEffectFollowsCapture(
         capture,
         write,
@@ -733,7 +752,350 @@ const semanticHostRequireBindingIntact = (
   return !semanticResolutionBlocked(state, reference, "require");
 };
 
-/** Recover an unshadowed literal require origin and its exact member path. */
+const INVOCATION_HELPERS = ["call", "apply", "bind"];
+
+/** Resolve exact or possible inherited function values with a bounded frontier.
+ * Each unknown property can select a helper or the function prototype; these
+ * four identities are joined after every segment rather than enumerating paths. */
+const functionValueIdentities = (
+  path: readonly (string | null)[],
+  possible: boolean,
+): readonly (readonly string[])[] => {
+  let rootLength: number;
+  if (path[0] === "global" && ["require", "Function"].includes(path[1] ?? ""))
+    rootLength = 2;
+  else if (path[0] === "global" && path[1] === "Reflect" && path[2] === "apply")
+    rootLength = 3;
+  else if (path[0] === "commonjs-module") {
+    let end = 1;
+    while (path[end] === "__proto__") end += 1;
+    if (path[end] === "require") rootLength = end + 1;
+    else if (path[end] === "constructor" && path[end + 1] === "createRequire")
+      rootLength = end + 2;
+    else return [];
+  } else return [];
+  let identities = [path.slice(0, rootLength) as readonly string[]];
+  for (const key of path.slice(rootLength)) {
+    const keys =
+      key === null && possible
+        ? [...INVOCATION_HELPERS, "__proto__", "prototype"]
+        : [key];
+    const selected = new Map<string, readonly string[]>();
+    for (const identity of identities)
+      for (const property of keys) {
+        let value: readonly string[] | undefined;
+        if (property !== null && INVOCATION_HELPERS.includes(property))
+          value = ["global", "Function", "prototype", property];
+        else if (
+          (property === "prototype" &&
+            identity.join(".") === "global.Function") ||
+          (property === "__proto__" &&
+            identity.join(".") !== "global.Function.prototype")
+        )
+          value = ["global", "Function", "prototype"];
+        if (value !== undefined) selected.set(value.join("."), value);
+      }
+    identities = [...selected.values()];
+    if (identities.length === 0) break;
+  }
+  return identities;
+};
+
+/** Strict reads must establish every preceding property capture separately. */
+const semanticFunctionValueIdentity = (
+  path: readonly (string | null)[],
+): readonly string[] | undefined => functionValueIdentities(path, false)[0];
+
+/** Write collectors retain possible shared function objects beside nominal paths. */
+export const semanticPossibleFunctionValueIdentities = (
+  path: readonly (string | null)[],
+): readonly (readonly string[])[] => functionValueIdentities(path, true);
+
+const HOST_MODULE = "node-wrapper-module";
+const HOST_LOADER = "node-host-loader";
+
+/** Resolve the value read at each alias capture, rather than its current name. */
+const hostLoaderPath = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly string[] | undefined => {
+  let current = node;
+  let selected: ModuleProjection = [];
+  const visited = new Set<string>();
+  // Preserve a rejected helper read through the invocation owner's generic
+  // call/apply normalization; returning no path would retry its receiver.
+  const invalid = ["invalid-host-loader"];
+  const untouched = (
+    path: readonly string[],
+    captures: readonly t.Node[],
+    ownFrom = 0,
+  ): boolean => {
+    if (
+      !(path[0] === "commonjs-module" && path[1] === "require") &&
+      !state.ambientWrites.covers(path)
+    )
+      return true;
+    return !state.ambientWriteEffects.some((effect) => {
+      let normalized = effect.path;
+      if (path[0] === "commonjs-module" && path[1] === "require") {
+        let end = 1;
+        while (normalized[end] === "__proto__") end += 1;
+        normalized = [normalized[0]!, ...normalized.slice(end)];
+      }
+      return (
+        normalized.length > ownFrom &&
+        normalized.length <= path.length &&
+        normalized.every((key, index) =>
+          semanticPropertyPathKeyMatches(key, path[index]!),
+        ) &&
+        semanticEffectTiming(
+          captures[Math.min(normalized.length - 1, captures.length - 1)]!,
+          effect.node,
+          state,
+        ) !== "after"
+      );
+    });
+  };
+  const helpersIntact = (
+    initial: readonly string[],
+    suffix: ModuleProjection,
+  ): boolean => {
+    let identity: readonly string[] | undefined = initial;
+    for (const { key, capture } of suffix) {
+      if (typeof key !== "string" || identity === undefined) return false;
+      if (
+        !untouched([...identity, key], [capture], identity.length) ||
+        (INVOCATION_HELPERS.includes(key) &&
+          (!untouched(["global", "Function", "prototype", key], [capture]) ||
+            !untouched([...identity, "__proto__"], [capture], identity.length)))
+      )
+        return false;
+      identity = semanticFunctionValueIdentity([...identity, key]);
+    }
+    return identity !== undefined;
+  };
+  const callable = (
+    kind: "wrapper" | "delegate" | "created" | "factory",
+    suffix: ModuleProjection = selected,
+  ): readonly string[] | undefined => {
+    // Factory results are fresh callables. Their own invocation helpers do not
+    // have a shared ambient identity, so only direct invocation is proven.
+    if (kind === "created" && suffix.length !== 0) return invalid;
+    const identity =
+      kind === "wrapper"
+        ? ["global", "require"]
+        : kind === "delegate"
+          ? ["commonjs-module", "require"]
+          : kind === "factory"
+            ? ["commonjs-module", "constructor", "createRequire"]
+            : undefined;
+    if (identity !== undefined && !helpersIntact(identity, suffix))
+      return invalid;
+    return [
+      "intrinsic",
+      HOST_LOADER,
+      kind,
+      ...suffix.map(({ key }) => String(key)),
+    ];
+  };
+  const factoryPath = (
+    origin: JavaScriptModuleOrigin,
+    projection: ModuleProjection,
+    importedAt: t.Node,
+  ): readonly string[] | undefined => {
+    if (!["module", "node:module"].includes(origin.specifier)) return undefined;
+    const path = [
+      ...origin.importedPath.map((key) => ({ key, capture: importedAt })),
+      ...projection,
+    ];
+    // Namespace exports are captured values. Only default/Module selects the
+    // mutable constructor object; CommonJS has no synthetic default property.
+    if (origin.resolutionMode !== "require") {
+      const exported = path.shift();
+      if (exported?.key === "createRequire") return callable("factory", path);
+      if (exported?.key !== "default" && exported?.key !== "Module")
+        return undefined;
+    }
+    while (path[0]?.key === "Module") {
+      const property = path.shift()!;
+      if (
+        !untouched(
+          ["commonjs-module", "constructor", "Module"],
+          [property.capture],
+        )
+      )
+        return undefined;
+    }
+    const factory = path.shift();
+    if (
+      factory?.key !== "createRequire" ||
+      !untouched(
+        ["commonjs-module", "constructor", "createRequire"],
+        [factory.capture],
+      )
+    )
+      return undefined;
+    return callable("factory", path);
+  };
+  for (;;) {
+    const { root, members } = electronMemberPath(current);
+    selected = [
+      ...members.map((key) => ({ key, capture: current })),
+      ...selected,
+    ];
+    if (selected.some(({ key }) => key === null)) return undefined;
+    if (t.isIdentifier(root)) {
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (
+        semanticResolutionBlocked(state, root, root.name) ||
+        (binding !== undefined &&
+          (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+            semanticGlobalBindingReadMayHaveChanged(binding, root, state)))
+      )
+        return undefined;
+      if (
+        root.name === "require" &&
+        semanticHostRequireIntact(root, root, state)
+      )
+        return callable("wrapper");
+      if (
+        root.name === "module" &&
+        (binding === undefined ||
+          (commonJsWrapperBindingDeclaration(root, "module", state) !==
+            undefined &&
+            !commonJsWrapperBindingHasPriorWrite(root, binding, state))) &&
+        !(state.ambientBindingWrites.get("module") ?? []).some(
+          (write) => semanticEffectTiming(root, write, state) !== "after",
+        )
+      ) {
+        if (selected.length === 0) return [HOST_MODULE];
+        const [property, ...suffix] = selected;
+        return property?.key === "require" &&
+          semanticHostRequireModuleWritesIntact(property.capture, state)
+          ? callable("delegate", suffix)
+          : undefined;
+      }
+      if (
+        binding === undefined &&
+        ["Function", "Reflect"].includes(root.name)
+      ) {
+        const path = [root.name, ...selected.map(({ key }) => String(key))];
+        const helperStart = root.name === "Function" ? 0 : 1;
+        const identity =
+          root.name === "Function"
+            ? ["global", "Function"]
+            : ["global", "Reflect", "apply"];
+        return untouched(
+          ["global", ...path],
+          [root, root, ...selected.map(({ capture }) => capture)],
+        ) && helpersIntact(identity, selected.slice(helperStart))
+          ? ["intrinsic", ...path]
+          : invalid;
+      }
+      if (binding === undefined || visited.has(binding.bindingId))
+        return undefined;
+      visited.add(binding.bindingId);
+      if (
+        binding.memberWrites.some(
+          (effect) =>
+            effect.path.length <= selected.length &&
+            effect.path.every((key, index) =>
+              semanticPropertyPathKeyMatches(key, String(selected[index]!.key)),
+            ) &&
+            semanticEffectTiming(
+              selected[Math.max(0, effect.path.length - 1)]?.capture ?? root,
+              effect.node,
+              state,
+            ) !== "after",
+        )
+      )
+        return invalid;
+
+      const atRead = semanticBindingAtRead(binding, root, state.parentsByNode);
+      // Direct import origins describe entry values. A preceding assignment or
+      // an uncertain replacement must be resolved before using that entry.
+      if (
+        binding.directOrigins.length === 1 &&
+        !atRead.hasDefiniteInitializer
+      ) {
+        if (
+          (state.bindingWrites.get(binding.bindingId) ?? []).some(
+            (write) => semanticEffectTiming(root, write, state) !== "after",
+          )
+        )
+          return undefined;
+        const origin = binding.directOrigins[0]!;
+        if (!binding.runtimeImport && origin.resolutionMode !== "require")
+          return undefined;
+        return factoryPath(origin, selected, root);
+      }
+      const [initializer] = atRead.binding.initializers;
+      if (
+        !atRead.hasDefiniteInitializer ||
+        initializer === undefined ||
+        atRead.binding.initializers.length !== 1 ||
+        atRead.binding.referenceInitializers.length !== 0 ||
+        state.conditionallySkippedExpressions.has(initializer.node)
+      )
+        return undefined;
+      selected = [
+        ...initializer.projection.map((key) => ({
+          key,
+          capture: initializer.node,
+        })),
+        ...selected,
+      ];
+      current = initializer.node;
+      continue;
+    }
+    if (t.isCallExpression(root) || t.isOptionalCallExpression(root)) {
+      // A required Module export supplies the same public factory as its ESM
+      // export. Keep factory selection at its own read, including destructuring.
+      if (selected.some(({ key }) => key === "createRequire")) {
+        const required = semanticRequireOrigin(root, state)?.origin;
+        if (required !== undefined)
+          return factoryPath(required, selected, root);
+      }
+      const invocation = hostLoaderInvocation(root, state);
+      if (
+        invocation?.kind === "known" &&
+        invocation.path.join(".") === `intrinsic.${HOST_LOADER}.factory` &&
+        invocation.arguments?.length === 1
+      )
+        return callable("created");
+    }
+    return undefined;
+  }
+};
+
+const hostLoaderInvocations = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReturnType<typeof createSemanticModuleInterop>
+>();
+const activeHostInvocations = new WeakSet<t.Node>();
+
+/** Share call/apply/bind argument normalization with all other intrinsic users. */
+const hostLoaderInvocation = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  if (activeHostInvocations.has(node)) return undefined;
+  activeHostInvocations.add(node);
+  try {
+    let resolver = hostLoaderInvocations.get(state);
+    if (resolver === undefined) {
+      resolver = createSemanticModuleInterop(state, {
+        intrinsicPath: (value) => hostLoaderPath(value, state),
+      });
+      hostLoaderInvocations.set(state, resolver);
+    }
+    return resolver.intrinsicInvocation(node);
+  } finally {
+    activeHostInvocations.delete(node);
+  }
+};
+
+/** Recover a proven host-loader call and its exact selected export path. */
 export const semanticRequireOrigin = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
@@ -742,35 +1104,82 @@ export const semanticRequireOrigin = (
   const current = chain?.root;
   if (
     chain === undefined ||
-    !t.isCallExpression(current) ||
-    !t.isIdentifier(current.callee, { name: "require" })
+    (!t.isCallExpression(current) && !t.isOptionalCallExpression(current))
   )
     return undefined;
-  const requireBinding = resolveSemanticBindingState(
-    state,
-    current.callee,
-    "require",
-  );
+  if (t.isIdentifier(current.callee, { name: "require" })) {
+    const requireBinding = resolveSemanticBindingState(
+      state,
+      current.callee,
+      "require",
+    );
+    if (
+      semanticHostRequireWritesIntact(current, state) &&
+      (semanticHostRequireBindingIntact(current.callee, state) ||
+        (requireBinding !== undefined &&
+          isWrapperRequireInitializerCall(requireBinding, current, state)))
+    ) {
+      const specifier = stringValue(current.arguments[0]);
+      return specifier === undefined
+        ? undefined
+        : {
+            origin: {
+              specifier,
+              importedPath: chain.members,
+              resolutionMode: "require",
+            },
+            call: current,
+          };
+    }
+  }
+  const invocation = hostLoaderInvocation(current, state);
   if (
-    !semanticHostRequireWritesIntact(current, state) ||
-    (!semanticHostRequireBindingIntact(current.callee, state) &&
-      !(
-        requireBinding !== undefined &&
-        isWrapperRequireInitializerCall(requireBinding, current, state)
-      ))
+    invocation?.kind !== "known" ||
+    invocation.path.length !== 3 ||
+    invocation.path[1] !== HOST_LOADER
   )
     return undefined;
-  const specifier = stringValue(current.arguments[0]);
-  return specifier === undefined
-    ? undefined
-    : {
-        origin: {
-          specifier,
-          importedPath: chain.members,
-          resolutionMode: "require",
-        },
-        call: current,
-      };
+  const kind = invocation.path[2];
+  const specifier = stringValue(invocation.arguments?.[0]);
+  if (
+    specifier === undefined ||
+    !["wrapper", "delegate", "created"].includes(kind ?? "")
+  )
+    return undefined;
+  if (kind === "delegate") {
+    const callee = unwrapJavaScriptExpression(current.callee).node;
+    const receiver =
+      invocation.receiver ??
+      ((t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      semanticStaticPropertyKey(callee.property, callee.computed) === "require"
+        ? callee.object
+        : undefined);
+    if (
+      receiver === undefined ||
+      hostLoaderPath(receiver, state)?.join(".") !== HOST_MODULE ||
+      writesModuleRequire(state).some(
+        ({ node: write, delegate }) =>
+          delegate === "_load" &&
+          semanticEffectTiming(current, write, state) !== "after",
+      )
+    )
+      return undefined;
+  } else if (
+    writesModuleRequire(state).some(
+      ({ node: write, shared }) =>
+        (kind === "wrapper" || shared) &&
+        semanticEffectTiming(current, write, state) !== "after",
+    )
+  )
+    return undefined;
+  return {
+    origin: {
+      specifier,
+      importedPath: chain.members,
+      resolutionMode: "require",
+    },
+    call: current,
+  };
 };
 
 /** Node's fs.promises export and fs/promises require share one object. */

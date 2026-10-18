@@ -47,6 +47,8 @@ export interface JavaScriptIntrinsicInvocation {
   readonly kind: "known" | "opaque";
   /** The original bound receiver; rebinding cannot replace it. */
   readonly receiver?: t.Node;
+  /** Callable selections consumed while recovering a bound invocation. */
+  readonly callableReads?: readonly t.Node[];
   readonly path: readonly string[];
   readonly arguments:
     | readonly t.CallExpression["arguments"][number][]

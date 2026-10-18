@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -15,11 +16,11 @@ import {
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  isImportMetaUrl,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+  semanticRequireOrigin,
+  semanticPossibleFunctionValueIdentities,
+} from "./javascriptSemanticRequireOrigin.js";
 import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
@@ -35,6 +36,7 @@ import {
   type SemanticIterationSource,
 } from "./javascriptSemanticIterationSources.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -71,6 +73,8 @@ const moduleConstructorPath = (
   // ESM namespace slots select the constructor; the namespace is not itself it.
   if (origin.resolutionMode !== "require") {
     const selected = path.shift();
+    if (selected === "createRequire")
+      return ["commonjs-module", "constructor", "createRequire", ...path];
     if (selected !== "default" && selected !== "Module" && selected !== null)
       return undefined;
   }
@@ -106,6 +110,7 @@ export const createAmbientPathResolver = (
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
   const returnedReferences = createSemanticReturnedReferences(state);
+  const receiverReferences = createSemanticReceiverReferences(state);
   return (
     node: t.Node,
     capture?: t.Node,
@@ -139,6 +144,11 @@ export const createAmbientPathResolver = (
       let canonical = canonicalAmbientPath(path);
       for (;;) {
         result.set(JSON.stringify(canonical), canonical);
+        if (possibleWrites)
+          for (const identity of semanticPossibleFunctionValueIdentities(
+            canonical,
+          ))
+            if (!result.has(JSON.stringify(identity))) retain(identity);
         // Preserve the nominal path and its possible inherited prototype owner.
         // Constructor/prototype cycles do not prove strict intrinsic reads.
         if (possibleWrites && canonical[0] === "commonjs-module") {
@@ -341,6 +351,18 @@ export const createAmbientPathResolver = (
         retain(["import-meta", ...(suffix ?? [])]);
         continue;
       }
+      if (possibleWrites && t.isThisExpression(root)) {
+        for (const receiver of receiverReferences(root))
+          if (t.isProgram(receiver)) retain(["global", ...(suffix ?? [])]);
+          else
+            pending.push({
+              node: receiver,
+              suffix,
+              captures,
+              readsAtSelf: true,
+            });
+        continue;
+      }
       if (t.isIdentifier(root)) {
         // The wrapper module object is distinct from globalThis.module. Keep
         // its identity through the same alias/projection owner used for writes.
@@ -456,8 +478,7 @@ export const createAmbientPathResolver = (
       }
       if (
         possibleWrites &&
-        t.isCallExpression(root) &&
-        ["module", "node:module"].includes(stringValue(root.arguments[0]) ?? "")
+        (t.isCallExpression(root) || t.isOptionalCallExpression(root))
       ) {
         const origin =
           semanticRequireOrigin(root, state)?.origin ??
@@ -695,7 +716,16 @@ export function* indexJavaScriptAmbientWritesSteps(
           writeSite,
           state.parentsByNode.get(writeSite) ?? null,
         )) {
-          if (source.kind === "reference-store") storedReferences.push(source);
+          // Direct primitive values cannot retain an ambient object identity.
+          // A projection may select a reference from a boxed primitive. Keeping
+          // direct primitives in the alias graph makes every receiver escape
+          // revisit every primitive field written by its methods.
+          if (
+            source.kind === "reference-store" &&
+            (source.projection.length !== 0 ||
+              !readExactJavaScriptLiteral(source.node).found)
+          )
+            storedReferences.push(source);
         }
       }
       // Resolve identities after the traversal has collected every local store.

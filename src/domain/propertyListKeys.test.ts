@@ -4,6 +4,7 @@ import { parse } from "plist";
 import {
   decodeXmlText,
   omitPrototypeKeys,
+  parseBinaryPropertyList,
   parseXmlPropertyList as parseWithNumbers,
 } from "./propertyListKeys.js";
 
@@ -397,6 +398,42 @@ describe("OpenStep plist nesting preflight", () => {
     ).toEqual({
       value: { quote: '"( )', data: new Uint8Array([40, 41]), values: ["x"] },
       omittedPrototypeKeys: 0,
+    });
+  });
+});
+
+describe("binary property list parsing", () => {
+  it("decodes three-byte UIDs without rejecting non-power-of-two widths", () => {
+    // 0x82 0x00 0x00 0x01 encodes a 3-byte UID with value 1
+    const hex =
+      "62706c69737430308200000108000000000000010100000000000000010000000000000000000000000000000c";
+    expect(parseBinaryPropertyList(Buffer.from(hex, "hex"))).toEqual({
+      UID: 1,
+    });
+  });
+
+  it("preserves leading U+FEFF in UTF-16BE string values", () => {
+    // bplist00 containing a single UTF-16BE string "\uFEFFa"
+    const hex =
+      "62706c697374303062feff006108000000000000010100000000000000010000000000000000000000000000000d";
+    expect(parseBinaryPropertyList(Buffer.from(hex, "hex"))).toEqual("\uFEFFa");
+  });
+
+  it("preserves leading U+FEFF in UTF-16BE dictionary keys", () => {
+    // bplist00 with a dict { "\uFEFFkey": 1 }
+    const hex =
+      "62706c6973743030d1010264feff006b006500791001080b140000000000000101000000000000000300000000000000000000000000000016";
+    expect(parseBinaryPropertyList(Buffer.from(hex, "hex"))).toEqual({
+      "\uFEFFkey": 1,
+    });
+  });
+
+  it("decodes eight-byte UIDs beyond MAX_SAFE_INTEGER without replacing with -1", () => {
+    // 0x87 followed by 8 bytes: 00 20 00 00 00 00 00 00 = 2^53 = 9007199254740992
+    const hex =
+      "62706c6973743030870020000000000000080000000000000101000000000000000100000000000000000000000000000011";
+    expect(parseBinaryPropertyList(Buffer.from(hex, "hex"))).toEqual({
+      UID: 9007199254740992,
     });
   });
 });

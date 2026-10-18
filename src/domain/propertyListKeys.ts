@@ -328,3 +328,167 @@ const assertXmlPlistDepthWithinLimit = (document: Document): void => {
       pending.push({ node: node.firstChild, depth: depth + 1 });
   }
 };
+
+const EPOCH_2001 = 978307200000;
+const UTF8_DECODER = new TextDecoder("utf-8");
+const UTF16BE_DECODER = new TextDecoder("utf-16be", { ignoreBOM: true });
+
+const readSizedUint = (
+  view: DataView,
+  offset: number,
+  size: number,
+): number => {
+  switch (size) {
+    case 1:
+      return view.getUint8(offset);
+    case 2:
+      return view.getUint16(offset);
+    case 4:
+      return view.getUint32(offset);
+    case 8: {
+      const hi = view.getUint32(offset);
+      const lo = view.getUint32(offset + 4);
+      return hi * 0x100000000 + lo;
+    }
+    default:
+      throw new Error(`Unsupported int size: ${String(size)}`);
+  }
+};
+
+const readUid = (view: DataView, offset: number, byteCount: number): number => {
+  let value = 0;
+  for (let i = 0; i < byteCount; i++) {
+    value = value * 256 + view.getUint8(offset + i);
+  }
+  return value;
+};
+
+/**
+ * Parse a binary property list (bplist00 format) with full integer support,
+ * including 16-byte integers (marker 0x14) stored by Apple tools for values
+ * exceeding Int64.max (issue #4292).
+ */
+export const parseBinaryPropertyList = (data: Uint8Array): unknown => {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const len = data.byteLength;
+  if (len < 40) throw new Error("Invalid binary plist: too short");
+  const header = String.fromCharCode(...data.subarray(0, 8));
+  if (header !== "bplist00") {
+    throw new Error("Invalid binary plist: bad magic");
+  }
+  const trailerOffset = len - 32;
+  const offsetTableOffsetSize = view.getUint8(trailerOffset + 6);
+  const objectRefSize = view.getUint8(trailerOffset + 7);
+  const numObjects = readSizedUint(view, trailerOffset + 8, 8);
+  const topObject = readSizedUint(view, trailerOffset + 16, 8);
+  const offsetTableOffset = readSizedUint(view, trailerOffset + 24, 8);
+
+  const offsets: number[] = [];
+  for (let i = 0; i < numObjects; i++) {
+    offsets.push(
+      readSizedUint(
+        view,
+        offsetTableOffset + i * offsetTableOffsetSize,
+        offsetTableOffsetSize,
+      ),
+    );
+  }
+
+  const parseObject = (index: number): unknown => {
+    let offset = offsets[index];
+    if (offset === undefined) throw new Error("Invalid object index");
+    const marker = view.getUint8(offset);
+    const type = marker >> 4;
+    let size = marker & 0x0f;
+    offset++;
+    if (type !== 0 && type !== 8 && size === 0x0f) {
+      const extMarker = view.getUint8(offset);
+      offset++;
+      const extSize = 1 << (extMarker & 0x0f);
+      size = readSizedUint(view, offset, extSize);
+      offset += extSize;
+    }
+    switch (type) {
+      case 0x0:
+        if (marker === 0x00) return null;
+        if (marker === 0x08) return false;
+        if (marker === 0x09) return true;
+        throw new Error(`Unknown singleton: 0x${marker.toString(16)}`);
+      case 0x1: {
+        const byteCount = 1 << size;
+        if (byteCount <= 4) {
+          return readSizedUint(view, offset, byteCount);
+        }
+        if (byteCount === 8) {
+          const hi = view.getInt32(offset);
+          const lo = view.getUint32(offset + 4);
+          return hi * 0x100000000 + lo;
+        }
+        if (byteCount === 16) {
+          const hi = view.getBigInt64(offset);
+          const lo = view.getBigUint64(offset + 8);
+          return Number((hi << 64n) | lo);
+        }
+        throw new Error(`Unsupported int size: ${String(byteCount)}`);
+      }
+      case 0x2: {
+        const byteCount = 1 << size;
+        if (byteCount === 4) return view.getFloat32(offset);
+        if (byteCount === 8) return view.getFloat64(offset);
+        throw new Error(`Unsupported real size: ${String(byteCount)}`);
+      }
+      case 0x3: {
+        const timestamp = view.getFloat64(offset);
+        return new Date(timestamp * 1000 + EPOCH_2001);
+      }
+      case 0x4: {
+        return data.subarray(offset, offset + size);
+      }
+      case 0x5: {
+        return UTF8_DECODER.decode(data.subarray(offset, offset + size));
+      }
+      case 0x6: {
+        return UTF16BE_DECODER.decode(data.subarray(offset, offset + size * 2));
+      }
+      case 0x8: {
+        const byteCount = size + 1;
+        return { UID: readUid(view, offset, byteCount) };
+      }
+      case 0xa: {
+        const arr: unknown[] = [];
+        for (let i = 0; i < size; i++) {
+          const ref = readSizedUint(
+            view,
+            offset + i * objectRefSize,
+            objectRefSize,
+          );
+          arr.push(parseObject(ref));
+        }
+        return arr;
+      }
+      case 0xd: {
+        const dict: Record<string, unknown> = {};
+        for (let i = 0; i < size; i++) {
+          const keyRef = readSizedUint(
+            view,
+            offset + i * objectRefSize,
+            objectRefSize,
+          );
+          const valRef = readSizedUint(
+            view,
+            offset + (size + i) * objectRefSize,
+            objectRefSize,
+          );
+          const key = parseObject(keyRef);
+          if (typeof key === "string" && key !== PROTOTYPE_KEY) {
+            dict[key] = parseObject(valRef);
+          }
+        }
+        return dict;
+      }
+      default:
+        throw new Error(`Unknown object type: 0x${type.toString(16)}`);
+    }
+  };
+  return parseObject(topObject);
+};

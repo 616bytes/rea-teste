@@ -436,4 +436,75 @@ describe("XML plist nesting preflight", () => {
       decodeKeyedArchiveBytes(deeplyNestedArchive(127), selection),
     ).toThrow(new RangeError("Plist exceeds 128 nesting levels"));
   });
+
+  it("reports integers above Int64.max stored as 16-byte integers with exact decimal text (issue #4292)", () => {
+    // Binary plist with $objects: ['$null', 18446744073709551615 (16-byte int, 0x14), 9223372036854775807 (8-byte int, 0x13)]
+    const hex =
+      "62706c6973743030d40102030405060a0f5924617263686976657258246f626a656374735424746f70582476657273696f6e5f100f4e534b657965644172636869766572a307080955246e756c6c140000000000000000ffffffffffffffff137fffffffffffffffd20b0c0d0e536d617854726f6f748002800112000186a008111b24293244484e5f686d7176787a000000000000010100000000000000100000000000000000000000000000007f";
+    const graph = decodeKeyedArchiveBytes(Buffer.from(hex, "hex"), {
+      offset: 0,
+      limit: 10,
+    });
+    expect(graph.objects[1]).toMatchObject({
+      id: 1,
+      status: "observed",
+      value: {
+        $plist_type: "integer",
+        decimal: "18446744073709551615",
+      },
+    });
+    expect(graph.objects[2]).toMatchObject({
+      id: 2,
+      status: "observed",
+      value: {
+        $plist_type: "integer",
+        decimal: "9223372036854775807",
+      },
+    });
+    expect(graph.limitations).toContain(
+      '2 unambiguous integer value(s) are reported with exact decimal text as { "$plist_type": "integer", "decimal": "<exact digits>" }.',
+    );
+    expect(
+      graph.limitations.some((item) =>
+        item.includes(
+          "Original archive number metadata could not be completely observed",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("decodes binary keyed archives containing three-byte UIDs", () => {
+    // Binary plist with three-byte UID marker 0x82 (0x82 0x00 0x00 0x01 = UID 1) for $top.root
+    const hex =
+      "62706c6973743030d40102030405060a0f5924617263686976657258246f626a656374735424746f70582476657273696f6e5f100f4e534b657965644172636869766572a307080955246e756c6c140000000000000000ffffffffffffffff137fffffffffffffffd20b0c0d0e536d617854726f6f7480028200000112000186a008111b24293244484e5f686d7176787c0000000000000101000000000000001000000000000000000000000000000081";
+    const graph = decodeKeyedArchiveBytes(Buffer.from(hex, "hex"), {
+      offset: 0,
+      limit: 10,
+    });
+    expect(graph.roots).toEqual({
+      max: { UID: 2 },
+      root: { UID: 1 },
+    });
+    expect(graph.objects[1]).toMatchObject({
+      id: 1,
+      status: "observed",
+    });
+  });
+
+  it("preserves oversized eight-byte UIDs and discloses precision warning without reporting -1", () => {
+    // Binary plist with eight-byte UID marker 0x87 (0x87 0x00 0x20 0x00 0x00 0x00 0x00 0x00 0x00 = 2^53 = 9007199254740992) for $top.root
+    const hex =
+      "62706c6973743030d40102030405060a0f5924617263686976657258246f626a656374735424746f70582476657273696f6e5f100f4e534b657965644172636869766572a307080955246e756c6c140000000000000000ffffffffffffffff137fffffffffffffffd20b0c0d0e536d617854726f6f74800287002000000000000012000186a008111b24293244484e5f686d717678810000000000000101000000000000001000000000000000000000000000000086";
+    const graph = decodeKeyedArchiveBytes(Buffer.from(hex, "hex"), {
+      offset: 0,
+      limit: 10,
+    });
+    expect(graph.roots).toEqual({
+      max: { UID: 2 },
+      root: { UID: 9007199254740992 },
+    });
+    expect(graph.limitations).toContain(
+      "1 number(s) beyond the exact integer range remain as decoded because their source integer/real type or reference marker cannot be associated unambiguously; integer precision loss remains possible.",
+    );
+  });
 });

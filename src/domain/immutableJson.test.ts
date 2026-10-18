@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { JsonValue } from "./jsonValue.js";
 import {
@@ -200,5 +200,41 @@ describe("borrowing a parsed JSON snapshot", () => {
     }
     freezeJsonSnapshot(source);
     expect(canBorrowParsedJsonSnapshot(source, parsed)).toBe(true);
+  });
+
+  it("compares shared snapshot graphs without repeatedly expanding their paths", () => {
+    let source: JsonValue = { value: 1 };
+    for (let depth = 0; depth < 26; depth += 1)
+      source = { left: source, right: source };
+    const parsed = structuredClone(source);
+    freezeJsonSnapshot(source);
+    const ownKeys = Reflect.ownKeys;
+    let inspections = 0;
+    const observed = vi
+      .spyOn(Reflect, "ownKeys")
+      .mockImplementation((value) => {
+        // Fail deterministically instead of consuming exponential CPU on regressions.
+        if (++inspections > 10_000)
+          throw new Error("Shared JSON comparison exceeded inspection budget");
+        return ownKeys(value);
+      });
+    let borrowed: boolean;
+    try {
+      borrowed = canBorrowParsedJsonSnapshot(source, parsed);
+    } finally {
+      observed.mockRestore();
+    }
+    expect(borrowed).toBe(true);
+  });
+
+  it("keeps the parsed result when a parser splits shared source nodes", () => {
+    const shared = { value: 1 };
+    const source = freezeJsonSnapshot({ left: shared, right: shared });
+    expect(
+      canBorrowParsedJsonSnapshot(source, {
+        left: { value: 1 },
+        right: { value: 1 },
+      }),
+    ).toBe(false);
   });
 });

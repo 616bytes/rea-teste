@@ -45,6 +45,7 @@ export const canBorrowParsedJsonSnapshot = <Parsed extends JsonValue>(
 ): source is Parsed => {
   if (!isImmutableJsonSnapshot(source)) return false;
   const pending: unknown[] = [source, parsed];
+  const compared = new Map<object, object>();
   while (pending.length > 0) {
     const right = pending.pop();
     const left = pending.pop();
@@ -58,6 +59,14 @@ export const canBorrowParsedJsonSnapshot = <Parsed extends JsonValue>(
       Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)
     )
       return false;
+    const previous = compared.get(left);
+    if (previous !== undefined) {
+      // A parser that splits shared source nodes normalized their identity.
+      // Keep its result; otherwise inspect each shared node pair only once.
+      if (previous !== right) return false;
+      continue;
+    }
+    compared.set(left, right);
     const keys = Reflect.ownKeys(left);
     if (keys.length !== Reflect.ownKeys(right).length) return false;
     for (const key of keys) {

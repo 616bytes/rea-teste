@@ -14,7 +14,16 @@ import {
   readdir,
   realpath,
 } from "node:fs/promises";
-import { basename, dirname, join, posix, win32 } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  relative,
+  resolve,
+  win32,
+} from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
@@ -928,13 +937,31 @@ const createGhidraRuntimeDirectories = async (
  * The invocation selects the fixed project name `rea-project`, so a caller
  * directory without the expanded `rea-project.gpr` / `rea-project.rep` pair
  * is rejected here with its reason instead of an opaque Ghidra failure.
+ * A project path that overlaps the runtime (the runtime root itself, a
+ * directory inside it, or an ancestor of it) is rejected before any copy so
+ * the recursive copy can never descend into its own destination.
  */
+const pathsOverlap = (first: string, second: string): boolean => {
+  const contains = (ancestor: string, descendant: string): boolean => {
+    const rel = relative(ancestor, descendant);
+    return rel === "" || (!isAbsolute(rel) && !rel.startsWith(".."));
+  };
+  return contains(first, second) || contains(second, first);
+};
+
 export const copyExistingGhidraProject = async (
   sourcePath: string,
   destinationRoot: string,
   signal?: AbortSignal,
 ): Promise<void> => {
   signal?.throwIfAborted();
+  // The destination is the runtime's project root, inside the runtime root,
+  // so one comparison against the runtime root rejects a project placed at
+  // the runtime root, anywhere inside it, or an ancestor of it.
+  if (pathsOverlap(resolve(sourcePath), resolve(dirname(destinationRoot))))
+    throw new Error(
+      `Existing Ghidra project directory overlaps the REA runtime directory; select a project outside the runtime: ${sourcePath}`,
+    );
   const source = await lstat(sourcePath).catch(() => undefined);
   signal?.throwIfAborted();
   if (source === undefined || !source.isDirectory())

@@ -693,6 +693,56 @@ describe("Ghidra existing project launcher", () => {
       expect(await readdir(join(runtime.path, "project"))).toEqual([]);
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a project path that overlaps the runtime before copying",
+    async () => {
+      const parent = await createTestTempDirectory("rea-launcher-test-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      // Copying the runtime into itself would recurse without bound, so the
+      // launcher must refuse the overlap before touching the file system.
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launched = await launchExistingProject(
+        runtime.path,
+        parent,
+        runtime.path,
+        spawned,
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok) throw new Error("launch unexpectedly succeeded");
+      expect(String(launched.error.cause)).toMatch(
+        /overlaps the REA runtime directory/u,
+      );
+      expect(spawned).toHaveLength(0);
+      expect(await readdir(join(runtime.path, "project"))).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a project path inside the runtime before copying",
+    async () => {
+      const parent = await createTestTempDirectory("rea-launcher-test-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      // A caller-supplied path inside the owned runtime (here the project
+      // root itself) is equally an overlap and must fail before Ghidra runs.
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launched = await launchExistingProject(
+        runtime.path,
+        parent,
+        join(runtime.path, "project"),
+        spawned,
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok) throw new Error("launch unexpectedly succeeded");
+      expect(String(launched.error.cause)).toMatch(
+        /overlaps the REA runtime directory/u,
+      );
+      expect(spawned).toHaveLength(0);
+      expect(await readdir(join(runtime.path, "project"))).toEqual([]);
+    },
+  );
 });
 
 describe("Ghidra expanded project admission", () => {

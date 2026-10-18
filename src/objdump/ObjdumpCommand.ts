@@ -12,9 +12,12 @@ export const objdumpCommand = (input: ObjdumpInput): readonly string[] => {
   if (input.operation === "architectures") return ["-i"];
   const argumentsByOperation = {
     file_headers: ["-f"],
+    private_headers: ["-p"],
     section_headers: ["-h"],
     symbols: ["-t"],
+    dynamic_symbols: ["-T"],
     relocations: ["-r"],
+    dynamic_relocations: ["-R"],
     dwarf: ["-W", input.follow_debug_links ? "-WK" : "-WN"],
     disassemble: ["-d"],
     disassemble_all: ["-D"],

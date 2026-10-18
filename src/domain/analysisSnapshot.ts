@@ -72,6 +72,7 @@ const formatSchema = z.enum([
   "asar",
   "dmg",
   "pkg",
+  "cfb",
   "plist",
   "javascript",
   "source-map",

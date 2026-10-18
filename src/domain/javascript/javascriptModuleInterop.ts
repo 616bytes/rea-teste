@@ -33,6 +33,7 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
+  javaScriptExpressionValue,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   runtimeFunctionParameters,
@@ -192,9 +193,16 @@ export const createSemanticModuleInterop = (
         return path;
       };
       for (;;) {
-        const { root, members } = electronMemberPath(current);
+        const { root, members } = electronMemberPath(
+          javaScriptExpressionValue(current),
+        );
         if (members.some((member) => member === null)) return finish(undefined);
         suffix = [...(members as readonly string[]), ...suffix];
+        const value = javaScriptExpressionValue(root);
+        if (value !== root) {
+          current = value;
+          continue;
+        }
         for (const global of ["Object", "Function", "Reflect"])
           if (isUnshadowedGlobal(root, state, global))
             return finish(["intrinsic", global, ...suffix]);
@@ -235,8 +243,15 @@ export const createSemanticModuleInterop = (
     let capturedAt = node;
     let suffixLength = 0;
     for (;;) {
-      const { root, members } = electronMemberPath(current);
+      const { root, members } = electronMemberPath(
+        javaScriptExpressionValue(current),
+      );
       suffixLength += members.length;
+      const value = javaScriptExpressionValue(root);
+      if (value !== root) {
+        current = value;
+        continue;
+      }
       if (!t.isIdentifier(root)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (binding === undefined) return { path, capturedAt };

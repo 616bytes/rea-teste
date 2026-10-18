@@ -58,6 +58,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import {
+  javaScriptExpressionValue,
   semanticStaticPropertyKey,
   semanticWriteSiteTarget,
   semanticWriteTargets,
@@ -887,6 +888,14 @@ export function* collectSemanticMemberMutationsSteps(
         : evaluateSemanticProvenanceAtRead(binding, target, state);
     return {
       binding,
+      moduleNamespace:
+        provenance?.status === "module" &&
+        provenance.origins.length > 0 &&
+        provenance.origins.every(
+          (origin) =>
+            (origin.resolutionMode ?? "import") === "import" &&
+            origin.importedPath.length === 0,
+        ),
       origin:
         provenance?.status === "module"
           ? provenance.origins[0]
@@ -987,8 +996,19 @@ export function* collectSemanticMemberMutationsSteps(
         ) {
           reflectSets.push(() => {
             const path = [interop.staticPropertyKey(args[1]) ?? null];
-            const target = unwrapJavaScriptExpression(args[0]!).node;
-            const { binding, origin } = targetFacts(target);
+            const target = javaScriptExpressionValue(args[0]!);
+            const { binding, origin, moduleNamespace } = targetFacts(target);
+            if (moduleNamespace) {
+              // The namespace itself cannot be replaced. Node can still write
+              // a distinct ordinary receiver, so retain that receiver's effect.
+              if (
+                args[3] !== undefined &&
+                !targetFacts(javaScriptExpressionValue(args[3])).moduleNamespace
+              )
+                markValue(args[3], path, new Set(), "write", node);
+              markEscaped(args[1]!, node);
+              return;
+            }
             const builtinUnchanged =
               origin !== undefined &&
               path[0] !== null &&
@@ -1062,6 +1082,13 @@ export function* collectSemanticMemberMutationsSteps(
           });
           return;
         }
+        // Binding a proven intrinsic captures arguments without invoking it.
+        // Its eventual call is normalized above with the captured arguments.
+        if (
+          !t.isNewExpression(node) &&
+          interop.boundIntrinsic(node)?.kind === "known"
+        )
+          return;
         for (const source of returnedReferences(node.callee))
           markEscaped(source.node, node, source.projection);
         for (const argument of node.arguments)

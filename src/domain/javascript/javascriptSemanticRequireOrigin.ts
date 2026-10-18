@@ -16,6 +16,7 @@ import {
   type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
+  isPrimitiveJavaScriptExpression,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -330,9 +331,8 @@ const writesModuleRequire = (
     const value = unwrapJavaScriptExpression(node).node;
     if (
       interop.isFreshObject(value) ||
-      readExactJavaScriptLiteral(value).found ||
-      t.isBigIntLiteral(value) ||
-      t.isUnaryExpression(value) ||
+      isPrimitiveJavaScriptExpression(value) ||
+      (t.isUnaryExpression(value) && !exposesModule([value.argument], value)) ||
       isUnshadowedGlobal(value, state, "undefined")
     )
       return true;

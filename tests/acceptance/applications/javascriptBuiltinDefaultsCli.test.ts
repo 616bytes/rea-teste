@@ -14,6 +14,9 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const bound=Reflect.set.bind(null,module);Reflect.set(Reflect,'set',bound,(0,Reflect));Reflect.set('require',replacement);require('fs').readFileSync('wrong-sequence-bound');",
+    "Reflect.set(module,'require',replacement,1+2);require('fs').readFileSync('receiver-expression.json');",
+    "import fs from 'node:fs';Reflect.set(fs,'readFileSync',custom);fs.readFileSync('wrong-default-set');",
     "const holder={child:{}}; const box={}; box.owner=holder.child; outer:{if(flag)break outer;holder.child={};} holder.child.owner=module; Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-labeled-allocation');",
     "const holder={child:{}}; const box={}; box.owner=holder.child; do{if(flag)continue;holder.child={};}while(false);holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-loop-allocation');",
     "const box={};function install(){Object.defineProperty(box,'owner',{writable:true});}install();Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('deferred-descriptor.json');Object.prototype.value=module;",
@@ -59,6 +62,13 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
+  await writeFile(
+    join(root, "namespace-receiver.mjs"),
+    `import * as fs from 'node:fs';
+     Reflect.set(fs,'readFileSync',custom);fs.readFileSync('namespace-set.json');
+     const set=Reflect.set.bind(null,fs);set('readFileSync',custom);
+     fs.readFileSync('namespace-bound-set.json');`,
+  );
 };
 
 const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
@@ -202,7 +212,9 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "later.json",
     "loader-after.json",
     "loader-before.json",
+    "namespace-bound-set.json",
     "namespace-receiver.json",
+    "namespace-set.json",
     "nested-kept.json",
     "nested-timeline.json",
     "null-prototype-kept.json",
@@ -212,6 +224,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "outer-before-nested.json",
     "projected-scalar.json",
     "receiver-data.json",
+    "receiver-expression.json",
     "receiver-primitive.json",
     "reflect-before.json",
     "reflect-independent-kept.json",

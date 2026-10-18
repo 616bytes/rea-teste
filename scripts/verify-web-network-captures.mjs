@@ -945,8 +945,9 @@ async function inspect(mode, input, errorCategory) {
       });
       if ((input.sensitive_values ?? []).length > 0) {
         assert.equal(manifest.isError, true);
+        const refusedManifest = JSON.parse(mcpTextValue(manifest));
         for (const literal of input.sensitive_values)
-          assert.ok(!JSON.stringify(manifest).includes(literal));
+          assert.ok(!JSON.stringify(refusedManifest).includes(literal));
       } else {
         assert.notEqual(manifest.isError, true, mcpTextValue(manifest));
         const projected = JSON.parse(mcpTextValue(manifest));

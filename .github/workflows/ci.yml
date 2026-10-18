@@ -60,6 +60,7 @@ jobs:
       web_runtime: ${{ steps.plan.outputs.web_runtime }}
       web_source_map: ${{ steps.plan.outputs.web_source_map }}
       nativeaot: ${{ steps.plan.outputs.nativeaot }}
+      ghidra_bridge: ${{ steps.plan.outputs.ghidra_bridge }}
       website: ${{ steps.plan.outputs.website }}
       matrix: ${{ steps.plan.outputs.matrix }}
       test_selection: ${{ steps.plan.outputs.test_selection }}
@@ -139,6 +140,11 @@ jobs:
       - name: Validate workflow syntax and expressions
         if: needs.changes.outputs.workflows == 'true'
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+      # Code tiers run this source-only policy test in their existing shards.
+      # Workflow-only changes need the guard, without preparing runtime artifacts.
+      - name: Check action pins for workflow-only changes
+        if: needs.changes.outputs.workflows == 'true' && needs.changes.outputs.code != 'true'
+        run: node scripts/run-exact-tests.mjs run tests/boundary/filesystem/workflowActionPinning.test.ts
       - name: Record static task source and execution identity
         continue-on-error: true
         if: needs.changes.outputs.code == 'true'
@@ -351,10 +357,15 @@ jobs:
       # test:prepare caches only portable JS, skill, and catalog outputs.
       # Native package jobs still run their build and prepack checks; Turbo
       # restores matching outputs or rebuilds when their inputs differ.
+      - name: Stage current portable build task cache
+        shell: bash
+        run: |
+          # A new Turbo dry run can evict the entries this build just used.
+          node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
-          path: .turbo/cache/
+          path: .cache/ci-build-cache/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
@@ -433,7 +444,7 @@ jobs:
           --outputFile.junit=test-results.xml
           --outputFile.json=test-results.json
       - name: Summarize slowest test files
-        if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-timings.json') != ''
+        if: needs.changes.outputs.code == 'true' && !cancelled()
         env:
           SHARD_RESULT: ${{ needs.test-shard.result }}
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' }}
@@ -642,6 +653,7 @@ jobs:
           tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts
           tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
           tests/boundary/cli/nativeDemangleCli.test.ts
+          tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
@@ -704,12 +716,12 @@ jobs:
         with:
           name: rea-build-cache
           path: .turbo/cache/
-      - run: npm run build:cached
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
           path: native/windows/build/
       - run: npm run verify:windows-native:artifact
+      - run: npm run build:cached
       - name: Record named Windows host capabilities
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
       - name: Validate Windows host capability report
@@ -741,6 +753,9 @@ jobs:
           tests/boundary/filesystem/javascriptApplicationWorkflows.test.ts
           tests/boundary/filesystem/webScriptManifestPaths.test.ts
           tests/boundary/process/ProcessEvidence.host.test.ts
+          tests/boundary/process/packageNpmInvocation.test.ts
+          tests/boundary/process/packedBridgeVerification.test.ts
+          tests/boundary/process/windowsOutputCapture.test.ts
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts
@@ -762,6 +777,8 @@ jobs:
           src/process/ProcessOwnership.validation.test.ts
           src/application/Update.test.ts
           tests/process-global/updateMaintenance.test.ts
+          tests/process-global/runnerCancellation.test.ts
+          tests/process-global/windowsOwnedCommand.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -897,6 +914,11 @@ jobs:
     if: needs.changes.outputs.nativeaot == 'true'
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
+  ghidra_bridge:
+    needs: [changes, static]
+    if: needs.changes.outputs.ghidra_bridge == 'true'
+    uses: ./.github/workflows/ghidra-bridge-sources.yml
+
   website:
     needs: [changes, static]
     if: needs.changes.outputs.website == 'true'
@@ -932,6 +954,7 @@ jobs:
         web_runtime,
         web_source_map,
         nativeaot,
+        ghidra_bridge,
         website,
       ]
     runs-on: ubuntu-24.04

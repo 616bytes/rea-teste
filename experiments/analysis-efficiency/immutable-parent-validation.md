@@ -24,8 +24,13 @@ page. An immutable Evidence root alone was insufficient: its selected normalized
 result did not carry the JSON owner's private sealing proof.
 
 The JSON owner now transfers that proof to a selected own member without another
-walk or per-node registration. Each format owner records a **successful complete
-interpretation of the exact immutable source** in a WeakSet. There is no second
+walk or per-node registration. Native layouts and imported JavaScript results
+record a **successful full
+validation of the exact immutable source** in their owning WeakSets. Already
+owned JavaScript graphs keep the existing metadata normalization and binding
+checks, returning parsed metadata with their original graph references. That
+path avoids rewalking a large owned graph just to borrow its wrapper. There is
+no second
 retained parsed graph, strong cache, cross-process cache, or live-state cache.
 The schema implementation is fixed for the process; a different source object
 must validate independently. Weak entries do not keep Evidence alive, and session
@@ -34,10 +39,10 @@ lookup continues to gate access after close.
 Cache admission follows full validation and requires that parsing preserved the
 source representation. A shared iterative JSON comparison checks own data keys,
 scalar values, prototypes, and enumerability without calling accessors. Object
-member order is immaterial; array order remains exact. Shared node pairs are
-inspected once; parsing that splits a shared source node keeps the parsed result
-instead. The temporary comparison Map is discarded on return. Parser
-defaults, hidden-field removal, or other normalization retain the parser's
+member order is immaterial; array order remains exact. Two-way identity maps
+visit preserved descendants once and reject source-node splits or merges. Both
+comparison maps are temporary and discarded on return. Parser defaults,
+hidden-field removal, or other normalization retain the parser's
 result and do not cache the source. Writable/configurable descriptor differences
 are immaterial: the source is sealed while the temporary parse is mutable.
 The JSON sealing boundary rejects proxies before reflection, so arbitrary
@@ -47,7 +52,7 @@ format reuse.
 
 No Evidence identity, source linkage, coverage, unknown, omission, error, or
 caller-selected page changes are intended. Complete source Evidence remains
-accessible through the existing contracts. The first view still pays for full
+accessible through the existing contracts. The first imported view still pays for full
 validation and the representation comparison; a one-off CLI invocation cannot
 benefit from a cache in a previous process.
 
@@ -91,55 +96,48 @@ file cache and descendants, rather than just the server's JS heap.
 
 ## Results and executed validation
 
-Candidate production code: `646312dad75e2cb2becb0dd4139b99a1c04d6bcc`.
+Candidate production code: `3930a640fb8387cbd3079eee13fb90f82d1881dc`.
 The [curated receipt](immutable-parent-validation.json) retains every final run,
 offline token estimates, compatibility checks, and costs of previous attempts.
 Values below are medians with min–max ranges across three fresh alternating pairs.
 
-| Source     | First page, before → after (ms)                       | Eight later pages, before → after (ms)              |
-| ---------- | ----------------------------------------------------- | --------------------------------------------------- |
-| SQLite ELF | 260.63 [170.43–476.00] → 208.04 [197.35–628.10]       | 631.39 [355.80–1090.01] → 60.51 [57.67–187.48]      |
-| npm        | 1908.35 [1503.26–6990.99] → 3138.79 [2610.17–3248.63] | 13568.94 [9500.24–23578.81] → 110.78 [73.74–121.15] |
-| Small ELF  | 132.46 [99.05–145.36] → 163.07 [155.61–344.72]        | 135.54 [99.92–140.12] → 373.14 [97.57–378.53]       |
+| Source     | First page, before → after (ms)                       | Eight later pages, before → after (ms)             |
+| ---------- | ----------------------------------------------------- | -------------------------------------------------- |
+| SQLite ELF | 183.56 [170.13–244.27] → 209.05 [203.11–216.88]       | 469.89 [393.47–517.92] → 85.04 [65.10–89.01]       |
+| npm        | 2441.08 [1681.26–2479.69] → 1978.73 [1864.89–2720.54] | 15534.41 [10378.13–16864.91] → 82.69 [75.19–84.13] |
+| Small ELF  | 133.33 [100.81–242.58] → 226.60 [111.79–556.22]       | 122.93 [76.38–299.47] → 62.58 [57.69–96.24]        |
 
 | Source / runtime    | Whole elapsed (s)   | Family CPU (s)      | Kernel family peak (MiB) |
 | ------------------- | ------------------- | ------------------- | ------------------------ |
-| SQLite ELF / before | 17.60 [13.64–32.19] | 17.39 [13.35–30.41] | 1048.5 [947.1–1054.9]    |
-| SQLite ELF / after  | 16.88 [14.35–48.56] | 16.60 [14.11–43.52] | 1039.5 [999.8–1041.1]    |
-| npm / before        | 38.71 [28.87–86.73] | 38.39 [28.63–73.11] | 1398.3 [1334.0–1524.1]   |
-| npm / after         | 28.30 [20.19–29.05] | 28.03 [19.96–28.72] | 1246.8 [1236.9–1263.1]   |
-| Small ELF / before  | 19.54 [12.62–21.41] | 19.18 [12.41–21.08] | 1016.7 [986.1–1017.0]    |
-| Small ELF / after   | 19.21 [16.12–19.54] | 18.96 [15.88–19.24] | 998.5 [996.1–1019.0]     |
+| SQLite ELF / before | 19.08 [15.26–20.00] | 18.75 [15.01–19.55] | 1013.8 [1009.5–1058.6]   |
+| SQLite ELF / after  | 14.38 [14.06–17.25] | 14.09 [13.77–17.00] | 984.0 [957.1–1047.1]     |
+| npm / before        | 39.63 [31.21–40.86] | 39.27 [30.87–40.49] | 1338.0 [1301.0–1543.7]   |
+| npm / after         | 20.71 [20.01–23.02] | 20.50 [19.73–22.23] | 1286.8 [1250.6–1344.9]   |
+| Small ELF / before  | 14.30 [12.00–17.59] | 13.94 [11.77–17.31] | 1013.2 [937.8–1017.4]    |
+| Small ELF / after   | 12.31 [11.90–16.25] | 12.04 [11.71–16.07] | 956.3 [931.4–1007.5]     |
 
 | Source     | Paired warm-read ratio, before / after | Paired first-view change, after − before (ms) |
 | ---------- | -------------------------------------- | --------------------------------------------- |
-| SQLite ELF | 5.88× [5.81–10.95]                     | +26.92 [-52.59–+152.10]                       |
-| npm        | 128.83× [122.49–194.62]                | +1106.91 [-3742.36–+1230.44]                  |
-| Small ELF  | 0.37× [0.27–1.39]                      | +64.02 [+23.15–+199.36]                       |
+| SQLite ELF | 5.53× [4.42–7.96]                      | +25.49 [-41.16–+46.75]                        |
+| npm        | 184.65× [125.50–224.30]                | -462.34 [-614.80–+1039.29]                    |
+| Small ELF  | 1.28× [1.22–5.19]                      | +10.98 [-15.97–+422.88]                       |
 
 Each pair matches the before/after runs with the same repetition number.
 The paired effect can differ from the ratio of marginal medians when the host
 speed changes. Positive first-view changes mean higher latency.
 
-SQLite and npm have faster later reads in each numbered pair. The small ELF is
-a negative control: two of three pairs are slower, with marginal medians
-135.54 → 373.14 ms for eight reads. No small-input gain is claimed; those runs
-remain included and the cause of that latency difference is not established.
-
-A separate instrumented public MCP run on that small source confirms one
-successful format admission, one miss and eight hits for its nine queries,
-identified from the `safeParseOwnedBinaryLayout` caller stack. The instrumentation
-preserves return values; its timings are excluded from the comparison. This
-confirms reuse without establishing a cause for the small-task latency regression.
-
-The demonstrated benefit is larger-source repeated selected reads. First-view
+The repeated-read benefit is measured per source and pair above. First-view
 validation
 also performs the representation comparison and can be more expensive. Whole
 task, CPU and memory figures above are measured SDK workflow costs, not a
 general provider-analysis or agent-investigation speedup. The previous e30
 checkpoint had a slow npm repetition on both sides, including a 65-second
 candidate task; its cause was not profiled. The original checkpoint and every
-fresh run remain retained. No model-token saving, general memory improvement,
+fresh run remain retained. The previous `646312dad` checkpoint also had slower
+small-case warm reads in two of three pairs (135.54 → 373.14 ms marginal
+medians). Those negative results remain available in its linked historical
+receipt; the current cohort improves all three small pairs, without establishing
+a general small-input or whole-task benefit. No model-token saving, general memory improvement,
 or complex-software investigation advantage is established.
 
 All 18 fresh workflow runs preserve original records and canonical answer
@@ -160,10 +158,11 @@ checkpoint; compare equivalent runs within each checkpoint.
 
 Executed checks at the final production code:
 
-- `npm run check` and `npm run docs:check` pass, including five README
+- `npm run check` and `npm run docs:check`: pass, including five README
   consistency tests.
-
-- 126 source tests across immutable JSON, native/JavaScript format validation,
+- Three latest-main integration files through `npm run test:focused`, using
+  default deadlines: 27 tests pass at the current production source.
+- 130 source tests across immutable JSON, native/JavaScript format validation,
   and the shared application view service; `npm run check:fast` and
   `npm run build:cached` pass.
 - Four compiled CLI/MCP files (`evidenceBundleInline`, `serverUnknownsMcp`,
@@ -171,16 +170,20 @@ Executed checks at the final production code:
 - Real public stdio MCP: 18 fresh paired tasks and two additional mixed tasks;
   public CLI: six invocations, with three exact output pairs. These corpus
   workflows and four-file boundary checks have exit zero, verified payload
-  cleanup and zero observed
-  payload-exit OOM events.
+  cleanup and zero observed payload-exit OOM events.
 
-Internal review reproduced two **candidate-only** defects before integration.
+Internal and automated review reproduced **candidate-only** defects before integration.
 Generic deep equality ignored hidden fields removed by parsing; the JSON owner
-comparison now preserves that normalization. Its initial iterative traversal
+comparison now preserves that normalization. Review also reproduced aliases crossing
+preserved subtrees and cloned metadata; four regressions failed against the prior
+source. The comparer now visits preserved descendants with two-way identity mapping.
+Already-owned JavaScript graphs keep their parsed-metadata fast path, so the generic
+comparison and full-result cache only apply to the expensive imported fallback. Its
+initial iterative traversal
 also repeatedly expanded shared nodes: a valid 27-object graph exhausted an
 instrumented 10,000-inspection budget. Tracking source-to-parsed node pairs
 reduces that same compiled probe to 54 inspections and successful borrowing.
-A parser that splits a shared source node keeps its parsed result rather than
+A parser that splits or merges source nodes keeps its parsed result rather than
 expanding repeated paths. Deterministic regressions enforce the inspection
 budget instead of relying on timing or letting a regression consume exponential
 CPU. These are internal JSON-owner probes, not claimed baseline public-provider
@@ -192,30 +195,33 @@ during an initial baseline run; the newly started owned scope was stopped after
 17.27 s and that check remains incomplete (exit 241). Observed counters, the
 contended baseline, subsequent successful retries, and prior checkpoints remain
 retained; no OOM or terminal-counter claim is inferred from that stopped task.
+Two later tasks stopped because the host-available-memory guard reported its
+early-stop condition: candidate JavaScript repetition three and baseline small
+repetition three. Both incomplete attempts and the unmatched completed
+JavaScript baseline remain separate. After memory recovered, both sides were
+rerun as fresh pair four; final JavaScript and small samples use pairs 1, 2, 4.
+Neither interrupted task is a completed comparison. The guard later gained
+read-only host-memory/cgroup receipt fields; all resource thresholds and its
+observer/stop logic remained unchanged.
 
 Real Ghidra, Hopper, JEB, fresh JavaScript producer performance, and actual
 agent trials are outside this checkpoint. Private WeakSet metadata/heap retention
 was not measured independently; the absence of a strong retained parsed graph
-is source-derived. The comparison's source-to-parsed Map exists only during
-the first interpretation; measured family peaks include its temporary cost.
+is source-derived. The comparison maps exist only during the first
+interpretation; measured family
+peaks include their temporary cost.
 
-## Latest-main integration and a retained timeout
+## Latest-main integration and an unexplained timeout
 
-Main `bb212ffec` adds three test/config/guide fixes. Merge `71e0b2739`
-integrates them; the production files are unchanged from measured `646312dad`.
-The initial three-file `npm run test:focused` integration attempt passed 26 tests
-and timed out the live server identity/catalog test at its default 30 seconds.
-Its scope exited one, with verified payload cleanup and no observed OOM.
-
-An unmodified latest-main checkout and the candidate subsequently both passed
-all 27 tests through the same official `npm run test:focused` command and default
-deadline. Additional diagnostics passed: one isolated main test, 27 direct
-Vitest main tests, and 27 candidate tests with an explicitly declared CLI-only
-120-second deadline. These different-entrypoint diagnostics do not replace the
-matching official-command comparison. The original failure remains unexplained;
-a passing retry does not identify its cause. No product or test-policy file was
-changed to obtain a pass. Every attempt's elapsed/CPU/family-memory counters and
-actual exit status are retained in the curated receipt.
+Merge `71e0b2739` brings in main `bb212ffec`'s three test/config/guide fixes.
+The current source passes all 27 tests in those three integration files through
+`npm run test:focused` with the default deadlines. The earlier `646312dad`
+checkpoint initially passed 26 and timed out the live identity/catalog test at
+30 seconds. Matching official-command controls subsequently passed all 27 on
+both unmodified main and that candidate. Direct/extended-deadline diagnostics
+are recorded separately. Their passing results do not establish the cause of
+the original timeout, which remains preserved and unexplained. No test-policy
+or product file was changed to obtain a pass.
 
 ## Reproduction and retained evidence
 

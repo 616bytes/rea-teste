@@ -129,6 +129,11 @@ const typescriptEs5ReversedGuard = typescriptEs5Minified
 const typescriptSequence =
   'const __vite__mapDeps = function(i, m, d) { return void 0 === m && (m = __vite__mapDeps), void 0 === d && (d = m.f || (m.f = ["./first.js"])), i.map(j => d[j]); }; __vite__mapDeps([0]);';
 
+const mapDependenciesWithEffects = (
+  body: string,
+  table = '["./first.js"]',
+): string => mapDependencies(table, "[0]").replace(defaultCall + ";", body);
+
 const allScenarios: readonly ViteScenario[] = [
   {
     file: "escaped.js",
@@ -2191,6 +2196,159 @@ const allScenarios: readonly ViteScenario[] = [
       defaultCall + ";",
       '__vite__mapDeps([0]); const separator = {cache: __vite__mapDeps.f, toString() { this.cache[0] = "./last.js"; return ","; }}; __vite__mapDeps.f.join(separator); __vite__mapDeps([0]);',
     ),
+    resolved: [],
+    unknown: true,
+  },
+  ...(
+    [
+      [
+        "export-cache-declaration.js",
+        "export const cache = __vite__mapDeps.f;",
+      ],
+      [
+        "export-cache-specifier.js",
+        "const cache = __vite__mapDeps.f; export {cache as dependencies};",
+      ],
+      [
+        "export-cache-default-expression.js",
+        "export default {cache: __vite__mapDeps.f};",
+      ],
+      [
+        "export-cache-default-capture.js",
+        "let cache = __vite__mapDeps.f; export default cache; cache = [];",
+      ],
+      [
+        "export-cache-destructure.js",
+        "export const {f: cache} = __vite__mapDeps;",
+      ],
+    ] as const
+  ).map(([file, exposure]) => ({
+    file,
+    source: mapDependenciesWithEffects(
+      `__vite__mapDeps([0]); ${exposure} export function load() { return __vite__mapDeps([0]); }`,
+    ),
+    callOccurrences: [0, 1],
+    resolved: [],
+    unknown: true,
+  })),
+  ...(
+    [
+      ["export-independent-table.js", 'export const cache = ["./other.js"];'],
+      [
+        "export-foreign-binding.js",
+        'const cache = __vite__mapDeps.f; export {cache} from "./other.js";',
+      ],
+    ] as const
+  ).map(([file, exposure]) => ({
+    file,
+    source: mapDependenciesWithEffects(
+      `__vite__mapDeps([0]); ${exposure} export function load() { return __vite__mapDeps([0]); }`,
+    ),
+    callOccurrences: [0, 1],
+    resolved: ["first.js", "first.js"],
+    unknown: false,
+  })),
+  ...(
+    [
+      ["sparse-array-inherited-index.js", "Array.prototype[0] = 1;", true],
+      ["sparse-object-inherited-index.js", "Object.prototype[0] = 1;", true],
+      ["sparse-unrelated-inherited-index.js", "Array.prototype[2] = 1;", false],
+      ["sparse-unmodified-index.js", "", false],
+    ] as const
+  ).map(([file, mutation, unknown]) => ({
+    file,
+    source: `${mutation}\n${mapDependencies('["./first.js", "./last.js"]', "[, 0]")}`,
+    callSource: "__vite__mapDeps([, 0])",
+    resolved: ["first.js"],
+    unknown,
+  })),
+  ...(
+    [
+      ["cache-prototype-replaced-method.js", "cache.__proto__"],
+      [
+        "cache-object-prototype-replaced-method.js",
+        "Object.getPrototypeOf(cache)",
+      ],
+      [
+        "cache-reflect-prototype-replaced-method.js",
+        "Reflect.getPrototypeOf(cache)",
+      ],
+    ] as const
+  ).map(([file, prototype]) => ({
+    file,
+    source: mapDependenciesWithEffects(
+      `__vite__mapDeps([0]); const cache = __vite__mapDeps.f; const proto = ${prototype}; proto.slice = function () { this[0] = "./last.js"; return []; }; cache.slice(); __vite__mapDeps([0]);`,
+    ),
+    callOccurrences: [0, 1],
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "cache-prototype-unmodified.js",
+    source: mapDependenciesWithEffects(
+      "__vite__mapDeps([0]); const cache = __vite__mapDeps.f; const proto = cache.__proto__; __vite__mapDeps([0]);",
+    ),
+    callOccurrences: [0, 1],
+    resolved: ["first.js", "first.js"],
+    unknown: false,
+  },
+  ...(
+    [
+      [
+        "named-helper-cache-mutation.js",
+        'const alias = __vite__mapDeps([1])[0]; alias.f[0] = "./last.js";',
+      ],
+      [
+        "named-helper-nested-cache-mutation.js",
+        'const box = {helper: __vite__mapDeps([1])[0]}; box.helper.f[0] = "./last.js";',
+      ],
+      ["named-helper-export.js", "export default __vite__mapDeps([1])[0];"],
+    ] as const
+  ).map(([file, mutation]) => ({
+    file,
+    source: mapDependenciesWithEffects(
+      `${mutation} __vite__mapDeps([0]);`,
+      '["./first.js", m]',
+    )
+      .replace("(i, m =", "function __vite__mapDeps(i, m =")
+      .replace("=> i.map(i => d[i]);", "{ return i.map(i => d[i]); };"),
+    callSources: ["__vite__mapDeps([1])", defaultCall],
+    callOccurrences: [0, 1],
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "named-helper-unmodified.js",
+    source: mapDependencies('["./first.js", m]', "[0]")
+      .replace("(i, m =", "function __vite__mapDeps(i, m =")
+      .replace("=> i.map(i => d[i]);", "{ return i.map(i => d[i]); };"),
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  {
+    file: "cache-shared-prototype-replaced-method.js",
+    source: mapDependenciesWithEffects(
+      '__vite__mapDeps([0]); const cache = __vite__mapDeps.f; const proto = cache.__proto__; proto.slice = function () { this[0] = "./last.js"; return []; }; {\n' +
+        mapDependenciesWithEffects(
+          "__vite__mapDeps([0]); __vite__mapDeps.f.slice(); __vite__mapDeps([0]);",
+          '["./second.js"]',
+        ) +
+        "\n}",
+    ),
+    callOccurrences: [0, 1, 2],
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "sparse-inherited-helper-cache-mutation.js",
+    source:
+      "Array.prototype[0] = 1;\n" +
+      mapDependenciesWithEffects(
+        'const alias = __vite__mapDeps([,])[0]; alias.f[0] = "./last.js"; __vite__mapDeps([0]);',
+        '["./first.js", m]',
+      ),
+    callSources: ["__vite__mapDeps([,])", defaultCall],
+    callOccurrences: [0, 1],
     resolved: [],
     unknown: true,
   },

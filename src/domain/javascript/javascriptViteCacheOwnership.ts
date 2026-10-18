@@ -27,6 +27,8 @@ import type {
   ViteCacheValue,
 } from "./javascriptViteCacheIdentityTypes.js";
 import { semanticObjectPropertyReferencesSteps } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptViteHelperCandidate } from "./javascriptViteHelper.js";
+import { collectSemanticEsmExport } from "./javascriptSemanticProjection.js";
 
 type CacheTable = readonly (string | undefined)[];
 type CachePath = readonly (string | null)[];
@@ -77,7 +79,7 @@ const arrayInvocation = (
 export function* invalidateJavaScriptViteCachesSteps(
   program: t.Program,
   tables: Map<string, CacheTable | null>,
-  cacheTables: ReadonlyMap<string, t.ArrayExpression>,
+  cacheHelpers: ReadonlyMap<string, JavaScriptViteHelperCandidate>,
   initializations: ReadonlySet<t.Node | undefined>,
   admittedNodes: WeakSet<t.Node>,
   state: JavaScriptSemanticAnalysisState,
@@ -98,6 +100,7 @@ export function* invalidateJavaScriptViteCachesSteps(
     identities,
     initializations,
     admittedNodes,
+    state,
   );
   const reads = yield* createViteCacheReadProofSteps(tables, state, (node) =>
     identities.read(node),
@@ -117,7 +120,7 @@ export function* invalidateJavaScriptViteCachesSteps(
     admittedNodes: admittedNodes,
     unsafeTargets: new Set(),
   };
-  yield* identities.initializeSteps(cacheTables);
+  yield* identities.initializeSteps(cacheHelpers);
   yield* identities.solveSteps();
   context.unsafeTargets = yield* unsafeAssignmentTargetsSteps(
     { calls, exposures, writes },
@@ -534,6 +537,7 @@ function* indexCacheEffectsSteps(
   identities: ViteCacheIdentities,
   initializations: ReadonlySet<t.Node | undefined>,
   admittedNodes: WeakSet<t.Node>,
+  state: JavaScriptSemanticAnalysisState,
 ): Generator<
   void,
   {
@@ -567,6 +571,7 @@ function* indexCacheEffectsSteps(
   };
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
+      collectSemanticEsmExport(node, state);
       if (admittedNodes.has(node)) admittedDepth++;
       if (t.isExpression(node)) identities.normalize(node);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
@@ -666,6 +671,7 @@ function* indexCacheEffectsSteps(
       if (admittedNodes.has(node)) admittedDepth--;
     },
   });
+  yield* identities.retainExportedValuesSteps(exposures);
   let examined = 0;
   for (const effect of deferred) {
     if (examined++ % 1024 === 0) yield;

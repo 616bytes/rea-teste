@@ -5,6 +5,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  hasJavaScriptViteInheritedIndex,
   isJavaScriptViteDefaultUndefined,
   readJavaScriptViteHelper,
   type JavaScriptViteHelperCandidate,
@@ -35,7 +36,7 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
   });
   const calls = new Map<ViteDependencyCall, ViteDependencyTable>();
   if (candidates.length === 0) return calls;
-  const { tables, cacheTables } = yield* viteBindingTablesSteps(
+  const { tables, cacheHelpers } = yield* viteBindingTablesSteps(
     candidates,
     state,
   );
@@ -55,7 +56,7 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
   yield* invalidateJavaScriptViteCachesSteps(
     file.program,
     tables,
-    cacheTables,
+    cacheHelpers,
     initializations,
     admittedNodes,
     state,
@@ -97,19 +98,17 @@ function* viteBindingTablesSteps(
   void,
   {
     tables: Map<string, ViteDependencyTable | null>;
-    cacheTables: Map<string, t.ArrayExpression>;
+    cacheHelpers: Map<string, JavaScriptViteHelperCandidate>;
   }
 > {
   const tables = new Map<string, ViteDependencyTable | null>();
-  const cacheTables = new Map<string, t.ArrayExpression>();
-  for (const [
-    index,
-    { name, helper, table, uncertain },
-  ] of candidates.entries()) {
+  const cacheHelpers = new Map<string, JavaScriptViteHelperCandidate>();
+  for (const [index, candidate] of candidates.entries()) {
     if (index % 1024 === 0) yield;
+    const { name, helper, table, uncertain } = candidate;
     const binding = resolveSemanticBindingState(state, name, name.name);
     if (binding === undefined) continue;
-    cacheTables.set(binding.bindingId, table);
+    cacheHelpers.set(binding.bindingId, candidate);
     const initializer = semanticStableInitializer(binding, state);
     const unchanged =
       !uncertain &&
@@ -121,7 +120,7 @@ function* viteBindingTablesSteps(
       unchanged ? yield* exactTableSlotsSteps(table) : null,
     );
   }
-  return { tables, cacheTables };
+  return { tables, cacheHelpers };
 }
 
 function* exactTableSlotsSteps(
@@ -172,7 +171,12 @@ function* selectedDependencySpecifiersSteps(
   const selected: (string | undefined)[] = [];
   for (const [index, element] of indexes.elements.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
-    if (element === null) continue;
+    if (element === null) {
+      // Native map visits inherited indexes even when the input has an elision.
+      if (hasJavaScriptViteInheritedIndex(index, state))
+        selected.push(undefined);
+      continue;
+    }
     const value = unwrapJavaScriptExpression(element).node;
     const inert = inertIndexSlot(value);
     if (

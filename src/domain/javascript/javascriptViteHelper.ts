@@ -15,6 +15,20 @@ type ViteHelper =
   | t.FunctionExpression
   | t.FunctionDeclaration;
 
+/** An elision is absent only when visible writes cannot supply its prototype slot. */
+export const hasJavaScriptViteInheritedIndex = (
+  index: number,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  ["Array", "Object"].some((namespace) =>
+    state.ambientWrites.covers([
+      "global",
+      namespace,
+      "prototype",
+      String(index),
+    ]),
+  );
+
 export interface JavaScriptViteHelperCandidate {
   readonly name: t.Identifier;
   readonly helper: ViteHelper;

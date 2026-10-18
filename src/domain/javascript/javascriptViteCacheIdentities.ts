@@ -11,7 +11,11 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
-import { isJavaScriptViteDefaultUndefined } from "./javascriptViteHelper.js";
+import {
+  hasJavaScriptViteInheritedIndex,
+  isJavaScriptViteDefaultUndefined,
+  type JavaScriptViteHelperCandidate,
+} from "./javascriptViteHelper.js";
 
 import {
   FOREIGN,
@@ -80,6 +84,7 @@ export class ViteCacheIdentities {
   private readonly vertices = new Map<VertexKey, Vertex>();
   private readonly normalizeQueue: t.Node[] = [];
   private readonly allocations = new Map<string, Vertex>();
+  private readonly helperValues = new WeakMap<t.Node, Vertex>();
   private readonly cacheInitializations = new WeakSet<t.Node>();
   private readonly helperResults = new WeakMap<
     t.CallExpression | t.OptionalCallExpression,
@@ -130,6 +135,24 @@ export class ViteCacheIdentities {
 
   read(node: ViteCacheValue): ViteCacheIdentity | undefined {
     return ("inputs" in node ? node : this.vertices.get(node))?.fact;
+  }
+
+  /** Module projection owns runtime exports and default-expression captures. */
+  *retainExportedValuesSteps(exposures: ViteCacheExposure[]): Generator<void> {
+    let examined = 0;
+    for (const link of this.state.moduleLinks) {
+      if (examined++ % 1024 === 0) yield;
+      if (link.kind !== "export") continue;
+      const expression = this.state.defaultExportExpressions.get(link);
+      const binding = this.state.moduleLinkBindings.get(link);
+      if (expression !== undefined)
+        exposures.push({ node: expression, value: this.normalize(expression) });
+      else if (binding !== undefined)
+        exposures.push({
+          node: this.state.program,
+          value: this.vertex(binding.bindingId),
+        });
+    }
   }
 
   /** Parsed call facts distinguish read-only parameters from opaque calls. */
@@ -249,12 +272,12 @@ export class ViteCacheIdentities {
   }
 
   *initializeSteps(
-    tables: ReadonlyMap<string, t.ArrayExpression>,
+    tables: ReadonlyMap<string, JavaScriptViteHelperCandidate>,
   ): Generator<void> {
     let examined = 0;
     const admitted = new Set<string>();
     const patternWrites = new WeakMap<t.AssignmentExpression, Set<string>>();
-    for (const [owner, table] of tables) {
+    for (const [owner, { table, helper: helperNode }] of tables) {
       if (examined++ % 1024 === 0) yield;
       admitted.add(owner);
       const helper: ViteCacheAllocation = { kind: "helper", owner };
@@ -269,6 +292,7 @@ export class ViteCacheIdentities {
       this.allocationVertices.set(cache.seed.allocation!, cache);
       const helperVertex = this.vertex(owner);
       helperVertex.seed = { allocation: helper, owner };
+      this.helperValues.set(helperNode, helperVertex);
       this.allocationVertices.set(helper, helperVertex);
       this.connect(helperVertex, { kind: "family", source: cache });
     }
@@ -584,7 +608,11 @@ export class ViteCacheIdentities {
             break;
           }
           const key =
-            index === null ? undefined : semanticStaticPropertyKey(index, true);
+            index === null
+              ? hasJavaScriptViteInheritedIndex(keys.length, this.state)
+                ? null
+                : undefined
+              : semanticStaticPropertyKey(index, true);
           keys.push(key);
           if (key === undefined) continue;
           if (key === null) uncertain = true;
@@ -764,10 +792,26 @@ export class ViteCacheIdentities {
         });
         continue;
       }
+      const helper = this.helperValues.get(expression);
+      if (helper !== undefined) {
+        this.connect(vertex, { kind: "alias", source: helper });
+        continue;
+      }
       const invocation =
         t.isCallExpression(expression) || t.isOptionalCallExpression(expression)
           ? this.invocation(expression)
           : undefined;
+      if (
+        invocation?.kind === "known" &&
+        (invocation.path.join(".") === "intrinsic.Object.getPrototypeOf" ||
+          invocation.path.join(".") === "intrinsic.Reflect.getPrototypeOf")
+      ) {
+        // A derived prototype may be shared by every helper. Its unresolved
+        // identity cannot establish a foreign object or an unchanged method.
+        vertex.seed = { allocation: null, owner: null };
+        this.enqueue(vertex);
+        continue;
+      }
       if (
         invocation?.kind === "known" &&
         invocation.path.length === 3 &&
@@ -901,6 +945,14 @@ export class ViteCacheIdentities {
   ): Generator<void, ViteCacheIdentity | undefined> {
     const allocation = source.allocation;
     if (allocation === null) return { allocation: null, owner: source.owner };
+    if (
+      input.key === "__proto__" &&
+      (allocation.kind === "cache" ||
+        allocation.kind === "helper" ||
+        t.isArrayExpression(allocation.node) ||
+        allocation.helperResult !== undefined)
+    )
+      return { allocation: null, owner: null };
     if (allocation.kind === "helper") {
       const cache = this.allocations.get(allocation.owner ?? "");
       if (input.key === "f" && cache !== undefined) {

@@ -21,6 +21,7 @@ import {
 } from "./composition/optionalObservationProviders.js";
 import { createToolResultDelivery } from "./server/toolResult.js";
 import { createShutdown } from "./main/shutdown.js";
+import { createActivityJournal } from "./application/activity/ActivityJournal.js";
 import { registerProcessShutdown } from "./main/processShutdown.js";
 
 const runtimeDependencies = (): RuntimeDependencies => ({
@@ -48,6 +49,7 @@ export const run = async (
     return 1;
   }
   const logger = createLogger("mcp", config.value.logLevel);
+  const activity = createActivityJournal(environment);
   const serverLogger = logger.child({ layer: "server" });
   const session = createBinarySession(config.value, logger, environment);
   const opened = await openInitialTarget(
@@ -61,6 +63,7 @@ export const run = async (
     logger,
     serverLogger,
     environment,
+    activity,
     delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
     loadOptionalProviders:
       dependencies.loadOptionalProviders ??

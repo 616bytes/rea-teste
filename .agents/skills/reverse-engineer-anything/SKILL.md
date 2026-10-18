@@ -81,6 +81,15 @@ skill replacement before applying authorized changes. Preserve existing approval
 and target-execution boundaries. REA setup never installs or upgrades unrelated
 software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Kuna, Binwalk or Unblob.
 
+## Keep the operator informed of progress and ETA
+
+When an operator requests an analysis task (e.g. binary inspection, decompilation, trace, or comparison):
+
+1. **State the plan and current phase**: Before launching multi-step or long-running operations (such as initial binary intake, decompilation, call graph traversal, or symbol extraction), explicitly inform the operator what is being analyzed and why.
+2. **Report progress and estimated duration**: Inform the operator of the expected timeframe (e.g. "Starting binary structure and symbols analysis; estimated ~20-30s"). REA emits continuous MCP `notifications/progress` with percentage and ETA estimates during execution.
+3. **Offer the terminal dashboard for long runs**: When an analysis spans multiple long steps, remind the operator that they can run `rea activity --watch` in a separate terminal to view real-time progress percentages, elapsed time, and ETA calculations.
+4. **Summarize phase completion**: Once a major step or tool completes, summarize elapsed time and key evidence facts before transitioning to the next investigative step.
+
 ## Route the target first
 
 Choose the first tool from the target the user supplied. Use `open_binary` for

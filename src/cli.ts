@@ -52,6 +52,7 @@ import {
 } from "./cli/cliResultOutput.js";
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
+import { registerActivityCommands } from "./cli/activityCommands.js";
 
 /** Describe CLI settings that are invalid before any command runs, as MCP does. */
 export const cliConfigurationError = (
@@ -107,6 +108,7 @@ export const createCli = (
   });
 
   registerSetupCommands(cli, logger, environment);
+  registerActivityCommands(cli, logger, environment);
   registerReverseEngineeringCommands(cli, logger, environment);
   registerCutterCommands(cli, logger, environment);
   registerCoreAnalysisCommands(cli, logger, analysis.runDirectAnalysis);

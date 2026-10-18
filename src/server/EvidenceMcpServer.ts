@@ -34,6 +34,12 @@ import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import type { ToolResultDelivery } from "./toolResult.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
+import type { ActivityJournal } from "../application/activity/ActivityJournal.js";
+import {
+  calculateProgress,
+  estimateFor,
+  formatDuration,
+} from "../application/activity/activityEstimates.js";
 import {
   carriesTargetContentMarker,
   encodeToolResult,
@@ -119,6 +125,7 @@ export class EvidenceMcpServer extends McpServer {
     readonly delivery: ToolResultDelivery,
     compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
     private readonly omitOutputSchemas = false,
+    private readonly activity: ActivityJournal | undefined = undefined,
   ) {
     super(info, options);
     this.compactPresentation =
@@ -188,6 +195,7 @@ export class EvidenceMcpServer extends McpServer {
         this.recordEvidence,
         this.delivery,
         this.omitOutputSchemas,
+        this.activity,
       ),
     );
   }
@@ -199,6 +207,18 @@ class ErrorEvidenceTransport implements Transport {
   onmessage: Transport["onmessage"];
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
+  private readonly pendingActivities = new Map<
+    RequestId,
+    {
+      readonly id: string;
+      readonly startedAt: string;
+      readonly tool: string;
+      readonly progressToken?: string | number;
+      timer?: NodeJS.Timeout | undefined;
+      lastProgress: number;
+      progressInFlight?: Promise<void> | undefined;
+    }
+  >();
   private readonly pendingToolLists = new Set<RequestId>();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
 
@@ -209,6 +229,7 @@ class ErrorEvidenceTransport implements Transport {
       | undefined,
     private readonly delivery: ToolResultDelivery,
     private readonly omitOutputSchemas: boolean,
+    private readonly activity: ActivityJournal | undefined,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -217,8 +238,84 @@ class ErrorEvidenceTransport implements Transport {
         isJSONRPCRequest(message) &&
         message.method === "tools/call" &&
         typeof message.params?.["name"] === "string"
-      )
-        this.pendingTools.set(message.id, message.params["name"]);
+      ) {
+        const toolName = message.params["name"];
+        this.pendingTools.set(message.id, toolName);
+        if (this.activity !== undefined) {
+          const startedAt = new Date().toISOString();
+          const metadata = isRecord(message.params["_meta"])
+            ? message.params["_meta"]
+            : undefined;
+          const progressToken =
+            typeof metadata?.["progressToken"] === "string" ||
+            typeof metadata?.["progressToken"] === "number"
+              ? metadata["progressToken"]
+              : undefined;
+          const activityId = this.activity.start(toolName, startedAt);
+
+          const activity: {
+            id: string;
+            startedAt: string;
+            tool: string;
+            progressToken?: string | number;
+            timer?: NodeJS.Timeout | undefined;
+            lastProgress: number;
+            progressInFlight?: Promise<void> | undefined;
+          } = {
+            id: activityId,
+            startedAt,
+            tool: toolName,
+            lastProgress: 0,
+            ...(progressToken === undefined ? {} : { progressToken }),
+          };
+          this.pendingActivities.set(message.id, activity);
+
+          if (progressToken !== undefined) {
+            void this.notifyProgress(
+              progressToken,
+              0,
+              1,
+              `Started REA tool: ${toolName}`,
+            );
+
+            const timer = setInterval(() => {
+              const current = this.pendingActivities.get(message.id);
+              if (
+                current === undefined ||
+                current.progressInFlight !== undefined
+              )
+                return;
+              let progressTask: Promise<void>;
+              progressTask = (async () => {
+                const records = await (this.activity?.read(50) ??
+                  Promise.resolve([]));
+                if (this.pendingActivities.get(message.id) !== current) return;
+                const elapsed = Math.max(0, Date.now() - Date.parse(startedAt));
+                const estimate = estimateFor(toolName, records);
+                const { progressPercent, elapsedFormatted, etaFormatted } =
+                  calculateProgress(elapsed, estimate);
+                const progress = Math.max(
+                  current.lastProgress,
+                  progressPercent / 100,
+                );
+                current.lastProgress = progress;
+                await this.notifyProgress(
+                  progressToken,
+                  progress,
+                  1,
+                  `${toolName} running (${Math.floor(progress * 100)}%, elapsed: ${elapsedFormatted}, ETA: ${etaFormatted})`,
+                );
+              })().finally(() => {
+                if (current.progressInFlight === progressTask)
+                  current.progressInFlight = undefined;
+              });
+              current.progressInFlight = progressTask;
+            }, 1000);
+            if (typeof timer.unref === "function") timer.unref();
+            activity.timer = timer;
+          }
+        }
+      }
       if (isJSONRPCRequest(message) && message.method === "tools/list")
         this.pendingToolLists.add(message.id);
       if (isJSONRPCRequest(message) && message.method === "completion/complete")
@@ -230,13 +327,15 @@ class ErrorEvidenceTransport implements Transport {
         message.method === "notifications/cancelled"
       ) {
         const id = message.params?.["requestId"];
-        if (typeof id === "string" || typeof id === "number")
+        if (typeof id === "string" || typeof id === "number") {
+          void this.finishActivity(id, "cancelled");
           forgetPendingMcpRequest(
             this.pendingTools,
             this.pendingToolLists,
             this.pendingCompletions,
             id,
           );
+        }
       }
       const completion =
         isJSONRPCRequest(message) && message.method === "completion/complete"
@@ -250,6 +349,11 @@ class ErrorEvidenceTransport implements Transport {
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
+      void Promise.all(
+        [...this.pendingActivities.keys()].map((id) =>
+          this.finishActivity(id, "unknown"),
+        ),
+      );
       this.pendingTools.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
@@ -274,6 +378,11 @@ class ErrorEvidenceTransport implements Transport {
     try {
       await this.transport.close();
     } finally {
+      await Promise.all(
+        [...this.pendingActivities.keys()].map((id) =>
+          this.finishActivity(id, "unknown"),
+        ),
+      );
       this.pendingTools.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
@@ -329,8 +438,27 @@ class ErrorEvidenceTransport implements Transport {
                 _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
               }
             : result;
+        await this.finishActivity(
+          id,
+          "failed",
+          extractEvidenceId(advertised.result.structuredContent),
+        );
         await this.transport.send({ ...advertised, result: marked }, options);
-      } else await this.transport.send(advertised, options);
+      } else {
+        if (
+          isJSONRPCResultResponse(advertised) &&
+          isCallToolResult(advertised.result)
+        )
+          await this.finishActivity(
+            id,
+            "completed",
+            extractEvidenceId(advertised.result.structuredContent),
+          );
+        await this.transport.send(advertised, options);
+      }
+    } catch (cause: unknown) {
+      await this.finishActivity(id, "unknown");
+      throw cause;
     } finally {
       if (!isJSONRPCRequest(message) && id !== undefined) {
         forgetPendingMcpRequest(
@@ -340,6 +468,54 @@ class ErrorEvidenceTransport implements Transport {
           id,
         );
       }
+    }
+  }
+
+  private async finishActivity(
+    id: RequestId | undefined,
+    status: "completed" | "failed" | "cancelled" | "unknown",
+    evidenceId?: string,
+  ): Promise<void> {
+    if (id === undefined) return;
+    const activity = this.pendingActivities.get(id);
+    if (activity === undefined) return;
+    if (activity.timer !== undefined) {
+      clearInterval(activity.timer);
+    }
+    this.pendingActivities.delete(id);
+    await activity.progressInFlight?.catch(() => undefined);
+    const duration = Math.max(0, Date.now() - Date.parse(activity.startedAt));
+    await this.notifyProgress(
+      activity.progressToken,
+      1,
+      1,
+      status === "completed"
+        ? `Completed REA tool: ${activity.tool} (${formatDuration(duration)})`
+        : `REA tool ${status}: ${activity.tool} (${formatDuration(duration)})`,
+    );
+    this.activity?.finish({
+      activityId: activity.id,
+      status,
+      startedAt: activity.startedAt,
+      ...(evidenceId === undefined ? {} : { evidenceId }),
+    });
+  }
+
+  private async notifyProgress(
+    progressToken: string | number | undefined,
+    progress: number,
+    total: number,
+    message: string,
+  ): Promise<void> {
+    if (progressToken === undefined) return;
+    try {
+      await this.transport.send({
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: { progressToken, progress, total, message },
+      });
+    } catch {
+      // Progress is optional observability; it must not change tool truth.
     }
   }
 
@@ -455,3 +631,31 @@ class ErrorEvidenceTransport implements Transport {
     };
   }
 }
+
+export const extractEvidenceId = (value: unknown): string | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const direct = Reflect.get(value, "evidence_id");
+  if (typeof direct === "string") return direct;
+
+  const error = Reflect.get(value, "error");
+  if (typeof error === "object" && error !== null) {
+    const details = Reflect.get(error, "details");
+    if (typeof details === "object" && details !== null) {
+      const partialObs = Reflect.get(details, "partial_observation");
+      if (typeof partialObs === "object" && partialObs !== null) {
+        const id = Reflect.get(partialObs, "evidence_id");
+        if (typeof id === "string") return id;
+      }
+      const reportedLimits = Reflect.get(details, "reported_limits");
+      if (typeof reportedLimits === "object" && reportedLimits !== null) {
+        const evidenceRef = Reflect.get(reportedLimits, "evidence_reference");
+        if (typeof evidenceRef === "object" && evidenceRef !== null) {
+          const id = Reflect.get(evidenceRef, "evidence_id");
+          if (typeof id === "string") return id;
+        }
+      }
+    }
+  }
+
+  return undefined;
+};

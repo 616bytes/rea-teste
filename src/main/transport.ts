@@ -8,6 +8,7 @@ import { createServer } from "../server/createServer.js";
 import type { ToolResultDelivery } from "../server/toolResult.js";
 import type { RuntimeDependencies } from "./types.js";
 import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
+import type { ActivityJournal } from "../application/activity/ActivityJournal.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   MCP_CONNECTION_LOST,
@@ -20,6 +21,7 @@ interface ServerContext {
   readonly logger: Logger;
   readonly serverLogger: Logger;
   readonly loadOptionalProviders: () => Promise<OptionalProviderLoadResult>;
+  readonly activity?: ActivityJournal;
 }
 
 type ClosableOptionalProvider = {
@@ -126,6 +128,9 @@ export const startMcpTransport = async (
             ...optionalProviders,
             optionalObservationProviderOwner: "caller",
             androidAnalysis: android,
+            ...(serverContext.activity === undefined
+              ? {}
+              : { activity: serverContext.activity }),
           },
         );
         // The SDK can discard a server even when its provider cleanup failed.

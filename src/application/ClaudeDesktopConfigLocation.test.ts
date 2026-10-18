@@ -179,7 +179,7 @@ const roamingFileSystem = (
   const within = (path: string) => (entry: string) =>
     entry.startsWith(`${path}${sep}`);
   return {
-    readdir: (path) => {
+    readdir: (path, limit) => {
       if (path === packages) return [CLAUDE_DESKTOP_PACKAGE_FAMILY];
       if (
         unreadable.some(
@@ -196,7 +196,7 @@ const roamingFileSystem = (
             (entry) => entry.slice(path.length + 1).split(sep)[0] ?? "",
           ),
         ),
-      ];
+      ].slice(0, limit);
     },
     lstat: (path) => {
       if (absolute.includes(path)) return file;
@@ -316,8 +316,13 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     );
     const fileSystem = roamingFileSystem(folders, (path) => path);
     let inspected = 0;
+    const requested: (number | undefined)[] = [];
     const view = viewOf({
       ...fileSystem,
+      readdir: (path, limit) => {
+        if (path === privateRoaming) requested.push(limit);
+        return fileSystem.readdir(path, limit);
+      },
       lstat: (path) => {
         if (dirname(path) === privateRoaming) inspected += 1;
         return fileSystem.lstat(path);
@@ -326,6 +331,8 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     // The root lists only folders, so the budget runs out before any file.
     expect(view).toBe("unknown");
     expect(inspected).toBe(1024);
+    // The listing itself stops at the budget instead of reading all 1500 names.
+    expect(requested).toEqual([1024]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, opendirSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import { err, ok, type Result } from "../domain/result.js";
@@ -50,7 +50,8 @@ export interface ClaudeDesktopLocationFailure {
 
 /** Synchronous probes; each throws for failures other than absence. */
 export interface ClaudeDesktopLocationFileSystem {
-  readonly readdir: (path: string) => readonly string[];
+  /** A directory's names; with `limit`, at most that many, in enumeration order. */
+  readonly readdir: (path: string, limit?: number) => readonly string[];
   readonly lstat: (path: string) => {
     isFile(): boolean;
     isDirectory(): boolean;
@@ -58,8 +59,25 @@ export interface ClaudeDesktopLocationFileSystem {
   readonly realpath: (path: string) => string;
 }
 
+/** Up to `limit` names from a directory, without enumerating the rest. */
+const readNames = (path: string, limit: number): string[] => {
+  const directory = opendirSync(path);
+  const names: string[] = [];
+  try {
+    while (names.length < limit) {
+      const entry = directory.readSync();
+      if (entry === null) break;
+      names.push(entry.name);
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return names;
+};
+
 const systemFileSystem: ClaudeDesktopLocationFileSystem = {
-  readdir: (path) => readdirSync(path),
+  readdir: (path, limit) =>
+    limit === undefined ? readdirSync(path) : readNames(path, limit),
   lstat: (path) => lstatSync(path),
   realpath: (path) => realpathSync.native(path),
 };
@@ -209,8 +227,10 @@ const claudeFolderProbes = (
  * Private files anywhere under the roaming root, breadth first and within the
  * walk's bounds. Directories that cannot be listed are skipped, links are not
  * followed, and an entry is inspected only while the directory still needs a
- * file or the queue has room for a folder. A walk that runs out of budget
- * keeps the files it found; with none, the view stays unknown.
+ * file or the queue has room for a folder. A listing reads no more names than
+ * the budget has left, so a crowded folder is never enumerated whole. A walk
+ * that runs out of budget keeps the files it found; with none, the view stays
+ * unknown.
  */
 const roamingProbes = (
   fileSystem: ClaudeDesktopLocationFileSystem,
@@ -233,7 +253,10 @@ const roamingProbes = (
     let names: readonly string[];
     try {
       names = [
-        ...fileSystem.readdir(join(privateRoaming, directory.path)),
+        ...fileSystem.readdir(
+          join(privateRoaming, directory.path),
+          ROAMING_ENTRY_LIMIT - inspected,
+        ),
       ].sort();
     } catch (cause: unknown) {
       // An unreadable folder cannot be compared; the others still can.

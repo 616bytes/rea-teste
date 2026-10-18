@@ -883,7 +883,7 @@ Custom clients upgrading from 6.1 should follow the
 
 Run `npm run docs:generate` in a source checkout to generate the machine-readable
 catalog at `docs/public/product-catalog.json`. Documentation deployments serve
-the same file at [/rea/product-catalog.json](/rea/product-catalog.json). PR CI retains it with the packaged
+the same file at [/rea/product-catalog.json](/product-catalog.json). PR CI retains it with the packaged
 skill and portable conformance projections in the `generated-docs` artifact.
 These outputs describe the exact source revision being built; they are not
 checked-in snapshots. For a running server, `binary_session` remains the

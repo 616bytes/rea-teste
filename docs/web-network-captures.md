@@ -94,6 +94,9 @@ tested upstream source is tag `v12.2.3`, commit
 an explicit unsupported-profile diagnostic. Non-Linux native decoding is not
 supported by this adapter.
 
+To verify native HTTP/3 captures from a real mitmproxy producer, follow the
+optional [HTTP/3 capture lab](http3-capture-lab.md).
+
 ## Reading Fiddler captures (`.saz`)
 
 Fiddler Everywhere saves traffic in **Session Archive Zip (`.saz`)** files.

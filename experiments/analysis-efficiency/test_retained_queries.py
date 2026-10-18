@@ -8,11 +8,40 @@ import unittest
 class RetainedQueryReceipts(unittest.TestCase):
     def run_node(self, body):
         module = Path(__file__).with_name('retained-query-calls.mjs').resolve().as_uri()
+        finalizer = Path(__file__).with_name('retained-query-finalization.mjs').resolve().as_uri()
         source = ('import assert from "node:assert/strict";\n'
-                  'const {createRetainedQueryCaller} = await import(' + json.dumps(module) + ');\n' + body)
+                  'const {createRetainedQueryCaller} = await import(' + json.dumps(module) + ');\n'
+                  'const {finalizeRetainedQueryReceipt} = await import(' + json.dumps(finalizer) + ');\n' + body)
         result = subprocess.run(['node', '--input-type=module', '-'], input=source,
                                 text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def run_finalization(self, body):
+        self.run_node('''
+import {mkdtemp,mkdir,readFile,writeFile,rm,stat} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {Writable} from 'node:stream';
+import {finished} from 'node:stream/promises';
+const root=await mkdtemp(join(tmpdir(),'rea-receipt-test-'));
+const account=join(root,'account');const output=join(root,'output');
+await mkdir(account);await mkdir(output);
+const chunks=[];
+const stdout=new Writable({write(chunk,encoding,done){chunks.push(chunk.toString());done();}});
+const serverLog=new Writable({write(chunk,encoding,done){done();}});
+const serverLogFinished=finished(serverLog);serverLogFinished.catch(()=>{});
+const originalFailure={name:'Error',message:'original request failed'};
+const report={status:'failed',failure:originalFailure,calls:[{phase:'page',elapsed_ms:17}]};
+const input={report,client:{close:async()=>{}},transport:{close:async()=>{}},
+  account,output,stdout,serverLog,serverLogFinished};
+const saved=async()=>JSON.parse(await readFile(join(output,'report.json'),'utf8'));
+try {
+''' + body + '''
+} finally {
+  serverLog.destroy();await serverLogFinished.catch(()=>{});stdout.destroy();
+  await rm(root,{recursive:true,force:true});
+}
+''')
 
     def test_rejected_call_preserves_request_phase_cost_and_original_failure(self):
         self.run_node('''
@@ -56,4 +85,59 @@ const rpc=new Error('request timeout');const disk=new Error('receipt close faile
 const call=createRetainedQueryCaller({callTool:async()=>{throw rpc;}},async()=>{throw disk;});
 await assert.rejects(call('inspect_analysis_view',{},'selected'),e=>
   e instanceof AggregateError && e.errors[0]===rpc && e.errors[1]===disk);
+''')
+
+    def test_log_stream_failure_keeps_costs_both_receipts_and_workspace(self):
+        self.run_finalization('''
+const log=new Writable({write(chunk,encoding,done){done(new Error('log disk failed'));}});
+const logFinished=finished(log);logFinished.catch(()=>{});log.write('diagnostic');
+assert.equal(await finalizeRetainedQueryReceipt({...input,serverLog:log,
+  serverLogFinished:logFinished}),false);
+assert.match(report.cleanup_failures[0],/server-log:.*log disk failed/);
+assert.strictEqual(report.failure,originalFailure);
+assert.equal(report.calls[0].elapsed_ms,17);assert.equal(report.retained_workspace,account);
+assert.equal((await stat(account)).isDirectory(),true);
+assert.deepEqual(await saved(),report);assert.deepEqual(JSON.parse(chunks.join('')),report);
+''')
+
+    def test_workspace_removal_error_still_writes_the_original_failure(self):
+        self.run_finalization('''
+const blocked=join(root,'owned-file');await writeFile(blocked,'owned');
+const malformedAccount=join(blocked,'child');
+assert.equal(await finalizeRetainedQueryReceipt({...input,account:malformedAccount}),false);
+assert.match(report.cleanup_failures[0],/^workspace:/);
+assert.equal(report.retained_workspace,malformedAccount);
+assert.deepEqual((await saved()).failure,originalFailure);
+assert.deepEqual(JSON.parse(chunks.join('')),report);
+''')
+
+    def test_report_file_refusal_preserves_the_stdout_receipt(self):
+        self.run_finalization('''
+await mkdir(join(output,'report.json'));
+assert.equal(await finalizeRetainedQueryReceipt(input),false);
+assert.deepEqual(report.cleanup_failures,[]);
+assert.match(report.receipt_failures[0],/^report-file:/);
+assert.deepEqual(JSON.parse(chunks.join('')),report);
+assert.deepEqual(report.failure,originalFailure);
+''')
+
+    def test_stdout_write_error_is_handled_and_saved_in_the_file(self):
+        self.run_finalization('''
+const failedStdout=new Writable({write(chunk,encoding,done){done(new Error('broken pipe'));}});
+assert.equal(await finalizeRetainedQueryReceipt({...input,stdout:failedStdout}),false);
+assert.match(report.receipt_failures[0],/stdout:.*broken pipe/);
+assert.deepEqual(await saved(),report);assert.deepEqual(report.failure,originalFailure);
+''')
+
+    def test_failed_client_close_keeps_ownership_and_attempts_peer_cleanup(self):
+        self.run_finalization('''
+const closed=[];
+assert.equal(await finalizeRetainedQueryReceipt({...input,
+  client:{close(){closed.push('client');throw new Error('close failed');}},
+  transport:{close:async()=>{closed.push('transport');}}}),false);
+assert.deepEqual(closed,['client','transport']);
+assert.match(report.cleanup_failures[0],/client:.*close failed/);
+assert.equal(report.retained_workspace,account);assert.equal(serverLog.writableEnded,true);
+assert.equal((await stat(account)).isDirectory(),true);
+assert.deepEqual(await saved(),report);assert.deepEqual(JSON.parse(chunks.join('')),report);
 ''')

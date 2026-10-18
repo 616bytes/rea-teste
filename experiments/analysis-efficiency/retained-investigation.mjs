@@ -7,7 +7,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +22,7 @@ import {
   requireMcpToolError,
 } from "../../scripts/lib/mcp-verifier-results.mjs";
 import { createRetainedQueryCaller } from "./retained-query-calls.mjs";
+import { finalizeRetainedQueryReceipt } from "./retained-query-finalization.mjs";
 import {
   verifyMixedRetainedHistory,
   verifyMixedRetainedClosure,
@@ -297,20 +297,14 @@ try {
   report.status = "failed";
   report.failure = { name: cause.name, message: cause.message };
 } finally {
-  const cleanup = await Promise.allSettled([client.close(), transport.close()]);
-  report.cleanup_failures = cleanup.flatMap((item) =>
-    item.status === "rejected" ? [String(item.reason)] : [],
-  );
-  if (report.cleanup_failures.length === 0)
-    await rm(account, { recursive: true });
-  else report.retained_workspace = account;
-  if (!serverLog.writableEnded) serverLog.end();
-  await serverLogFinished;
-  await writeFile(
-    join(output, "report.json"),
-    JSON.stringify(report, null, 2) + "\n",
-  );
-  console.log(JSON.stringify(report));
+  const finalized = await finalizeRetainedQueryReceipt({
+    report,
+    client,
+    transport,
+    account,
+    serverLog,
+    serverLogFinished,
+    output,
+  });
+  if (report.status !== "passed" || !finalized) process.exitCode = 1;
 }
-if (report.status !== "passed" || report.cleanup_failures.length > 0)
-  process.exitCode = 1;

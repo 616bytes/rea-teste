@@ -188,3 +188,11 @@ request, phase and elapsed time. Reply bytes stay null when no usable reply was
 received. Receipt-write failures remain distinct; simultaneous call/write
 failures retain both causes. Deterministic failure tests run with
 `python3 -m unittest discover -s experiments/analysis-efficiency -p test_retained_queries.py`.
+
+Finalization independently attempts client/transport close, log completion and
+both receipt outputs. Cleanup failures preserve the original task failure and
+call costs, record the failing phase and retain the workspace for retry. A file
+receipt refusal still permits stdout; a broken stdout write is recorded in a
+file retry. Cleanup or receipt-output failures make the command fail. Five
+additional regressions exercise actual stream/file errors and peer cleanup;
+these are harness failure checks, not real-provider evidence.

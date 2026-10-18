@@ -450,7 +450,7 @@ export const parseAmStartOutput = (
     .map((line) => ({
       line,
       prefixedMatch: /^(?:Error|Exception)(?::|\b)(.*)$/iu.exec(line),
-      throwable: /^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*(?:Exception|Error):\s*.+$/u.test(
+      throwable: /^(?:(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+(?:[A-Za-z_$][A-Za-z0-9_$]*(?:Exception|Error)|Exception|Error)|[A-Za-z_$][A-Za-z0-9_$]*(?:Exception|Error))(?::\s*.*)?$/u.test(
         line,
       ),
       genericHeader: /^(?:Error\s+type\s+\d+|Exception\s+occurred\s+while\s+executing\b.*)$/iu.test(

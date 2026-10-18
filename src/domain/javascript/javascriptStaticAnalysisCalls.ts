@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 
 import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
@@ -41,7 +42,10 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import {
+  evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
+} from "./javascriptSemanticValues.js";
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
@@ -337,6 +341,33 @@ const inspectEndpointCall = (
   // A local or shadowed function with a familiar network name is not a known
   // browser request API. Do not let the literal fallback turn it into one.
   if (isNetworkRequestSpelling(name)) return;
+  if (first !== undefined && /(?:^|\.)(?:get|delete)$/u.test(name)) {
+    // Apply existing literal exclusions before requesting whole-source alias
+    // mutation facts. Inline receivers and unbound names need no such index.
+    if (
+      endpointArgumentHelper(
+        name,
+        node.arguments,
+        node.callee,
+        context.openReceiverFacts?.get(node.start ?? -1),
+      ) === undefined
+    )
+      return;
+    const mapLookup = isIntrinsicMapLookup(node, bindings);
+    if (mapLookup === true) return;
+    if (mapLookup === undefined) {
+      context.accumulator.pendingNetworkCalls.push({ node, name });
+      return;
+    }
+  }
+  inspectLiteralEndpointCall(node, name, context);
+};
+
+const inspectLiteralEndpointCall = (
+  node: JavaScriptCallLike,
+  name: string,
+  context: FindingContext,
+): void => {
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const endpoint = endpointArgumentHelper(
     name,
@@ -396,6 +427,11 @@ export const finishPartialNetworkEndpoints = (
   index: JavaScriptBindingIndex,
 ): void => {
   for (const { node, name } of context.accumulator.pendingNetworkCalls) {
+    if (!isKnownNetworkRequest(node, bindings)) {
+      if (!isIntrinsicMapLookup(node, bindings, index))
+        inspectLiteralEndpointCall(node, name, context);
+      continue;
+    }
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) continue;
     const resolved = resolvedRequestTarget(target, node, bindings, index);
@@ -615,6 +651,10 @@ const inspectStorageCall = (
   first: string | undefined,
   context: FindingContext,
 ): void => {
+  if (name === "Database" || name.endsWith(".Database")) {
+    context.accumulator.pendingSqliteCalls.push({ node, name });
+    return;
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const storage =
     receiverFact === "local" ||
@@ -639,6 +679,53 @@ const inspectStorageCall = (
       location: range(node),
     },
   });
+};
+
+/** Constructor spelling selects a candidate; source provenance owns certainty. */
+export const finishSqliteStorageCalls = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
+): void => {
+  for (const { node, name } of context.accumulator.pendingSqliteCalls) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    const provenance = evaluateSemanticExpressionProvenance(callee, bindings);
+    const changed = index.referenceMayHaveChangedAt(node, callee);
+    if (!changed && t.isIdentifier(callee) && provenance.status === "local")
+      continue;
+    const origin =
+      provenance.status === "module" ? provenance.origins[0] : undefined;
+    const path = origin?.importedPath;
+    const imported = origin?.resolutionMode !== "require";
+    const known =
+      !changed &&
+      origin !== undefined &&
+      ((origin.specifier === "better-sqlite3" &&
+        ((origin.resolutionMode === "require" && path?.length === 0) ||
+          (imported && path?.length === 1 && path[0] === "default"))) ||
+        (origin.specifier === "sqlite3" &&
+          ((path?.length === 1 && path[0] === "Database") ||
+            (imported &&
+              path?.length === 2 &&
+              (path[0] === "default" || path[0] === "*") &&
+              path[1] === "Database"))));
+    const first = stringValue(node.arguments[0]);
+    addLocatedFinding(context, {
+      collection: context.accumulator.storage,
+      key: `storage\0sqlite\0${known ? "api" : "candidate"}\0${first ?? ""}`,
+      node,
+      value: {
+        kind: "sqlite",
+        name: first ?? null,
+        mechanism: `call:${name}`,
+        ...(known ? {} : { interpretation: "candidate" as const }),
+        module_key: null,
+        location: range(node),
+      },
+    });
+  }
+  context.accumulator.pendingSqliteCalls.length = 0;
+  context.accumulator.storage.sort((left, right) => left.offset - right.offset);
 };
 
 export const addReference = (

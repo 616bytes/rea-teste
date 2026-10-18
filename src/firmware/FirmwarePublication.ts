@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { z } from "zod";
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   AnalysisOutputError,
   AnalysisCancelledError,
@@ -214,7 +215,14 @@ export const publishFirmwareExtraction = async (context: {
           : undefined;
       const cleanup = new ProviderCleanupError(
         "unblob",
-        [context.outputDirectory, context.workspacePath],
+        [
+          context.outputDirectory,
+          context.workspacePath,
+          ...(cause instanceof ArtifactReaderFailure &&
+          cause.cleanup !== undefined
+            ? cause.cleanup.resources
+            : []),
+        ],
         {
           reason:
             cleanupCause instanceof Error
@@ -224,7 +232,13 @@ export const publishFirmwareExtraction = async (context: {
             cause instanceof Error ? cause.message : String(cause),
         },
         {
-          cause: cleanupCause,
+          cause:
+            cause !== undefined && cause !== cleanupCause
+              ? new AggregateError(
+                  [cause, cleanupCause],
+                  `${cleanupCause instanceof Error ? cleanupCause.message : String(cleanupCause)}; previous error: ${cause instanceof Error ? cause.message : String(cause)}`,
+                )
+              : cleanupCause,
           operation: "extract_firmware",
           ...(publishedResult === undefined
             ? {}
@@ -233,8 +247,9 @@ export const publishFirmwareExtraction = async (context: {
       );
       if (tree !== undefined && treeLease !== undefined)
         context.retainCleanup(tree, treeLease, cleanup);
-      if (publishedResult !== undefined)
-        primary.retainPartialObservation(publishedResult);
+      if (publishedResult !== undefined) {
+        throw cleanup;
+      }
       throw analysisErrorWithCleanupFailure(
         primary,
         cleanup,

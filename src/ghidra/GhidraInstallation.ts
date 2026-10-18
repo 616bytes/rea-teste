@@ -549,7 +549,9 @@ const installationCoordinates = async (
   if (
     javaProbe !== undefined &&
     !javaProbe.ok &&
-    javaProbe.error instanceof AnalysisError
+    (javaProbe.error instanceof AnalysisCancelledError ||
+      (javaProbe.error instanceof AnalysisError &&
+        javaProbe.error.cleanupIncomplete))
   )
     throw javaProbe.error;
   return {
@@ -565,10 +567,17 @@ const installationCoordinates = async (
     javaCommand,
     java: javaProbe?.ok === true ? javaProbe.value : undefined,
     javaProbeFailure:
-      javaProbe !== undefined &&
-      !javaProbe.ok &&
-      !(javaProbe.error instanceof AnalysisError)
-        ? javaProbe.error
+      javaProbe !== undefined && !javaProbe.ok
+        ? javaProbe.error instanceof AnalysisError
+          ? {
+              _tag: "GhidraJavaProbeFailure",
+              code: "runtime_unavailable",
+              detail: `${javaCommand}: ${javaProbe.error.userMessage ?? javaProbe.error.message}`,
+              ...(javaProbe.error.capturedOutput === undefined
+                ? {}
+                : { output: javaProbe.error.capturedOutput }),
+            }
+          : javaProbe.error
         : undefined,
   };
 };

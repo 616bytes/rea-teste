@@ -1,13 +1,18 @@
+import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
-import { err, ok as javaProbeOk, type Result } from "../domain/result.js";
-import type {
-  GhidraJavaObservation,
-  GhidraJavaProbeFailure,
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { err, type Result } from "../domain/result.js";
+import { ok as javaProbeOk } from "../domain/result.js";
+import {
+  parseGhidraJavaOutput,
+  type GhidraJavaObservation,
+  type GhidraJavaProbeFailure,
 } from "./GhidraJavaProbe.js";
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { spawnSync } from "node:child_process";
 
 import { elf, fat, thinMach } from "../domain/binaryTarget.fixture.js";
 import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
@@ -16,7 +21,6 @@ import {
   ghidraJavaEnvironment,
   discoverGhidraInstallationOnPath,
   inspectGhidraInstallation,
-  type GhidraExecutableHeaderProbe,
   type GhidraInstallationHost,
 } from "./GhidraInstallation.js";
 import {
@@ -29,12 +33,10 @@ import {
 } from "./GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
-// The real Java probe shells out via spawnSync; stub it so one test can run
-// the real probeJava against captured `-XshowSettings:properties` output.
-// Every other test overrides probeJava, so the stub never fires for them.
-vi.mock("node:child_process", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:child_process")>();
-  return { ...original, spawnSync: vi.fn() };
+let inspectionResources = createInspectionResources();
+afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
 });
 
 const INSTALL = "/opt/ghidra";
@@ -47,10 +49,8 @@ const WINDOWS_PROPERTIES = `${WINDOWS_INSTALL}\\Ghidra\\application.properties`;
 const WINDOWS_HEADLESS = `${WINDOWS_INSTALL}\\support\\analyzeHeadless.bat`;
 const WINDOWS_DECOMPILER = `${WINDOWS_INSTALL}\\Ghidra\\Features\\Decompiler\\os\\win_x86_64\\decompile.exe`;
 
-const headerProbe = (bytes: Buffer): GhidraExecutableHeaderProbe => ({
-  bytes,
-  size: bytes.length,
-});
+const headerProbe = (bytes: Buffer) =>
+  javaProbeOk({ bytes, size: bytes.length });
 
 const JAVA: GhidraJavaObservation = {
   osArch: "amd64",
@@ -154,9 +154,10 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("does not fall back to PATH when an explicit Ghidra installation path is malformed", () => {
-  const inspection = inspectGhidraInstallation(
+it("does not fall back to PATH when an explicit Ghidra installation path is malformed", async () => {
+  const inspection = await inspectGhidraInstallation(
     {
+      resourceOwner: inspectionResources.owner,
       environment: { PATH: "/valid-ghidra-bin" },
       installDir: "relative/ghidra",
       platform: "linux",
@@ -173,11 +174,12 @@ it("does not fall back to PATH when an explicit Ghidra installation path is malf
   });
 });
 
-it("probes the selected Java environment without reading conflicting ambient settings", () => {
+it("probes the selected Java environment without reading conflicting ambient settings", async () => {
   vi.stubEnv("REA_GHIDRA_CONTEXT", "ambient");
   vi.stubEnv("REA_GHIDRA_AMBIENT", "ambient-only");
-  const inspection = inspectGhidraInstallation(
+  const inspection = await inspectGhidraInstallation(
     {
+      resourceOwner: inspectionResources.owner,
       environment: { REA_GHIDRA_CONTEXT: "selected", PATH: "/selected-bin" },
       installDir: INSTALL,
       platform: "linux",
@@ -219,10 +221,11 @@ describe("Ghidra installation inspection", () => {
     });
   });
 
-  it("accepts the verified Linux x64 Ghidra release and JDK", () => {
+  it("accepts the verified Linux x64 Ghidra release and JDK", async () => {
     expect(
-      inspectGhidraInstallation(
+      await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: INSTALL,
           platform: "linux",
@@ -245,9 +248,10 @@ describe("Ghidra installation inspection", () => {
     [SUPPORTED_GHIDRA_VERSION, "25.0.1", 25],
   ])(
     "accepts Ghidra %s with JDK %s on the verified release line",
-    (providerVersion, javaVersion, major) => {
-      const result = inspectGhidraInstallation(
+    async (providerVersion, javaVersion, major) => {
+      const result = await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: INSTALL,
           platform: "linux",
@@ -284,12 +288,18 @@ describe("Ghidra installation inspection", () => {
     ["linux", "arm64", "linux_arm_64"],
   ] as const)(
     "accepts %s/%s with the matching distribution or locally built native tool",
-    (platform, architecture, nativeDirectory) => {
+    async (platform, architecture, nativeDirectory) => {
       for (const location of ["os", "build/os"]) {
         const decompiler = `${INSTALL}/Ghidra/Features/Decompiler/${location}/${nativeDirectory}/decompile`;
         expect(
-          inspectGhidraInstallation(
-            { environment: {}, installDir: INSTALL, platform, architecture },
+          await inspectGhidraInstallation(
+            {
+              resourceOwner: inspectionResources.owner,
+              environment: {},
+              installDir: INSTALL,
+              platform,
+              architecture,
+            },
             host({
               executable: (path) => path === HEADLESS || path === decompiler,
               probeJava: () =>
@@ -312,7 +322,7 @@ describe("Ghidra installation inspection", () => {
 });
 
 describe("Ghidra Windows installation commitment", () => {
-  it("accepts the exact Windows x64 batch launcher and JDK commitment", () => {
+  it("accepts the exact Windows x64 batch launcher and JDK commitment", async () => {
     const windowsHost: GhidraInstallationHost = {
       platform: "win32",
       architecture: "x64",
@@ -334,8 +344,9 @@ describe("Ghidra Windows installation commitment", () => {
     };
 
     expect(
-      inspectGhidraInstallation(
+      await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: WINDOWS_INSTALL,
           javaHome: "C:\\Java\\jdk-21",
@@ -478,9 +489,9 @@ describe("Ghidra installation rejection diagnostics", () => {
       failed: "java",
       code: "unsupported_version",
     },
-  ])("distinguishes $name", ({ options, override, failed, code }) => {
-    const result = inspectGhidraInstallation(
-      { ...options, environment: {} },
+  ])("distinguishes $name", async ({ options, override, failed, code }) => {
+    const result = await inspectGhidraInstallation(
+      { resourceOwner: inspectionResources.owner, ...options, environment: {} },
       host(override),
     );
     expect(result.status).toBe("unavailable");
@@ -554,9 +565,10 @@ describe("Ghidra configuration directory identity", () => {
     ["application.version=12.1.4\napplication.java.min=21\n", null],
   ])(
     "preserves the inspected identity independently of the installation basename",
-    (content, expected) => {
-      const inspection = inspectGhidraInstallation(
+    async (content, expected) => {
+      const inspection = await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: INSTALL,
           platform: "linux",
@@ -690,9 +702,10 @@ describe("Ghidra release line and JDK bounds", () => {
 });
 
 describe("Ghidra malformed property admission", () => {
-  it("fails installation and doctor admission closed on malformed Unicode escapes", () => {
-    const result = inspectGhidraInstallation(
+  it("fails installation and doctor admission closed on malformed Unicode escapes", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "linux",
@@ -778,9 +791,10 @@ describe("Ghidra installation version admission", () => {
       failed: "version",
       code: "unsupported_version",
     },
-  ])("distinguishes $name", ({ readText, probeJava, failed, code }) => {
-    const result = inspectGhidraInstallation(
+  ])("distinguishes $name", async ({ readText, probeJava, failed, code }) => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "linux",
@@ -794,9 +808,10 @@ describe("Ghidra installation version admission", () => {
     ).toMatchObject({ name: failed, code });
   });
 
-  it("names the accepted Ghidra line and JDK range in failure remediation", () => {
-    const result = inspectGhidraInstallation(
+  it("names the accepted Ghidra line and JDK range in failure remediation", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         javaHome: "/usr/lib/jvm/java-17-openjdk",
@@ -824,10 +839,11 @@ describe("Ghidra installation version admission", () => {
     });
   });
 
-  it("accepts a lower Java minimum declared by the installation", () => {
+  it("accepts a lower Java minimum declared by the installation", async () => {
     expect(
-      inspectGhidraInstallation(
+      await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: INSTALL,
           platform: "linux",
@@ -858,9 +874,15 @@ describe("Ghidra configuration paths", () => {
     ],
   ])(
     "rejects relative paths that REA's configuration parser rejects (%o)",
-    (paths, detail) => {
-      const result = inspectGhidraInstallation(
-        { environment: {}, ...paths, platform: "linux", architecture: "x64" },
+    async (paths, detail) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          ...paths,
+          platform: "linux",
+          architecture: "x64",
+        },
         host(),
       );
       expect(result).toMatchObject({
@@ -887,10 +909,11 @@ describe("Ghidra configuration paths", () => {
     ["win32", "jdk"],
   ] as const)(
     "does not run Java from a relative JAVA_HOME (%s %o)",
-    (platform, javaHome) => {
+    async (platform, javaHome) => {
       const probed: string[] = [];
-      const result = inspectGhidraInstallation(
+      const result = await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: platform === "win32" ? WINDOWS_INSTALL : INSTALL,
           javaHome,
@@ -912,9 +935,10 @@ describe("Ghidra configuration paths", () => {
     },
   );
 
-  it("judges absolute paths by the inspected platform", () => {
-    const result = inspectGhidraInstallation(
+  it("judges absolute paths by the inspected platform", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: "C:\\ghidra",
         platform: "win32",
@@ -948,9 +972,10 @@ describe("Ghidra FAT native decompiler admission", () => {
       status: "available",
       detail: "could not be established",
     },
-  ])("distinguishes $name", ({ bytes, status, detail }) => {
-    const result = inspectGhidraInstallation(
+  ])("distinguishes $name", async ({ bytes, status, detail }) => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -972,11 +997,12 @@ describe("Ghidra FAT native decompiler admission", () => {
     ).toContain(detail);
   });
 
-  it("keeps a truncated host slice unknown despite a readable foreign slice", () => {
+  it("keeps a truncated host slice unknown despite a readable foreign slice", async () => {
     const bytes = fat([0x01000007, 0x0100000c]);
     bytes.writeUInt32BE(bytes.length + 1, 8 + 20 + 12);
-    const result = inspectGhidraInstallation(
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1010,7 +1036,9 @@ describe("Ghidra native decompiler admission", () => {
         architecture: "x64" as const,
       },
       executableHeader: (path: string) =>
-        path === LINUX_DECOMPILER ? headerProbe(elf(1, 1, 8)) : undefined,
+        path === LINUX_DECOMPILER
+          ? headerProbe(elf(1, 1, 8))
+          : javaProbeOk(undefined),
     },
     {
       name: "a Linux x86-64 decompiler at the macOS arm64 path",
@@ -1021,7 +1049,9 @@ describe("Ghidra native decompiler admission", () => {
         architecture: "arm64" as const,
       },
       executableHeader: (path: string) =>
-        path === MAC_DECOMPILER ? headerProbe(elf(2, 1, 62)) : undefined,
+        path === MAC_DECOMPILER
+          ? headerProbe(elf(2, 1, 62))
+          : javaProbeOk(undefined),
     },
     {
       name: "a macOS arm64 decompiler at the Linux x64 path",
@@ -1034,11 +1064,11 @@ describe("Ghidra native decompiler admission", () => {
       executableHeader: (path: string) =>
         path === LINUX_DECOMPILER
           ? headerProbe(thinMach(0xcffaedfe, 0x0100000c))
-          : undefined,
+          : javaProbeOk(undefined),
     },
-  ])("distinguishes $name", ({ options, executableHeader }) => {
-    const result = inspectGhidraInstallation(
-      options,
+  ])("distinguishes $name", async ({ options, executableHeader }) => {
+    const result = await inspectGhidraInstallation(
+      { ...options, resourceOwner: inspectionResources.owner },
       host({
         probeJava: () =>
           javaProbeOk<GhidraJavaObservation>({
@@ -1055,9 +1085,10 @@ describe("Ghidra native decompiler admission", () => {
     ).toMatchObject({ name: "native_decompiler", code: "executable_missing" });
   });
 
-  it("explains an accepted decompiler by its header, not only its path", () => {
-    const result = inspectGhidraInstallation(
+  it("explains an accepted decompiler by its header, not only its path", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "linux",
@@ -1065,7 +1096,9 @@ describe("Ghidra native decompiler admission", () => {
       },
       host({
         executableHeader: (path: string) =>
-          path === LINUX_DECOMPILER ? headerProbe(elf(2, 1, 62)) : undefined,
+          path === LINUX_DECOMPILER
+            ? headerProbe(elf(2, 1, 62))
+            : javaProbeOk(undefined),
       }),
     );
     expect(result.status).toBe("available");
@@ -1080,15 +1113,16 @@ describe("Ghidra native decompiler admission", () => {
 });
 
 describe("Ghidra native decompiler compatibility", () => {
-  it("keeps an unreadable header unknown instead of failing the install", () => {
-    const result = inspectGhidraInstallation(
+  it("keeps an unreadable header unknown instead of failing the install", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "linux",
         architecture: "x64",
       },
-      host({ executableHeader: () => undefined }),
+      host({ executableHeader: () => javaProbeOk(undefined) }),
     );
     expect(result.status).toBe("available");
     if (result.status !== "available") return;
@@ -1100,10 +1134,11 @@ describe("Ghidra native decompiler compatibility", () => {
     });
   });
 
-  it("accepts a one-slice universal-format Darwin native decompiler", () => {
+  it("accepts a one-slice universal-format Darwin native decompiler", async () => {
     const bytes = fat([0x0100000c]);
-    const result = inspectGhidraInstallation(
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1117,7 +1152,7 @@ describe("Ghidra native decompiler compatibility", () => {
             osName: "Mac OS X",
           }),
         executableHeader: (path: string) =>
-          path === MAC_DECOMPILER ? headerProbe(bytes) : undefined,
+          path === MAC_DECOMPILER ? headerProbe(bytes) : javaProbeOk(undefined),
       }),
     );
     expect(result.status).toBe("available");
@@ -1130,9 +1165,10 @@ describe("Ghidra native decompiler compatibility", () => {
     });
   });
 
-  it("names the observed and the required executable in the failure", () => {
-    const result = inspectGhidraInstallation(
+  it("names the observed and the required executable in the failure", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1146,7 +1182,9 @@ describe("Ghidra native decompiler compatibility", () => {
             osName: "Mac OS X",
           }),
         executableHeader: (path: string) =>
-          path === MAC_DECOMPILER ? headerProbe(elf(2, 1, 62)) : undefined,
+          path === MAC_DECOMPILER
+            ? headerProbe(elf(2, 1, 62))
+            : javaProbeOk(undefined),
       }),
     );
     expect(result.status).toBe("unavailable");
@@ -1164,9 +1202,10 @@ describe("Ghidra native decompiler compatibility", () => {
 });
 
 describe("Ghidra JVM native directory admission", () => {
-  it("rejects a JDK whose os.arch selects a different native decompiler directory", () => {
-    const result = inspectGhidraInstallation(
+  it("rejects a JDK whose os.arch selects a different native decompiler directory", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1195,9 +1234,10 @@ describe("Ghidra JVM native directory admission", () => {
     });
   });
 
-  it("accepts a JDK whose os.arch selects the validated native decompiler directory", () => {
-    const result = inspectGhidraInstallation(
+  it("accepts a JDK whose os.arch selects the validated native decompiler directory", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1215,10 +1255,11 @@ describe("Ghidra JVM native directory admission", () => {
     expect(result.status).toBe("available");
   });
 
-  it("rejects a successful Java probe that omits os.arch", () => {
+  it("rejects a successful Java probe that omits os.arch", async () => {
     const { osArch: _observedArchitecture, ...withoutArchitecture } = JAVA;
-    const result = inspectGhidraInstallation(
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1241,9 +1282,10 @@ describe("Ghidra JVM native directory admission", () => {
 
   it.each(["riscv64", "sparcv9", ""])(
     "refuses an unrecognized JVM os.arch (%s) instead of assuming alignment",
-    (osArch) => {
-      const result = inspectGhidraInstallation(
+    async (osArch) => {
+      const result = await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: INSTALL,
           platform: "darwin",
@@ -1265,9 +1307,10 @@ describe("Ghidra JVM native directory admission", () => {
     },
   );
 
-  it("rejects a JDK whose os.name selects a different host OS", () => {
-    const result = inspectGhidraInstallation(
+  it("rejects a JDK whose os.name selects a different host OS", async () => {
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "darwin",
@@ -1296,10 +1339,11 @@ describe("Ghidra JVM native directory admission", () => {
 });
 
 describe("Ghidra JVM OS admission", () => {
-  it("rejects a successful Java probe that omits os.name", () => {
+  it("rejects a successful Java probe that omits os.name", async () => {
     const { osName: _observedOsName, ...withoutOsName } = JAVA;
-    const result = inspectGhidraInstallation(
+    const result = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         platform: "linux",
@@ -1321,9 +1365,10 @@ describe("Ghidra JVM OS admission", () => {
 
   it.each(["SunOS", "FreeBSD", ""])(
     "refuses an unrecognized JVM os.name (%s) instead of assuming alignment",
-    (osName) => {
-      const result = inspectGhidraInstallation(
+    async (osName) => {
+      const result = await inspectGhidraInstallation(
         {
+          resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: INSTALL,
           platform: "linux",
@@ -1347,49 +1392,52 @@ describe("Ghidra JVM OS admission", () => {
 });
 
 describe("Ghidra Java probe os.arch extraction", () => {
-  it("extracts os.arch through the real Java probe into the installation diagnostics", () => {
-    vi.mocked(spawnSync).mockReturnValue({
-      status: 0,
-      stdout: Buffer.alloc(0),
-      signal: null,
-      stderr: Buffer.from(
-        [
-          "Property settings:",
-          "    file.encoding = UTF-8",
-          "    java.home = /usr/lib/jvm/jdk-21",
-          "    java.version = 21.0.11",
-          "    java.vm.name = OpenJDK 64-Bit Server VM",
-          "    os.arch = x86_64",
-          "    os.name = Linux",
-          "    sun.arch.data.model = 64",
-          "",
-        ].join("\n"),
-      ),
-    } as never);
-    try {
-      // No host override: the real system host runs the real probeJava
-      // against the stubbed spawnSync.
-      const inspection = inspectGhidraInstallation({
+  it("extracts os.arch through the real Java probe into the installation diagnostics", async () => {
+    const stderr = [
+      "Property settings:",
+      "    java.home = /usr/lib/jvm/jdk-21",
+      "    java.version = 21.0.11",
+      "    java.vm.name = OpenJDK 64-Bit Server VM",
+      "    os.arch = x86_64",
+      "    os.name = Linux",
+      "    sun.arch.data.model = 64",
+      "",
+    ].join("\n");
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
         environment: {},
         installDir: INSTALL,
         javaHome: "/usr/lib/jvm/jdk-21",
         platform: "linux",
         architecture: "x64",
-      });
-      expect(ghidraInstallationDiagnostics(inspection)).toMatchObject({
-        java_os_arch: "x86_64",
-        java_os_name: "Linux",
-      });
-    } finally {
-      vi.mocked(spawnSync).mockReset();
-    }
+      },
+      host({
+        probeJava: (command) =>
+          parseGhidraJavaOutput(command, {
+            exitCode: 0,
+            signal: null,
+            stdout: { text: "", bytes: 0, observedBytes: 0 },
+            stderr: {
+              text: stderr,
+              bytes: Buffer.byteLength(stderr),
+              observedBytes: Buffer.byteLength(stderr),
+            },
+          }),
+      }),
+    );
+    expect(ghidraInstallationDiagnostics(inspection)).toMatchObject({
+      java_os_arch: "x86_64",
+      java_os_name: "Linux",
+    });
   });
 });
 
-it("explains the macOS keg-only JDK case without probing an unselected installation", () => {
+it("explains the macOS keg-only JDK case without probing an unselected installation", async () => {
   const probed: string[] = [];
-  const inspection = inspectGhidraInstallation(
+  const inspection = await inspectGhidraInstallation(
     {
+      resourceOwner: inspectionResources.owner,
       environment: {},
       installDir: INSTALL,
       platform: "darwin",
@@ -1417,43 +1465,49 @@ it("explains the macOS keg-only JDK case without probing an unselected installat
 it.each([
   ["arm64", "/opt/homebrew"],
   ["x64", "/usr/local"],
-] as const)("discovers keg-only Java for macOS %s", (architecture, prefix) => {
-  const probed: string[] = [];
-  const checked: string[] = [];
-  const inspection = inspectGhidraInstallation(
-    {
-      environment: { PATH: ":relative-bin:/empty-bin" },
-      installDir: INSTALL,
-      platform: "darwin",
-      architecture,
-    },
-    host({
-      executable: (candidate) => {
-        checked.push(candidate);
-        return (
-          candidate.includes("/opt/openjdk/") || host().executable(candidate)
-        );
+] as const)(
+  "discovers keg-only Java for macOS %s",
+  async (architecture, prefix) => {
+    const probed: string[] = [];
+    const checked: string[] = [];
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: { PATH: ":relative-bin:/empty-bin" },
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture,
       },
-      probeJava: (command) => {
-        probed.push(command);
-        return javaProbeOk({
-          ...JAVA,
-          home: `${prefix}/opt/openjdk/libexec/openjdk.jdk/Contents/Home`,
-          osArch: architecture === "arm64" ? "aarch64" : "x86_64",
-          osName: "Mac OS X",
-        });
+      host({
+        executable: (candidate) => {
+          checked.push(candidate);
+          return (
+            candidate.includes("/opt/openjdk/") || host().executable(candidate)
+          );
+        },
+        probeJava: (command) => {
+          probed.push(command);
+          return javaProbeOk({
+            ...JAVA,
+            home: `${prefix}/opt/openjdk/libexec/openjdk.jdk/Contents/Home`,
+            osArch: architecture === "arm64" ? "aarch64" : "x86_64",
+            osName: "Mac OS X",
+          });
+        },
+      }),
+    );
+    expect(probed).toEqual([
+      `${prefix}/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java`,
+    ]);
+    expect(checked).not.toContain("java");
+    expect(checked).not.toContain("relative-bin/java");
+    expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject(
+      {
+        status: "passed",
       },
-    }),
-  );
-  expect(probed).toEqual([
-    `${prefix}/opt/openjdk/libexec/openjdk.jdk/Contents/Home/bin/java`,
-  ]);
-  expect(checked).not.toContain("java");
-  expect(checked).not.toContain("relative-bin/java");
-  expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
-    status: "passed",
-  });
-});
+    );
+  },
+);
 
 it.each([
   ["darwin", undefined, "/selected-bin/java", "java"],
@@ -1462,11 +1516,12 @@ it.each([
   ["win32", undefined, undefined, "java.exe"],
 ] as const)(
   "preserves selected Java on %s with JAVA_HOME %s",
-  (platform, javaHome, pathJava, expected) => {
+  async (platform, javaHome, pathJava, expected) => {
     const checked: string[] = [];
     const probed: string[] = [];
-    inspectGhidraInstallation(
+    await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: { PATH: "/selected-bin" },
         installDir: INSTALL,
         platform,
@@ -1478,29 +1533,30 @@ it.each([
           checked.push(candidate);
           return candidate === pathJava || host().executable(candidate);
         },
+        // A selected Java that runs is kept; keg-only Homebrew JDKs are only
+        // tried when the PATH java cannot run (#4657).
         probeJava: (command) => {
           probed.push(command);
-          return missingJavaProbe;
+          return javaProbeOk<GhidraJavaObservation>(JAVA);
         },
       }),
     );
     expect(probed).toEqual([expected]);
-    // A PATH java that cannot run falls back to an executable Homebrew keg
-    // (#4657); none is installed here, so the PATH java stays selected.
     expect(
       checked.some((candidate) => candidate.includes("/opt/openjdk/")),
-    ).toBe(platform === "darwin" && pathJava !== undefined);
+    ).toBe(false);
   },
 );
 
 describe("macOS PATH java with a keg-only Homebrew JDK (#4657)", () => {
   const keg = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home";
-  const inspect = (
+  const inspect = async (
     pathJavaProbe: Result<GhidraJavaObservation, GhidraJavaProbeFailure>,
   ) => {
     const probed: string[] = [];
-    const inspection = inspectGhidraInstallation(
+    const inspection = await inspectGhidraInstallation(
       {
+        resourceOwner: inspectionResources.owner,
         environment: { PATH: "/usr/bin" },
         installDir: INSTALL,
         platform: "darwin",
@@ -1530,8 +1586,8 @@ describe("macOS PATH java with a keg-only Homebrew JDK (#4657)", () => {
     };
   };
 
-  it("falls back to the keg when the PATH java is Apple's launcher stub", () => {
-    const { probed, java } = inspect(
+  it("falls back to the keg when the PATH java is Apple's launcher stub", async () => {
+    const { probed, java } = await inspect(
       err({
         _tag: "GhidraJavaProbeFailure",
         code: "runtime_unavailable",
@@ -1542,11 +1598,81 @@ describe("macOS PATH java with a keg-only Homebrew JDK (#4657)", () => {
     expect(java).toMatchObject({ status: "passed" });
   });
 
-  it("keeps a PATH java that runs", () => {
-    const { probed, java } = inspect(
+  it("keeps a PATH java that runs", async () => {
+    const { probed, java } = await inspect(
       javaProbeOk({ ...JAVA, osArch: "aarch64", osName: "Mac OS X" }),
     );
     expect(probed).toEqual(["java"]);
     expect(java).toMatchObject({ status: "passed" });
   });
 });
+
+it("retains a failed header observation as unknown in installation and doctor diagnostics", async () => {
+  const failure = new ProviderAdapterError("ghidra", "ghidra:installation", {
+    userMessage: "controlled header read failure",
+    diagnostics: {
+      path: LINUX_DECOMPILER,
+      stage: "native_decompiler_header",
+      system_code: "EIO",
+    },
+  });
+  const result = await inspectGhidraInstallation(
+    {
+      resourceOwner: inspectionResources.owner,
+      environment: {},
+      installDir: INSTALL,
+      platform: "linux",
+      architecture: "x64",
+    },
+    host({ executableHeader: () => err(failure) }),
+  );
+  expect(result.status).toBe("available");
+  expect(result.nativeDecompilerHeaderFailure).toBe(failure);
+  expect(ghidraInstallationDiagnostics(result)).toMatchObject({
+    native_decompiler_header_failure: {
+      details: {
+        operation: "ghidra:installation",
+        diagnostics: { system_code: "EIO" },
+      },
+    },
+  });
+  expect(
+    projectGhidraDoctorInspection(result).checks.find(
+      ({ name }) => name === "native_decompiler",
+    ),
+  ).toMatchObject({
+    ok: true,
+    detail: expect.stringContaining("header is unknown"),
+    details: {
+      header_failure: { details: { diagnostics: { system_code: "EIO" } } },
+    },
+  });
+});
+
+it.each(["cancelled", "cleanup"] as const)(
+  "propagates header %s instead of treating it as optional unknown compatibility",
+  async (kind) => {
+    const reason = { request: "header interrupted" };
+    const failure =
+      kind === "cancelled"
+        ? new AnalysisCancelledError("ghidra:installation", { cause: reason })
+        : new ProviderAdapterError("ghidra", "ghidra:installation", {
+            cleanup: {
+              resources: [LINUX_DECOMPILER],
+              reason: "controlled close refusal",
+            },
+          });
+    await expect(
+      inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          installDir: INSTALL,
+          platform: "linux",
+          architecture: "x64",
+        },
+        host({ executableHeader: () => err(failure) }),
+      ),
+    ).rejects.toBe(failure);
+  },
+);

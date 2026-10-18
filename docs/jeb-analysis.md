@@ -8,13 +8,13 @@ Start a JEB client that serves MCP and point REA at it:
 
 - Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL with literal host `127.0.0.1` or `[::1]`; redirects, remote hosts, credentials, query strings, and fragments are rejected rather than silently dropped).
 - In the JEB GUI client, start the MCP server from the _File_ menu (or via the VIBRE assistant).
-- Headless, use JEB's documented programmatic route (`JebMcpServerInstance` from the JEB API) with the JEB client on your classpath; JEB 5.48's `-c` headless mode does not accept `--mcp` directly.
-
-For setup registration, set `REA_JEB_MCP_URL` in the REA process environment
-before running `rea setup`. The approved setup plan preserves the exact selected
-URL after validating its syntax. That validation does not establish that the
-JEB service is reachable or that a project is open; use the existing
-`inspect-jeb-client` command for a read-only service query.
+- **Linux Community Edition (CE), verified route:** JEB 5.48.0 can start its MCP server directly in headless mode using `./jeb_linux.sh -c --mcp`. Use the JDK supported by the installation and consult `./jeb_linux.sh -c --help` for the available options, including input selection with `--infile`. The documented default MCP endpoint is `http://localhost:8425/mcp`. The direct-launch verification described here is limited to the tested Linux x86-64 CE build; it does not establish equivalent behavior on other platforms or for untested analysis types.
+- **GUI and programmatic alternatives:** The MCP server can also be started from the JEB GUI or through the documented `JebMcpServerInstance` API. Earlier licensed-build results should not be generalized to every launcher or build. REA does not install JEB, launch the engine, or open its project databases itself.
+  For setup registration, set `REA_JEB_MCP_URL` in the REA process environment
+  before running `rea setup`. The approved setup plan preserves the exact selected
+  URL after validating its syntax. That validation does not establish that the
+  JEB service is reachable or that a project is open; use the existing
+  `inspect-jeb-client` command for a read-only service query.
 
 MCP `binary_session` probes the live JEB service and its advertised tool catalog.
 Availability is reported per operation: a reachable headless client can support

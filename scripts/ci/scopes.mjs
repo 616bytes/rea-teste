@@ -228,6 +228,7 @@ export const SCOPES = {
   browser: [
     ".github/workflows/real-browser.yml",
     "scripts/verify-real-browser.mjs",
+    "scripts/verify-screenshot-regions.mjs",
     "scripts/verify-browser-network.mjs",
     "scripts/verify-browser-scripts.mjs",
     "scripts/verify-browser-modules.mjs",
@@ -237,6 +238,7 @@ export const SCOPES = {
     "scripts/fixtures/browser-script-site.mjs",
     "scripts/fixtures/browser-module-site.mjs",
     "scripts/fixtures/browser-verifier-site.mjs",
+    "scripts/fixtures/visual-coding-page.html",
     "scripts/fixtures/page-cdp-proxy.mjs",
     "src/browser/**",
     "src/domain/browser*.ts",

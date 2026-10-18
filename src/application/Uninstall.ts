@@ -8,8 +8,10 @@ import {
   serializeClientConfiguration,
   clientServerPath,
   legacyClientServerPath,
+  shadowedClientServers,
   withClientServers,
   type ClientConfigurationDocument,
+  type ShadowedClientServers,
 } from "./ClientConfigurationDocument.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -278,7 +280,13 @@ export const systemUninstallHost = (
         );
         if (read.kind === "item")
           return read.item.status === "failed" ? read.item : undefined;
-        const removal = clientRegistrationRemoval(read.parsed, client);
+        const removal = clientRegistrationRemoval(
+          read.parsed,
+          read.original,
+          client,
+        );
+        if (removal.shadowsUnownedMember)
+          return item(client.name, "failed", SHADOWED_UNOWNED_MEMBER_DETAIL);
         if (!removal.removeNative && removal.legacyPath === undefined)
           return undefined;
         // A removal the running package would revert, or redirect into its
@@ -449,30 +457,64 @@ const itemRead = (result: UninstallItem): ClientConfigurationRead => ({
  */
 const clientRegistrationRemoval = (
   parsed: ClientConfigurationDocument,
+  original: string,
   client: SetupClient,
 ): {
   readonly removeNative: boolean;
   readonly legacyPath: readonly string[] | undefined;
+  /**
+   * REA's effective entry repeats a member REA does not own. Removing the
+   * entry would make that duplicate active, so nothing is removed.
+   */
+  readonly shadowsUnownedMember: boolean;
 } => {
   const name = PRODUCT_IDENTITY.mcpServerKey;
   if (
     parsed.dialect === "dsh" &&
     dshDocument(parsed.document).hasUnknownStructure
   )
-    return { removeNative: false, legacyPath: undefined };
+    return {
+      removeNative: false,
+      legacyPath: undefined,
+      shadowsUnownedMember: false,
+    };
+  // Removal deletes every repeated member of the name, so each must be owned.
+  // The repeats are located only once an owned entry needs this check.
+  let shadowed: ShadowedClientServers | undefined;
+  const removal = (
+    servers: Record<string, unknown>,
+    repeats: (members: ShadowedClientServers) => readonly unknown[],
+  ): "absent" | "foreign" | "removable" | "shadows_unowned" => {
+    if (!Object.hasOwn(servers, name)) return "absent";
+    if (!isOwnedRegistration(servers[name], client)) return "foreign";
+    shadowed ??= shadowedClientServers(original, parsed, name);
+    return repeats(shadowed).every((member) =>
+      isOwnedRegistration(member, client),
+    )
+      ? "removable"
+      : "shadows_unowned";
+  };
+  const native = removal(parsed.servers, (members) => members.servers);
   const legacyPath = legacyClientServerPath(parsed, name);
+  const legacy =
+    legacyPath === undefined
+      ? "absent"
+      : removal(parsed.legacyServers, (members) => members.legacyServers);
+  const shadowsUnownedMember =
+    native === "shadows_unowned" || legacy === "shadows_unowned";
   return {
     removeNative:
-      (parsed.dialect === "dsh" && dshDocument(parsed.document).carriesEntry) ||
-      (Object.hasOwn(parsed.servers, name) &&
-        isOwnedRegistration(parsed.servers[name], client)),
+      !shadowsUnownedMember &&
+      ((parsed.dialect === "dsh" &&
+        dshDocument(parsed.document).carriesEntry) ||
+        native === "removable"),
     legacyPath:
-      legacyPath !== undefined &&
-      isOwnedRegistration(parsed.legacyServers[name], client)
-        ? legacyPath
-        : undefined,
+      !shadowsUnownedMember && legacy === "removable" ? legacyPath : undefined,
+    shadowsUnownedMember,
   };
 };
+
+const SHADOWED_UNOWNED_MEMBER_DETAIL = `Configuration repeats the "${PRODUCT_IDENTITY.mcpServerKey}" member, and an earlier duplicate is not REA-owned; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`;
 
 /** Preserve the bytes uninstall is about to edit and return the backup holding them. */
 const backupClientConfiguration = async (
@@ -527,10 +569,10 @@ const removeClient = async (
     );
   if (!registrationPresent(parsed))
     return item(client.name, "skipped", "REA registration is absent.");
-  const { removeNative, legacyPath } = clientRegistrationRemoval(
-    parsed,
-    client,
-  );
+  const { removeNative, legacyPath, shadowsUnownedMember } =
+    clientRegistrationRemoval(parsed, original, client);
+  if (shadowsUnownedMember)
+    return item(client.name, "failed", SHADOWED_UNOWNED_MEMBER_DETAIL);
   const removeLegacy = legacyPath !== undefined;
   if (!removeNative && !removeLegacy)
     return item(
@@ -558,6 +600,8 @@ const removeClient = async (
       client.format,
       original,
       editedPaths,
+      // clientRegistrationRemoval admitted only names whose repeats REA owns.
+      { removeShadowedMembers: true },
     );
   } catch {
     return item(

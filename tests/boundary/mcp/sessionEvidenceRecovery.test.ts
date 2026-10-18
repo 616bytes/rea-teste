@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createServer } from "../../../src/server/createServer.js";
+import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -182,3 +183,82 @@ it.each(["switch", "restart"] as const)(
     }
   },
 );
+
+it("retries retained cleanup with plain close after a successful snapshot save", async () => {
+  const root = await createTestTempDirectory("rea-mcp-snapshot-cleanup-");
+  const target = join(root, "target.hop");
+  const snapshotPath = join(root, "snapshot.json");
+  await writeFile(target, "snapshot cleanup target");
+  const base = createCacheProvider([]);
+  let cleanupAllowed = false;
+  let cleanupAttempts = 0;
+  const failure = new ProviderCleanupError("fixture", [join(root, "runtime")], {
+    reason: "fixture cleanup temporarily unavailable",
+  });
+  const session = createTestBinarySession({
+    ...base,
+    createClient: (target, profile, context) => ({
+      ...base.createClient(target, profile, context),
+      close: async () => {
+        cleanupAttempts += 1;
+        return cleanupAllowed ? ok(null) : err(failure);
+      },
+    }),
+  });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: {} },
+  );
+  const client = new Client({
+    name: "snapshot-cleanup-recovery",
+    version: "1",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    await successfulTool(client, "open_binary", { path: target });
+    await successfulTool(client, "address_name", {
+      address: "0x1000",
+      document: "fixture",
+    });
+    const before = bundleResult(
+      await successfulTool(client, "get_evidence_bundle"),
+    );
+    expect(before.records.length).toBeGreaterThan(0);
+    const closed = await client.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: snapshotPath },
+    });
+    expect(parseMcpToolError(closed)).toMatchObject({
+      error: { code: "cleanup_incomplete" },
+    });
+    expect(cleanupAttempts).toBe(1);
+    expect(session.activeTarget()).toBeUndefined();
+    expect(
+      bundleResult(await successfulTool(client, "get_evidence_bundle")).records,
+    ).toEqual([]);
+    const saved = await readAnalysisSnapshot(snapshotPath);
+    if (!saved.ok) throw saved.error;
+    expect(saved.value.evidence_bundle).toEqual(before);
+    const written = await readFile(snapshotPath, "utf8");
+    cleanupAllowed = true;
+    const repeatedSnapshot = await client.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: snapshotPath },
+    });
+    expect(parseMcpToolError(repeatedSnapshot)).toMatchObject({
+      error: { code: "target_unavailable" },
+    });
+    expect(cleanupAttempts).toBe(1);
+    await successfulTool(client, "close_binary");
+    expect(cleanupAttempts).toBe(2);
+    expect(await readFile(snapshotPath, "utf8")).toBe(written);
+  } finally {
+    cleanupAllowed = true;
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});

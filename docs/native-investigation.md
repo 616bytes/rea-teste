@@ -85,7 +85,10 @@ Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.
 Snapshot closes drain earlier provider requests before saving and keep later
 requests waiting until the save and close finish. A concurrent successful edit
-therefore rejects the snapshot save and leaves the edited session open.
+therefore rejects the snapshot save and leaves the edited session open. If the
+save succeeds but close cleanup fails, preserve the written snapshot and retry
+plain `close_binary` without `snapshot_path` on the same connection. The target
+is already unset; another snapshot save cannot reach retained cleanup.
 After metadata edits, snapshot saves and imports remain unavailable in that
 session. Let earlier requests settle and recheck needed completed Evidence, then
 use `export_evidence_bundle` to retain those observations. Close without

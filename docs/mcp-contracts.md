@@ -614,7 +614,9 @@ recheck for completed Evidence instead of immediately closing or repeating it.
 If closing is necessary, `close_binary` with an absolute `snapshot_path` drains
 earlier requests and saves their immutable snapshot before clearing session
 records; a failed save leaves the session open. Check the save/close result and
-preserve the snapshot for reopening. Sessions with metadata edits cannot save an
+preserve the snapshot for reopening. If saving succeeded but cleanup failed,
+retry plain `close_binary` without `snapshot_path`: the target is already closed,
+so another snapshot save cannot reach the retained cleanup owner. Sessions with metadata edits cannot save an
 immutable snapshot: wait/recheck and export needed Evidence before closing.
 A completed result whose delivery was too large already has a separate retained continuation path.
 When cancellation actually interrupts an active Ghidra request, successful cleanup
@@ -625,8 +627,9 @@ entries can still be reused. Incomplete cleanup retains the owned process/runtim
 and blocks fresh import. Preserve needed Evidence with the snapshot-close flow
 above, or wait/recheck and export before a plain close: closing clears
 session-retained Evidence IDs and snapshot cache entries even when cleanup
-fails. Check the close result and retry after addressing `cleanup_incomplete`
-before reopening the target; do not reuse the cleared IDs after close. Preserved
+fails. After addressing `cleanup_incomplete`, retry plain `close_binary` without
+`snapshot_path` on the same connection, preserving any already written snapshot.
+Check cleanup success before reopening the target; do not reuse the cleared IDs after close. Preserved
 complete dossier Evidence can instead be supplied through the view's inline
 source. New uncached queries can require another import. Do not repeat completed work to
 recover a smaller reply, or treat a client timeout as an empty successful result.
@@ -732,7 +735,9 @@ recovery. On the same connection:
    completed Evidence, then close without `snapshot_path`.
 3. Check the save and close result and preserve any successfully written
    snapshot. If cleanup is incomplete, address the reported owned resources and
-   retry `close_binary` on the same connection before reopening. Plain close
+   retry plain `close_binary` **without `snapshot_path`** on the same connection
+   before reopening. The active target is already unset, so retrying a snapshot
+   save fails before reaching retained cleanup. Plain close
    clears retained records even if cleanup fails; saved snapshots and complete
    exported Evidence are independent of the cleared session IDs.
 4. After cleanup succeeds, call `open_binary` with the same caller-selected path

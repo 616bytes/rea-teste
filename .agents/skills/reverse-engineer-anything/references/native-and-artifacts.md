@@ -113,7 +113,9 @@ recheck for completed Evidence instead of immediately closing or repeating it.
 If closing is necessary, `close_binary` with an absolute `snapshot_path` drains
 earlier requests and saves their immutable snapshot before clearing session
 records; a failed save leaves the session open. Check the save/close result and
-preserve the snapshot for reopening. Sessions with metadata edits cannot save an
+preserve the snapshot for reopening. If saving succeeded but cleanup failed,
+retry plain `close_binary` without `snapshot_path`: the target is already closed,
+so another snapshot save cannot reach the retained cleanup owner. Sessions with metadata edits cannot save an
 immutable snapshot: wait/recheck and export needed Evidence before closing.
 Distinguish the client's request deadline from Ghidra startup and analysis. When cancellation
 actually interrupts an active Ghidra request,
@@ -124,8 +126,9 @@ entries where available. Incomplete cleanup retains the owned process/runtime
 and blocks fresh import. Preserve needed Evidence with the snapshot-close flow
 above, or wait/recheck and export before a plain close: closing clears
 session-retained Evidence IDs and snapshot cache entries even when cleanup
-fails. Check the close result and retry after addressing `cleanup_incomplete`
-before reopening the target; do not reuse cleared IDs after close. Preserved
+fails. After addressing `cleanup_incomplete`, retry plain `close_binary` without
+`snapshot_path` on the same connection, preserving any already written snapshot.
+Check cleanup success before reopening the target; do not reuse cleared IDs after close. Preserved
 complete dossier Evidence can instead be supplied through the view's inline
 source. A new uncached query can still incur cold import. Increasing the
 startup allowance does not extend a client's tool-call deadline. See the

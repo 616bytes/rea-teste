@@ -1,9 +1,9 @@
 import { z } from "incur";
-import { resolve } from "node:path";
 import { createProcmonExportService } from "../composition/procmon.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { inspectProcmonExportInputSchema } from "../domain/procmon/procmonExport.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -54,7 +54,7 @@ export const registerProcmonCommands = (
               ...options,
               format: export_format,
               ...(all_events ? { event_limit: null } : {}),
-              path: resolve(args.path),
+              path: absoluteCallerPath(args.path),
             },
             { signal },
           );

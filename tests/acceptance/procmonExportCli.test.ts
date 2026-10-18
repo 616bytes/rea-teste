@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
@@ -448,5 +448,32 @@ cliTest(
     const message = JSON.stringify(result.json);
     expect(message).toContain("Event 1 alone exceeds");
     expect(message).not.toContain("choose a smaller event_limit");
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "follows a symlink before a parent segment in the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-procmon-symlink-");
+    await mkdir(join(root, "real", "nested"), { recursive: true });
+    await symlink(join("real", "nested"), join(root, "link"));
+    // The filesystem resolves link/.. to real/; lexical resolution would pick root/.
+    await writeFile(
+      join(root, "real", "capture.csv"),
+      `${header}\n${row(1)}\n`,
+    );
+    await writeFile(
+      join(root, "capture.csv"),
+      `${header}\n${row(1)}\n${row(2)}\n`,
+    );
+    const result = await cli.run({
+      arguments: [
+        "inspect-procmon-export",
+        `${root}/link/../capture.csv`,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(parse(result.json).output_window.examined_events).toBe(1);
   },
 );

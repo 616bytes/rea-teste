@@ -8,10 +8,10 @@ export interface GhidraRawBinaryLanguage {
 }
 
 /**
- * Map caller-visible CPU families to little-endian generic Ghidra
- * languages with a supported generic compiler specification. These are
- * analysis conventions, not evidence of the target's original compiler.
- * Big-endian, Thumb-only, and Cortex-M variants are out of scope.
+ * Map caller-visible CPU families to generic Ghidra languages with a
+ * supported generic compiler specification. These are analysis conventions,
+ * not evidence of the target's original compiler. Each family has one fixed
+ * byte order: m68k is big-endian and the others are little-endian.
  * 65816 requires a community processor extension (not shipped with upstream Ghidra).
  */
 export const ghidraRawBinaryLanguage = (
@@ -31,6 +31,13 @@ export const ghidraRawBinaryLanguage = (
         languageId: "65816:LE:24:default",
         compilerSpecId: "default",
         defaultAddressSpace: "RAM",
+      };
+    case "m68k":
+      // Ghidra's default 68000 language decodes the 68040 superset.
+      return {
+        languageId: "68000:BE:32:default",
+        compilerSpecId: "default",
+        defaultAddressSpace: "ram",
       };
     case "x86":
       return {

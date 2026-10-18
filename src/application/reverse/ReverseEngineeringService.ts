@@ -350,6 +350,16 @@ export class ReverseEngineeringService {
     } catch (cause) {
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
+      // Ownership preflight runs before the selected command. Keep its typed
+      // provider and remediation instead of relabeling it as a Rizin/objdump
+      // launch failure; a concurrent caller abort still owns cancellation.
+      if (
+        cause instanceof AnalysisCapabilityUnavailableError &&
+        cause.providerId === "process-ownership" &&
+        cause.operation === "prepare_owned_process" &&
+        !signal?.aborted
+      )
+        earlyFailure = cause;
       if (
         cause instanceof OwnedOutputFailure &&
         cause.capabilityError !== undefined

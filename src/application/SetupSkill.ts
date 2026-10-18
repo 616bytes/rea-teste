@@ -27,6 +27,8 @@ export const MANAGED_SKILL_FILES = [
   "references/android-applications.md",
   "references/runtime-observation.md",
   "references/evidence-workflows.md",
+  "references/coordo-multi-agent.md",
+  "scripts/coordo-handoff.mjs",
 ] as const;
 
 export const isManagedSkillManifest = (content: string): boolean =>

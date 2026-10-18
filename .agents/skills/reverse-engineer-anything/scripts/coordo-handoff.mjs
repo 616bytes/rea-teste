@@ -9,7 +9,12 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 const schema = "rea-coordo-handoff/v1";
 const digestPattern = /^[a-fA-F0-9]{64}$/u;
 const agentPattern = /^[a-z][a-z0-9_-]*$/u;
-const evidenceIdPattern = /^[A-Za-z0-9._:-]+$/u;
+const evidenceIdPattern = /^[A-Za-z0-9._:-]{1,200}$/u;
+// Each task description is one argv element. Linux rejects a single argument
+// over 128 KiB (MAX_ARG_STRLEN), so stay well below it on every platform.
+const maxDescriptionBytes = 32 * 1024;
+const maxEvidenceIdsPerTask = 256;
+const maxErrorExcerpt = 2000;
 
 const fail = (message) => {
   throw new Error(message);
@@ -99,6 +104,10 @@ function validate(manifest) {
     );
     if (!Array.isArray(task.evidence_ids) || task.evidence_ids.length === 0)
       fail(`${name}.evidence_ids must be a nonempty array`);
+    if (task.evidence_ids.length > maxEvidenceIdsPerTask)
+      fail(
+        `${name}.evidence_ids may contain at most ${maxEvidenceIdsPerTask} IDs; split the task`,
+      );
     const evidenceIds = task.evidence_ids.map((id) => {
       if (typeof id !== "string" || !evidenceIdPattern.test(id))
         fail(`${name}.evidence_ids contains an invalid ID`);
@@ -123,6 +132,17 @@ async function fileSha256(path) {
   return hash.digest("hex");
 }
 
+// Keep the CLI's own failure reason, bounded, without echoing credentials that
+// a backend error may embed in a connection URL.
+function errorExcerpt(text) {
+  const redacted = String(text ?? "")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu, "$1<redacted>@")
+    .trim();
+  return redacted.length > maxErrorExcerpt
+    ? `${redacted.slice(0, maxErrorExcerpt)}…`
+    : redacted;
+}
+
 function run(command, arguments_, root) {
   const result = spawnSync(command, arguments_, {
     cwd: root,
@@ -130,61 +150,69 @@ function run(command, arguments_, root) {
     shell: false,
     maxBuffer: 1024 * 1024,
   });
-  if (result.error || result.status !== 0)
+  if (result.error || result.status !== 0) {
+    const reason = errorExcerpt(result.stderr || result.stdout);
     fail(
-      `${command} failed (${result.error?.code ?? result.status ?? "unknown"})`,
+      `${command} failed (${result.error?.code ?? result.status ?? "unknown"})${reason ? `: ${reason}` : ""}`,
     );
+  }
   return result.stdout;
 }
 
+function insideProject(path) {
+  return !(
+    path === "" ||
+    path === ".." ||
+    path.startsWith(`..${sep}`) ||
+    isAbsolute(path)
+  );
+}
+
+function git(arguments_, root) {
+  const result = spawnSync("git", arguments_, {
+    cwd: root,
+    stdio: "ignore",
+    shell: false,
+  });
+  if (result.error) fail(`git is unavailable (${result.error.code})`);
+  return result.status;
+}
+
+// Returns the caller-selected project-relative path. The canonical target is
+// used only for containment, Git checks, and hashing; it never enters task text.
 async function validateBundle(root, manifest) {
-  const path = await realpath(resolve(root, manifest.bundlePath));
-  const bundleRelative = relative(root, path);
-  if (
-    bundleRelative === "" ||
-    bundleRelative === ".." ||
-    bundleRelative.startsWith(`..${sep}`) ||
-    isAbsolute(bundleRelative)
-  )
+  const selected = relative(root, resolve(root, manifest.bundlePath));
+  if (!insideProject(selected))
+    fail("The Evidence bundle must be inside the selected project");
+  const path = await realpath(resolve(root, selected));
+  const canonical = relative(root, path);
+  if (!insideProject(canonical))
     fail("The Evidence bundle must be inside the selected project");
   if (!(await stat(path)).isFile())
     fail("The Evidence bundle must be a regular file");
-  const tracked = spawnSync(
-    "git",
-    ["ls-files", "--error-unmatch", "--", bundleRelative],
-    {
-      cwd: root,
-      stdio: "ignore",
-      shell: false,
-    },
-  );
-  if (tracked.error) fail(`git is unavailable (${tracked.error.code})`);
-  if (tracked.status !== 0 && tracked.status !== 1)
+  // Git checks apply to where the bytes live; Git rejects paths that pass
+  // through a symlinked directory, so the selected path cannot be used here.
+  const tracked = git(["ls-files", "--error-unmatch", "--", canonical], root);
+  if (tracked !== 0 && tracked !== 1)
     fail("Could not determine whether the Evidence bundle is tracked by Git");
-  if (tracked.status === 0) fail("The Evidence bundle is tracked by Git");
-  const ignored = spawnSync(
-    "git",
-    ["check-ignore", "-q", "--", bundleRelative],
-    {
-      cwd: root,
-      stdio: "ignore",
-      shell: false,
-    },
-  );
-  if (ignored.error || ignored.status !== 0)
+  if (tracked === 0) fail("The Evidence bundle is tracked by Git");
+  if (git(["check-ignore", "-q", "--", canonical], root) !== 0)
     fail(
       "The Evidence bundle must be ignored by Git in a valid project repository",
     );
   if ((await fileSha256(path)) !== manifest.bundleSha256)
     fail("The Evidence bundle SHA-256 does not match the manifest");
-  return bundleRelative;
+  return selected.split(sep).join("/");
 }
+
+// End each field as one sentence without doubling the caller's punctuation.
+const sentence = (value) => (/[.!?]$/u.test(value) ? value : `${value}.`);
 
 async function main() {
   const args = options(process.argv.slice(2));
   const root = await realpath(resolve(args["--project"]));
-  const coordination = await stat(resolve(root, ".coordo"));
-  if (!coordination.isDirectory())
+  const coordination = await stat(resolve(root, ".coordo")).catch(() => null);
+  if (!coordination?.isDirectory())
     fail("The selected project has no .coordo directory");
   const manifestPath = resolve(args["--manifest"]);
   const manifestStats = await stat(manifestPath);
@@ -192,18 +220,22 @@ async function main() {
     fail("The manifest must be a regular JSON file of at most 256 KiB");
   const manifest = validate(JSON.parse(await readFile(manifestPath, "utf8")));
   const bundleRelative = await validateBundle(root, manifest);
-  const planned = manifest.tasks.map((task) => ({
-    to: task.to,
-    description: [
+  const planned = manifest.tasks.map((task, index) => {
+    const description = [
       `REA target SHA-256: ${manifest.targetSha256}.`,
       `Evidence bundle: ${bundleRelative} (SHA-256 ${manifest.bundleSha256}).`,
       `Supporting Evidence IDs: ${task.evidenceIds.join(", ")}.`,
-      `Question: ${task.question}.`,
-      `Scope: ${task.scope}.`,
-      `Deliverable: ${task.deliverable}.`,
+      `Question: ${sentence(task.question)}`,
+      `Scope: ${sentence(task.scope)}`,
+      `Deliverable: ${sentence(task.deliverable)}`,
       "Report observations, inferences, coverage, and unresolved unknowns; the task does not grant additional target execution authority.",
-    ].join(" "),
-  }));
+    ].join(" ");
+    if (Buffer.byteLength(description, "utf8") > maxDescriptionBytes)
+      fail(
+        `tasks[${index}] renders to more than ${maxDescriptionBytes} bytes of task text; shorten it or split the task`,
+      );
+    return { to: task.to, description };
+  });
   if (!args.apply) {
     process.stdout.write(
       `${JSON.stringify({ mode: "dry-run", tasks: planned }, null, 2)}\n`,

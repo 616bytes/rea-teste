@@ -60,7 +60,10 @@ Example manifest (replace every illustrative value before use):
 
 Run the dry view first. It validates that the bundle is a regular file inside
 the selected project, that Git ignores it, and that its SHA-256 matches the
-manifest. The output shows the exact task text that would enter Coordo:
+manifest. Task text names the bundle by the path the manifest selected, even
+when that path is a symlink. Each task may list at most 256 Evidence IDs and
+must render to at most 32 KiB of text; split larger handoffs. The output shows
+the exact task text that would enter Coordo:
 
 ```bash
 node /absolute/path/to/reverse-engineer-anything/scripts/coordo-handoff.mjs \

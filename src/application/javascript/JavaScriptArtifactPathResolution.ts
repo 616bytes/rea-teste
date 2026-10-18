@@ -852,7 +852,7 @@ const resolvePackageImportAlias = (
       `The package import specifier ${JSON.stringify(specifier)} is invalid; "#" and specifiers that end with "/" are not valid import aliases.`,
     ]);
   if (classified.kind === "pattern")
-    return unresolvedCandidate("external", [
+    return unresolvedCandidate("unavailable", [
       `Wildcard and directory package import aliases remain unresolved; ${JSON.stringify(specifier)} is not an exact imports key.`,
     ]);
   const metadata = enclosingPackageMetadata(input);
@@ -872,7 +872,7 @@ const resolvePackageImportAlias = (
       `Package metadata ${metadata.path} does not define package import alias ${specifier}; it declares ${lookup.declared.join(", ") || "no imports keys"}.`,
     ]);
   if (lookup.kind === "pattern-unresolved")
-    return unresolvedCandidate("external", [
+    return unresolvedCandidate("unavailable", [
       `Wildcard package import aliases remain unresolved; package metadata ${metadata.path} has no exact imports key ${specifier}.`,
     ]);
   const selected = selectExportTarget(
@@ -895,11 +895,16 @@ const resolvePackageImportAlias = (
     ]);
   if (selected.kind === "non-relative") {
     const target = classifyPackageImportTargetString(selected.value);
-    return unresolvedCandidate("external", [
-      target.kind === "recursive"
-        ? `Recursive package import aliases remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`
-        : `External-package import targets remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`,
-    ]);
+    // Unsupported lookup may still reach a selected module and another launch
+    // owner. Only a known builtin establishes that no local imports follow.
+    return unresolvedCandidate(
+      isBuiltin(selected.value) ? "external" : "unavailable",
+      [
+        target.kind === "recursive"
+          ? `Recursive package import aliases remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`
+          : `External-package import targets remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`,
+      ],
+    );
   }
   return resolveExportTarget(input, metadata.path, selected, "imports");
 };

@@ -646,6 +646,11 @@ const addPackageRole = (
     declaredPath: input.declaredPath,
     sourcePath: input.packageFile.path,
     context: "package-entrypoint",
+    // Launch main uses Node's filesystem lookup, independently of renderer
+    // metadata. Literal percent bytes are filename bytes at this boundary.
+    ...(input.kind === "electron-main"
+      ? { moduleKind: "require" as const }
+      : {}),
     files: context.filesByPath,
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
@@ -715,7 +720,7 @@ const registerPackageEntrypointOwner = (
   addApplicationRootCandidate(roots, packageRoot(packageFile));
   context.applicationRootsBySource.set(sourcePath, roots);
   if (
-    !context.applicationModuleImportsExamined.has(sourcePath) &&
+    !context.applicationModuleReferencesRetained.has(sourcePath) &&
     !isJsonModuleTarget(sourcePath, context.filesByPath.get(sourcePath)?.kind)
   )
     registerPossiblePackageOwner(context, packageFile);

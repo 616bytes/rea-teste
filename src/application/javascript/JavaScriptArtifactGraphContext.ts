@@ -61,8 +61,8 @@ export interface JavaScriptArtifactGraphContext {
   /** Gap origins retain possible owners separately from proven source owners. */
   readonly applicationModuleGapSources: Map<string, Set<string>>;
   readonly applicationPossibleRootsByContainer: Map<string, Set<string>>;
-  /** Sources whose admitted JavaScript parse examined their module imports. */
-  readonly applicationModuleImportsExamined: ReadonlySet<string>;
+  /** Sources with retained references; unchecked loads carry their own gaps. */
+  readonly applicationModuleReferencesRetained: ReadonlySet<string>;
 }
 
 /** Application manifests exclude dependency packages but retain nested app roots. */

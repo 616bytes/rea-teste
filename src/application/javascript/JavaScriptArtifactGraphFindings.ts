@@ -637,7 +637,8 @@ const resolveReference = (
   const targetImportsUnexamined =
     !targetIsJson &&
     (resolution.resolution_status === "unavailable" ||
-      (path !== null && !context.applicationModuleImportsExamined.has(path)));
+      (path !== null &&
+        !context.applicationModuleReferencesRetained.has(path)));
   if (path === null) {
     const source = context.filesByPath.get(sourcePath);
     return source === undefined

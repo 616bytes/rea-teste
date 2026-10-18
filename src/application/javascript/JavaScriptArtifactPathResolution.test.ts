@@ -2148,7 +2148,7 @@ describe("package import alias refusals", () => {
       files,
     });
     expect(outcome).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
     expect(outcome.limitations.join(" ")).toMatch(/wildcard/i);
@@ -2177,12 +2177,12 @@ describe("package import alias refusals", () => {
       files,
     });
     expect(recursive).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
     expect(recursive.limitations.join(" ")).toMatch(/recursive/i);
     expect(external).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
     expect(external.limitations.join(" ")).toMatch(/external-package/i);

@@ -8,6 +8,134 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
+cliTest.for(
+  (["CLI", "stdio MCP"] as const).flatMap((surface) =>
+    [
+      "module.require",
+      "computed module.require",
+      "module alias",
+      "percent main",
+      "pattern alias",
+      "recursive alias",
+      "external-package alias",
+      "builtin alias",
+      "blocked alias",
+      "local module",
+      "single percent main",
+    ].map((loader) => ({ surface, loader })),
+  ),
+)(
+  "preserves competing loader ownership for $loader through $surface",
+  async ({ surface, loader }, { cli }) => {
+    const root = await createTestTempDirectory("rea-loader-owner-");
+    const single = loader === "single percent main";
+    const percent = single || loader === "percent main";
+    const inert = ["builtin alias", "blocked alias", "local module"].includes(
+      loader,
+    );
+    const main = percent ? "main%2Fentry.cjs" : "main.cjs";
+    const imports =
+      loader === "pattern alias"
+        ? { "#window/*": "./proxy/*.cjs" }
+        : loader === "recursive alias"
+          ? { "#entry": "#window", "#window": "./proxy/window.cjs" }
+          : loader === "external-package alias"
+            ? { "#entry": "fixture-window" }
+            : loader === "builtin alias"
+              ? { "#entry": "fs" }
+              : { "#entry": null };
+    const load =
+      loader === "module.require"
+        ? 'module.require("../shared/window.cjs");'
+        : loader === "computed module.require"
+          ? 'module["require"]("../shared/window.cjs");'
+          : loader === "module alias"
+            ? 'const current = module; current.require("../shared/window.cjs");'
+            : loader === "local module"
+              ? 'function local(module) { module.require("../shared/window.cjs"); }'
+              : loader === "pattern alias"
+                ? 'require("#window/window");'
+                : loader.endsWith("alias")
+                  ? 'require("#entry");'
+                  : 'require("../shared/window.cjs");';
+    await writeFixtureFiles(root, {
+      "a/package.json": JSON.stringify({ main: "main.cjs" }),
+      "a/main.cjs": single
+        ? "module.exports = 1;"
+        : 'require("../shared/window.cjs");',
+      "b/package.json": JSON.stringify({ main, imports }),
+      [`b/${main}`]: load,
+      "b/proxy/window.cjs": 'require("../../shared/window.cjs");',
+      "b/node_modules/fixture-window/package.json": JSON.stringify({
+        main: "index.cjs",
+      }),
+      "b/node_modules/fixture-window/index.cjs":
+        'require("../../../shared/window.cjs");',
+      "shared/window.cjs":
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+      "a/index.html": "first application page",
+      "b/index.html": "second application page",
+      "shared/index.html": "source-relative decoy",
+      "index.html": "artifact-root decoy",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    if (loader.endsWith("alias") && !inert && loader !== "module alias")
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              specifier:
+                loader === "pattern alias" ? "#window/window" : "#entry",
+              resolution_status: "unavailable",
+            }),
+          }),
+        ]),
+      );
+    if (
+      ["module.require", "computed module.require", "module alias"].includes(
+        loader,
+      )
+    )
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              kind: "require",
+              specifier: null,
+              resolved_path: null,
+            }),
+          }),
+        ]),
+      );
+    const roles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-renderer",
+    );
+    expect(roles).toHaveLength(1);
+    const role = roles[0];
+    const target = single ? "b/index.html" : inert ? "a/index.html" : null;
+    expect(role?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolved_path: target,
+            resolution_status: target === null ? "unavailable" : "resolved",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges
+        .filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === role?.node_id && relation === "maps_to",
+        )
+        .map(({ properties }) => properties.resolved_path),
+    ).toEqual(target === null ? [] : [target]);
+  },
+);
+
 const cases = [
   {
     directory: "absolute-runtime",

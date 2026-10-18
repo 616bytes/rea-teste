@@ -102,7 +102,7 @@ const contextFor = (
     applicationOwnershipUnknownContainers: new Set(),
     applicationModuleGapSources: new Map(),
     applicationPossibleRootsByContainer: new Map(),
-    applicationModuleImportsExamined: new Set(),
+    applicationModuleReferencesRetained: new Set(),
   };
 };
 

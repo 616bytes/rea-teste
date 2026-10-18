@@ -105,7 +105,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
   );
   const applicationOwnershipUnknownContainers = new Set<string>();
   const applicationModuleGapSources = new Map<string, Set<string>>();
-  const applicationModuleImportsExamined = new Set<string>();
+  const applicationModuleReferencesRetained = new Set<string>();
   const recordModuleGap = (file: {
     path: string;
     container_sha256: string;
@@ -145,7 +145,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
       analyzed.javascript !== null &&
       analyzed.javascript.parse_status !== "failed"
     )
-      applicationModuleImportsExamined.add(analyzed.file.path);
+      applicationModuleReferencesRetained.add(analyzed.file.path);
   }
   const unavailableFilesByPath = new Map(
     fileSet.unavailable_relevant_files.map((file) => [file.path, file]),
@@ -177,7 +177,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
     applicationRootsBySource: new Map(),
     applicationOwnershipUnknownContainers,
     applicationModuleGapSources,
-    applicationModuleImportsExamined,
+    applicationModuleReferencesRetained,
     applicationPossibleRootsByContainer: new Map(),
   };
   addJavaScriptArtifactContainers(context);

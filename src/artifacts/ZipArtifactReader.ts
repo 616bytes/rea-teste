@@ -1,3 +1,4 @@
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import type { FileHandle } from "node:fs/promises";
 import { PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
@@ -195,7 +196,7 @@ export class ZipArtifactReader implements ArtifactReader {
     for await (const entry of typedZipFailures(
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     )) {
-      abortIfNeeded(signal);
+      assertArtifactReadActive(signal);
       // ZIP member identity is its directory occurrence, not its filename.
       // Logical path uniqueness belongs to the artifact inventory boundary.
       const metadata = projectZipEntry(entry, index++);
@@ -232,7 +233,7 @@ export class ZipArtifactReader implements ArtifactReader {
   }
 
   open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    abortIfNeeded(signal);
+    assertArtifactReadActive(signal);
     const stored = this.#entries.get(entry.adapterKey);
     if (stored === undefined || !sameArtifactEntry(entry, stored.metadata))
       return Promise.reject(
@@ -412,7 +413,7 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
   });
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
-      abortIfNeeded(signal);
+      assertArtifactReadActive(signal);
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
@@ -428,7 +429,7 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
       signal: controller.signal,
       checkSignature: true,
       checkOverlappingEntry: true,
-      onprogress: () => abortIfNeeded(signal),
+      onprogress: () => assertArtifactReadActive(signal),
     })
     .catch((cause: unknown) => output.destroy(toError(typedZipFailure(cause))));
   return output;
@@ -496,13 +497,6 @@ const hasDirectoryAttributes = (entry: Entry): boolean =>
 
 const isSymlink = (entry: Entry): boolean =>
   entry.unixMode !== undefined && (entry.unixMode & 0o170000) === 0o120000;
-
-const abortIfNeeded = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new ArtifactReaderFailure("cancelled", "ZIP operation cancelled", {
-      cause: signal.reason,
-    });
-};
 
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("ZIP extraction failed");

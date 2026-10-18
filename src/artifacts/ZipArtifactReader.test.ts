@@ -1,3 +1,5 @@
+import { writeOrderedZip } from "../../tests/fixtures/artifactEntryOrder.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
@@ -176,42 +178,6 @@ describe("ZipArtifactReader decompression budget", () => {
   });
 });
 
-describe("ZipArtifactReader cancellation", () => {
-  it("carries the caller's abort reason on enumeration and open", async () => {
-    const directory = await createTestTempDirectory("rea-zip-cancel-");
-    const path = join(directory, "member.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("member.bin", new TextReader("member bytes"));
-    await writeFile(path, await writer.close());
-    const reader = new ZipArtifactReader(path, "zip");
-    const reason = new Error("caller cancelled the ZIP read");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries[0];
-      if (entry === undefined) throw new Error("Expected a ZIP member");
-      const controller = new AbortController();
-      controller.abort(reason);
-      await expect(
-        (async () => reader.open(entry, controller.signal))(),
-      ).rejects.toMatchObject({
-        reason: "cancelled",
-        cancellation: { reason },
-      });
-      const enumeration = async () => {
-        for await (const _ of reader.entries(controller.signal))
-          throw new Error("Expected cancellation before a member");
-      };
-      await expect(enumeration()).rejects.toMatchObject({
-        reason: "cancelled",
-        cancellation: { reason },
-      });
-    } finally {
-      await reader.close();
-    }
-  });
-});
-
 /** Info-ZIP Unicode Path extra field (0x7075) naming `unicode` for `raw`. */
 const unicodePathField = (raw: string, unicode: string): Uint8Array => {
   const name = Buffer.from(unicode, "utf8");
@@ -371,3 +337,35 @@ describe("artifactDecompressionBudgetBytes", () => {
     );
   });
 });
+
+it.each([null, { caller: "opaque ZIP interruption" }])(
+  "preserves the exact ZIP cancellation reason at enumeration and open: %j",
+  async (reason) => {
+    const root = await createTestTempDirectory("rea-zip-cancellation-");
+    const path = join(root, "fixture.zip");
+    await writeOrderedZip(path, ["member.txt"]);
+    const reader = new ZipArtifactReader(path, "zip");
+    const caller = new AbortController();
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Expected real ZIP member");
+      caller.abort(reason);
+      for (const run of [
+        () => reader.entries(caller.signal)[Symbol.asyncIterator]().next(),
+        async () => reader.open(entry, caller.signal),
+      ]) {
+        const error: unknown = await run().catch((cause: unknown) => cause);
+        expect(error).toBeInstanceOf(ArtifactReaderFailure);
+        if (!(error instanceof ArtifactReaderFailure))
+          throw new Error("Expected ZIP cancellation");
+        expect(error.reason).toBe("cancelled");
+        expect(error.cancellation?.reason).toBe(reason);
+        expect(error.cause).toBe(reason);
+      }
+    } finally {
+      await reader.close();
+    }
+  },
+);

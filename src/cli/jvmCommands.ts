@@ -60,7 +60,6 @@ export const registerJvmCommands = (
             service,
             JVM_PROVIDER_IDENTITY.id,
             jvmDebugMetadataModule.contract.name,
-            undefined,
             signal,
           ),
         );

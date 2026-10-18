@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isUtf8 } from "node:buffer";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -384,12 +385,12 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     if (managed === undefined || managed.state === "detached")
       return err(unknownFridaSession("load_frida_script", sessionId));
 
-    let scriptSource: string;
+    let sourceContent: string | Buffer;
     try {
-      scriptSource =
+      sourceContent =
         source.sourceKind === "inline"
           ? source.source
-          : await readFile(source.path, "utf8");
+          : await readFile(source.path);
     } catch (cause: unknown) {
       const sourcePath = source.sourceKind === "file" ? source.path : undefined;
       return err(
@@ -414,8 +415,22 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
 
     if (signal?.aborted)
       return err(cancelledOperation("load_frida_script", signal));
+    if (typeof sourceContent !== "string" && !isUtf8(sourceContent))
+      return err(
+        new AnalysisInputError("load_frida_script", undefined, [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: "Frida script files must contain valid UTF-8.",
+          },
+        ]),
+      );
+    const scriptSource =
+      typeof sourceContent === "string"
+        ? sourceContent
+        : sourceContent.toString("utf8");
     const sourceSha256 = createHash("sha256")
-      .update(scriptSource)
+      .update(sourceContent)
       .digest("hex");
     const scriptId = randomUUID();
     const scriptName = `rea-${scriptId}`;

@@ -27,16 +27,23 @@ Or via MCP `open_binary` with:
 }
 ```
 
-Common starting load addresses:
+Common starting load addresses (for a headerless image):
 - LoROM: `0x8000` (or bank-aware equivalents)
 - HiROM: `0x8000` or `0xC00000` depending on mapping
 
 REA does not auto-detect LoROM vs HiROM or interleave multi-file ROM sets in this version. Supply the correct load address yourself.
 
+## Important: SMC copier header
+
+Many `.smc` files contain a 512-byte copier header at the start. REA's raw-binary loader maps the file contiguously from the given entry point; it does **not** strip this header.
+
+If you load a headered `.smc` at `0x8000` without removing the first 512 bytes, every address will be shifted by `0x200`. Prefer a headerless `.sfc` (or strip the 512-byte header yourself) before loading.
+
 ## Limitations
 
-- No automatic memory map / LoROM-HiROM detection.
+- No automatic memory map / LoROM-HiROM detection. A simple contiguous raw load does not implement SNES banked addressing; addresses beyond the first bank may not match a real cartridge mapping.
 - No multi-file or interleaved ROM support.
+- No automatic SMC header stripping.
 - No emulation.
 - Decompilation quality depends on the installed 65816 SLEIGH module and on correctly setting the M/X flag state in Ghidra for the region being analysed.
 - Analysis is read-only.

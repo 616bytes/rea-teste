@@ -1116,18 +1116,27 @@ try {
   // machine profile is verified with hand-built objects carrying real
   // section and symbol tables (one PT_LOAD plus
   // .text/.symtab/.strtab/.shstrtab).
-  const buildMultiArchObject = (machine, bits, littleEndian) => {
+  const buildMultiArchObject = (
+    machine,
+    bits,
+    littleEndian,
+    { relocatable = false } = {},
+  ) => {
     const is64 = bits === 64;
     const u16 = (value) => ["setUint16", value];
     const u32 = (value) => ["setUint32", value];
     const u64 = (value) => ["setBigUint64", BigInt(value)];
     const u8 = (value) => ["setUint8", value];
+    const s32 = (value) => ["setInt32", value];
+    const s64 = (value) => ["setBigInt64", BigInt(value)];
     const packFields = (fields) => {
       const widths = {
         setUint8: 1,
         setUint16: 2,
         setUint32: 4,
+        setInt32: 4,
         setBigUint64: 8,
+        setBigInt64: 8,
       };
       const buffer = Buffer.alloc(
         fields.reduce((size, [setter]) => size + widths[setter], 0),
@@ -1147,11 +1156,16 @@ try {
     const text = Buffer.alloc(16, 0);
     const strtab = Buffer.from("\x00_start\x00", "utf8");
     const shstrtab = Buffer.from(
-      "\x00.text\x00.symtab\x00.strtab\x00.shstrtab\x00",
+      "\x00.text\x00.symtab\x00.strtab\x00.rela.text\x00.shstrtab\x00",
       "utf8",
     );
     const shName = (name) => shstrtab.indexOf(name);
     const base = is64 ? 0x400000 : 0x8048000;
+    // One RELA entry referencing the _start symbol (index 1), exercising
+    // relocation decoding and schema reference checks for every machine.
+    const rela = is64
+      ? packFields([u64(base), u64((1n << 32n) | 1n), s64(0)])
+      : packFields([u32(base), u32((1 << 8) | 1), s32(0)]);
     const symtab = is64
       ? packFields([
           u32(0),
@@ -1184,6 +1198,7 @@ try {
     const ehsize = is64 ? 64 : 52;
     const phentsize = is64 ? 56 : 32;
     const shentsize = is64 ? 64 : 40;
+    const shnum = 6;
     let offset = ehsize + phentsize;
     const textOff = offset;
     offset += text.length;
@@ -1191,16 +1206,18 @@ try {
     offset += symtab.length;
     const strtabOff = offset;
     offset += strtab.length;
+    const relaOff = offset;
+    offset += rela.length;
     const shstrtabOff = offset;
     offset += shstrtab.length;
     const shoff = Math.ceil(offset / 16) * 16;
-    const totalSize = shoff + 5 * shentsize;
+    const totalSize = shoff + shnum * shentsize;
     const ehdr = is64
       ? packFields([
-          u16(2),
+          u16(relocatable ? 1 : 2),
           u16(machine),
           u32(1),
-          u64(base),
+          u64(relocatable ? 0 : base),
           u64(ehsize),
           u64(shoff),
           u32(0),
@@ -1208,14 +1225,14 @@ try {
           u16(phentsize),
           u16(1),
           u16(shentsize),
+          u16(shnum),
           u16(5),
-          u16(4),
         ])
       : packFields([
-          u16(2),
+          u16(relocatable ? 1 : 2),
           u16(machine),
           u32(1),
-          u32(base),
+          u32(relocatable ? 0 : base),
           u32(ehsize),
           u32(shoff),
           u32(0),
@@ -1223,8 +1240,8 @@ try {
           u16(phentsize),
           u16(1),
           u16(shentsize),
+          u16(shnum),
           u16(5),
-          u16(4),
         ]);
     const phdr = is64
       ? packFields([
@@ -1302,6 +1319,18 @@ try {
         is64 ? 24 : 16,
       ),
       shdr(".strtab", 3, 0, 0, strtabOff, strtab.length, 0, 0, 1, 0),
+      shdr(
+        ".rela.text",
+        4,
+        0,
+        0,
+        relaOff,
+        rela.length,
+        2,
+        1,
+        is64 ? 8 : 4,
+        is64 ? 24 : 12,
+      ),
       shdr(".shstrtab", 3, 0, 0, shstrtabOff, shstrtab.length, 0, 0, 1, 0),
     ];
     const ident = Buffer.from([
@@ -1329,6 +1358,7 @@ try {
       text,
       symtab,
       strtab,
+      rela,
       shstrtab,
     ]);
     return Buffer.concat([
@@ -1337,13 +1367,31 @@ try {
       ...sections,
     ]);
   };
-  for (const [name, machine, bits, littleEndian, expectedMachine] of [
-    ["multi-arch-aarch64", 183, 64, true, "EM_AARCH64"],
-    ["multi-arch-arm", 40, 32, true, "EM_ARM"],
-    ["multi-arch-ppc", 20, 32, false, "EM_PPC"],
+  for (const [
+    name,
+    machine,
+    bits,
+    littleEndian,
+    expectedMachine,
+    relocatable,
+  ] of [
+    ["multi-arch-aarch64", 183, 64, true, "EM_AARCH64", false],
+    ["multi-arch-arm", 40, 32, true, "EM_ARM", false],
+    ["multi-arch-i386", 3, 32, true, "EM_386", false],
+    ["multi-arch-ppc", 20, 32, false, "EM_PPC", false],
+    ["multi-arch-ppc64-be", 21, 64, false, "EM_PPC64", false],
+    ["multi-arch-ppc64-le", 21, 64, true, "EM_PPC64", false],
+    ["multi-arch-mips-le", 8, 32, true, "EM_MIPS", false],
+    ["multi-arch-mips-be", 8, 32, false, "EM_MIPS", false],
+    ["multi-arch-mips64-be", 8, 64, false, "EM_MIPS", false],
+    ["multi-arch-riscv32", 243, 32, true, "EM_RISCV", false],
+    ["multi-arch-riscv64", 243, 64, true, "EM_RISCV", false],
+    ["multi-arch-riscv64-relocatable", 243, 64, true, "EM_RISCV", true],
   ]) {
     const path = join(root.path, name);
-    const bytes = buildMultiArchObject(machine, bits, littleEndian);
+    const bytes = buildMultiArchObject(machine, bits, littleEndian, {
+      relocatable,
+    });
     await writeFile(path, bytes);
     for (const mode of ["cli", "mcp"]) {
       const value = await inspect(mode, path);
@@ -1355,6 +1403,9 @@ try {
       );
       assert.ok(value.sections.length > 0);
       assert.ok(value.symbols.length > 0);
+      assert.ok(value.relocations.length > 0);
+      if (relocatable)
+        assert.equal(value.entry_point.meaning, "not-applicable");
       assert.deepEqual(await readFile(path), bytes);
       cases++;
     }

@@ -25,6 +25,7 @@ cliTest.for(
       "builtin alias",
       "blocked alias",
       "local module",
+      "projected module",
       "single percent main",
     ].map((loader) => ({ surface, loader })),
   ),
@@ -38,6 +39,7 @@ cliTest.for(
       "builtin alias",
       "blocked alias",
       "local module",
+      "projected module",
       "earlier reassigned module alias",
     ].includes(loader);
     const absolute = loader === "absolute main";
@@ -57,27 +59,29 @@ cliTest.for(
               ? { "#entry": "fs" }
               : { "#entry": null };
     const load =
-      loader === "absolute main"
-        ? 'require("../../shared/window.cjs");'
-        : loader === "later reassigned module alias"
-          ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
-          : loader === "earlier reassigned module alias"
-            ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
-            : loader === "conditional module alias"
-              ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
-              : loader === "module.require"
-                ? 'module.require("../shared/window.cjs");'
-                : loader === "computed module.require"
-                  ? 'module["require"]("../shared/window.cjs");'
-                  : loader === "module alias"
-                    ? 'const current = module; current.require("../shared/window.cjs");'
-                    : loader === "local module"
-                      ? 'function local(module) { module.require("../shared/window.cjs"); }'
-                      : loader === "pattern alias"
-                        ? 'require("#window/window");'
-                        : loader.endsWith("alias")
-                          ? 'require("#entry");'
-                          : 'require("../shared/window.cjs");';
+      loader === "projected module"
+        ? 'const { exports: api } = module; api.require = () => {}; api.require("../shared/window.cjs");'
+        : loader === "absolute main"
+          ? 'require("../../shared/window.cjs");'
+          : loader === "later reassigned module alias"
+            ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
+            : loader === "earlier reassigned module alias"
+              ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
+              : loader === "conditional module alias"
+                ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
+                : loader === "module.require"
+                  ? 'module.require("../shared/window.cjs");'
+                  : loader === "computed module.require"
+                    ? 'module["require"]("../shared/window.cjs");'
+                    : loader === "module alias"
+                      ? 'const current = module; current.require("../shared/window.cjs");'
+                      : loader === "local module"
+                        ? 'function local(module) { module.require("../shared/window.cjs"); }'
+                        : loader === "pattern alias"
+                          ? 'require("#window/window");'
+                          : loader.endsWith("alias")
+                            ? 'require("#entry");'
+                            : 'require("../shared/window.cjs");';
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
       "a/main.cjs":

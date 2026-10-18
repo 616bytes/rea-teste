@@ -268,28 +268,36 @@ const moduleRequireWrites = new WeakMap<
 const isCommonJsModuleObject = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-  visited = new Set<string>(),
 ): boolean => {
-  const value = unwrapJavaScriptExpression(node).node;
-  if (!t.isIdentifier(value)) return false;
-  const binding = resolveSemanticBindingState(state, value, value.name);
-  if (value.name === "module" && binding === undefined)
-    return !semanticResolutionBlocked(state, value, "module");
-  if (binding === undefined || visited.has(binding.bindingId)) return false;
-  const read = semanticBindingAtRead(binding, value, state.parentsByNode);
-  if (
-    value.name === "module" &&
-    commonJsWrapperBindingDeclaration(value, "module", state) !== undefined &&
-    !read.hasDefiniteInitializer
-  )
-    return true;
-  const next = new Set(visited).add(binding.bindingId);
-  // This is a may-alias fact: one possible module origin requires an ownership
-  // gap. Later writes cannot erase an earlier call, and uncertain branches
-  // cannot establish that the original loader was absent.
-  return read.binding.initializers.some(({ node: init }) =>
-    isCommonJsModuleObject(init, state, next),
-  );
+  const pending = [node];
+  // Cache by source read, not binding: the same binding can have a different
+  // value before/after assignment. Shared diamonds and cycles visit each read
+  // once, without recursively copying paths or expanding alias histories.
+  const examined = new WeakSet<t.Node>();
+  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+    value = unwrapJavaScriptExpression(value).node;
+    if (examined.has(value)) continue;
+    examined.add(value);
+    if (!t.isIdentifier(value)) continue;
+    const binding = resolveSemanticBindingState(state, value, value.name);
+    if (value.name === "module" && binding === undefined) {
+      if (!semanticResolutionBlocked(state, value, "module")) return true;
+      continue;
+    }
+    if (binding === undefined) continue;
+    const read = semanticBindingAtRead(binding, value, state.parentsByNode);
+    if (
+      value.name === "module" &&
+      commonJsWrapperBindingDeclaration(value, "module", state) !== undefined &&
+      !read.hasDefiniteInitializer
+    )
+      return true;
+    // A possible direct module origin requires an ownership gap. Destructured
+    // members (such as module.exports) are separate object identities.
+    for (const initializer of read.binding.initializers)
+      if (initializer.projection.length === 0) pending.push(initializer.node);
+  }
+  return false;
 };
 
 /** Recognize an unchecked module loader without asserting its current delegate. */

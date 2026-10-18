@@ -9,6 +9,38 @@ const expressionWrappers = [
   ["satisfies", (value: string) => `(${value} satisfies any)`],
 ] as const;
 
+it.each([
+  "const { exports: api } = module;",
+  "const { exports: { api } } = module;",
+  "const [api] = module;",
+])(
+  "keeps projected module members separate from the loader: %s",
+  (declaration) => {
+    const analysis = analyzeJavaScriptStaticSource(`${declaration}
+    api.require = () => {}; api.require("./shared.cjs");`);
+    expect(analysis.references).toEqual([]);
+  },
+);
+
+it.each(["module", "local"])(
+  "examines a repeated conditional alias graph once per source read for %s",
+  (origin) => {
+    const source = [`const a0 = ${origin === "module" ? "module" : "{}"};`];
+    for (let index = 1; index <= 128; index += 1)
+      source.push(
+        `let a${index} = a${index - 1}; if (flag) a${index} = a${index - 1};`,
+      );
+    source.push('a128.require("./shared.cjs");');
+    const analysis = analyzeJavaScriptStaticSource(source.join("\n"));
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      origin === "module"
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
 it("shares erased call-target names with endpoint consumers without inventing dynamic keys", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     (client.get as typeof client.get)("/api/items");

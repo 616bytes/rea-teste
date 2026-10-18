@@ -93,6 +93,16 @@ export const browserWorkerEvidenceScopeSchema = z
       const observation = worker.observation;
       if (observation === undefined) continue;
       if (
+        observation.ownership === "service_worker_client" &&
+        worker.type !== "service_worker"
+      )
+        context.addIssue({
+          code: "custom",
+          path: [...path, "observation", "ownership"],
+          message:
+            "Service Worker client ownership requires a service_worker target",
+        });
+      if (
         !parameters.include_script_sources &&
         observation.scripts.some(({ source }) => source.included)
       )

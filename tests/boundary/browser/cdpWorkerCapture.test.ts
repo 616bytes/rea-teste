@@ -267,7 +267,7 @@ it("rejects a repeated worker script identity with a changed length", async () =
   });
 });
 
-it.each([-32601, -32000])(
+it.each([-32601, -32000, -32001])(
   "bounds unsupported worker source requests while preserving per-script failures: %s",
   async (code) => {
     const { provider, input, browser } = await fixture({
@@ -283,8 +283,14 @@ it.each([-32601, -32000])(
       commandError: (command) =>
         command.method === "Debugger.getScriptSource" &&
         command.sessionId === "worker-own" &&
-        (code === -32601 || command.params.scriptId === "0")
-          ? { code, message: "Source unavailable" }
+        (code !== -32000 || command.params.scriptId === "0")
+          ? {
+              code,
+              message:
+                code === -32001
+                  ? "Session with given id not found."
+                  : "Source unavailable",
+            }
           : undefined,
     });
     const captured = await provider.inspectPage({
@@ -301,9 +307,9 @@ it.each([-32601, -32000])(
           c.method === "Debugger.getScriptSource" &&
           c.sessionId === "worker-own",
       ),
-    ).toHaveLength(code === -32601 ? 1 : 16);
+    ).toHaveLength(code === -32000 ? 16 : 1);
     expect(observation.scripts.filter((s) => s.source.included)).toHaveLength(
-      code === -32601 ? 0 : 15,
+      code === -32000 ? 15 : 0,
     );
     expect(
       observation.limitations.filter((s) =>
@@ -2239,6 +2245,7 @@ it.each([
   "worker",
   "service",
   "clients",
+  "unresolved-version",
   "inventory",
   "legacy",
   "none",
@@ -2247,13 +2254,22 @@ it.each([
   async (failed) => {
     const { provider, input } = await fixture({
       commandEvents: (command) =>
-        failed === "clients" && command.method === "ServiceWorker.enable"
+        (failed === "clients" || failed === "unresolved-version") &&
+        command.method === "ServiceWorker.enable"
           ? [
               {
                 method: "ServiceWorker.workerVersionUpdated",
                 sessionId: "session-1",
                 params: {
-                  versions: [{ targetId: "service", status: "activated" }],
+                  versions: [
+                    {
+                      targetId: "service",
+                      status: "activated",
+                      ...(failed === "unresolved-version"
+                        ? { controlledClients: ["allowed-page"] }
+                        : {}),
+                    },
+                  ],
                 },
               },
             ]
@@ -2266,6 +2282,7 @@ it.each([
               ? c.method === "Target.getTargets"
               : failed !== "none" &&
                 failed !== "clients" &&
+                failed !== "unresolved-version" &&
                 failed !== "legacy" &&
                 c.method === "Target.setAutoAttach" &&
                 c.params.autoAttach === true &&
@@ -2663,6 +2680,7 @@ it.each([
   "unsanitized",
   "missing-selection",
   "missing-observation",
+  "service-target-type",
   "page-target",
   "page-origin",
   "page-source-selection",
@@ -2716,6 +2734,13 @@ it.each([
       observation.ownership = "page_related";
       observation.page_target_id = null;
     }
+    if (mismatch === "service-target-type") {
+      const observation = inspection.workers.find(
+        (w) => w.target_id === "shared",
+      )!.observation!;
+      observation.ownership = "service_worker_client";
+      observation.page_target_id = input.target_id;
+    }
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       mismatch === "source-selection" || mismatch === "page-source-selection"
@@ -2724,6 +2749,7 @@ it.each([
             mismatch === "unsanitized" ||
             mismatch === "missing-selection" ||
             mismatch === "missing-observation" ||
+            mismatch === "service-target-type" ||
             mismatch.startsWith("page-")
           ? selected
           : input,
@@ -2783,3 +2809,140 @@ it("retains attach-limited worker node and containment coverage", async () => {
       ?.evidence.coverage,
   ).toMatchObject({ status: "partial", omitted_count: null });
 });
+
+it.each(["controlled", "revoked", "foreign"] as const)(
+  "retains discovery gaps for unresolved Service Worker versions: %s",
+  (scope) => verifyUnresolved(scope),
+);
+async function verifyUnresolved(scope: "controlled" | "revoked" | "foreign") {
+  const { provider, input } = await fixture({
+    commandEvents: (command) =>
+      command.method === "ServiceWorker.enable"
+        ? [
+            {
+              method: "ServiceWorker.workerVersionUpdated",
+              sessionId: "session-1",
+              params: {
+                versions: [
+                  {
+                    targetId: "vanished",
+                    controlledClients: [
+                      scope === "foreign" ? "other-page" : "allowed-page",
+                    ],
+                    status: "activated",
+                  },
+                  ...(scope === "revoked"
+                    ? [
+                        {
+                          targetId: "vanished",
+                          controlledClients: [],
+                          status: "redundant",
+                        },
+                      ]
+                    : []),
+                ],
+              },
+            },
+          ]
+        : undefined,
+  });
+  const captured = await provider.inspectPage(input);
+  if (!captured.ok) throw captured.error;
+  expect(captured.value.workers.some((w) => w.target_id === "vanished")).toBe(
+    false,
+  );
+  expect(
+    captured.value.completeness.unavailable_sections.includes("workers"),
+  ).toBe(scope !== "foreign");
+  const evidence = createBrowserEvidence(
+    "inspect_web_page",
+    input,
+    captured.value,
+    provider.identity(),
+  );
+  expect(parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope).toBe(
+    scope === "foreign",
+  );
+}
+
+it.each(["worker", "shared_worker"] as const)(
+  "rejects Service Worker ownership on a %s across event orders",
+  async (type) => {
+    for (const before of [true, false]) {
+      const { provider, input, browser } = await fixture({
+        commandEvents(command, origin) {
+          if (
+            command.method !== "Target.setAutoAttach" ||
+            command.params.autoAttach !== true ||
+            command.sessionId !== "session-1"
+          )
+            return undefined;
+          const version: CdpEvent = {
+            method: "ServiceWorker.workerVersionUpdated",
+            sessionId: "session-1",
+            params: {
+              versions: [
+                {
+                  targetId: "mismatch",
+                  controlledClients: ["allowed-page"],
+                  status: "activated",
+                },
+              ],
+            },
+          };
+          const attached: CdpEvent = {
+            method: "Target.attachedToTarget",
+            sessionId: "session-1",
+            params: {
+              sessionId: "worker-mismatch",
+              targetInfo: {
+                targetId: "mismatch",
+                type,
+                url: origin + "/mismatch.js",
+                attached: true,
+              },
+            },
+          };
+          return before ? [version, attached] : [attached, version];
+        },
+      });
+      const captured = await provider.inspectPage(input);
+      if (!captured.ok) throw captured.error;
+      const observation = captured.value.workers.find(
+        (w) => w.target_id === "mismatch",
+      )!.observation!;
+      expect(observation.ownership).toBe(
+        type === "worker" ? "page_related" : "unknown",
+      );
+      expect(observation.lifecycle.some((e) => e.event === "version")).toBe(
+        false,
+      );
+      expect(captured.value.completeness.unavailable_sections).toContain(
+        "workers",
+      );
+      expect(JSON.stringify(captured.value.completeness)).toContain(
+        "invalid_protocol_value",
+      );
+      expect(
+        browser.commands.some(
+          (c) =>
+            c.method === "Debugger.enable" && c.sessionId === "worker-mismatch",
+        ),
+      ).toBe(type === "worker");
+      observation.ownership = "service_worker_client";
+      observation.page_target_id = input.target_id;
+      const evidence = createBrowserEvidence(
+        "inspect_web_page",
+        input,
+        captured.value,
+        provider.identity(),
+      );
+      expect(() => parseRuntimeCaptures([evidence])).toThrow(
+        /service_worker target/,
+      );
+      expect(() => selectScriptCapture(evidence)).toThrow(
+        /service_worker target/,
+      );
+    }
+  },
+);

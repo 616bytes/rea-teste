@@ -32,11 +32,14 @@ const workerAutoAttachParameters = {
   ],
 };
 
-const isUnavailableWorkerCommand = (cause: unknown): boolean =>
+const isMissingWorkerSession = (cause: unknown): boolean =>
   cause instanceof CdpCommandRejection &&
-  (cause.code === -32_000 ||
-    (cause.code === -32_001 &&
-      cause.reportedMessage === "Session with given id not found."));
+  cause.code === -32_001 &&
+  cause.reportedMessage === "Session with given id not found.";
+
+const isUnavailableWorkerCommand = (cause: unknown): boolean =>
+  (cause instanceof CdpCommandRejection && cause.code === -32_000) ||
+  isMissingWorkerSession(cause);
 
 type Worker = WebPageInspection["workers"][number];
 type Observation = NonNullable<Worker["observation"]>;
@@ -159,6 +162,12 @@ export class CdpWorkerCapture {
     await this.#inventory();
     await this.#settle();
     this.#stopped = true;
+    for (const [id, versions] of this.#versionsByTarget)
+      if (
+        !this.#workers.has(id) &&
+        versions.some(({ lifecycle }) => lifecycle.controls_page === true)
+      )
+        this.pageEvents.completeness.unavailable("workers");
     return [...this.#workers.values()]
       .map((worker) => {
         worker.events.recordScriptMetadataBudgetExclusions();
@@ -272,6 +281,16 @@ export class CdpWorkerCapture {
     this.pageEvents.completeness.exclude("workers", "invalid_protocol_value");
   }
 
+  #invalidServiceTarget(id: string): void {
+    this.#invalidTarget({
+      targetId: id,
+      event: "ServiceWorker.workerVersionUpdated",
+    });
+    this.pageEvents.completeness.unavailable("workers");
+    this.#controlled.delete(id);
+    this.#versionsByTarget.delete(id);
+  }
+
   #excludeUrl(value: string | undefined, count: number | null = 1): void {
     const reason = exclusionReasonForUrl(value);
     // Only a known foreign HTTP origin proves exclusion from this scope.
@@ -333,6 +352,8 @@ export class CdpWorkerCapture {
       existing.item.attached = target.attached;
       return existing;
     }
+    if (type !== "service_worker" && this.#versionsByTarget.has(id))
+      this.#invalidServiceTarget(id);
     const worker: WorkerState = {
       item: {
         target_id: id,
@@ -657,6 +678,8 @@ export class CdpWorkerCapture {
           item.source = sourceResult(text);
         } catch (cause) {
           if (!this.signal.aborted && isUnavailableWorkerCommand(cause)) {
+            if (isMissingWorkerSession(cause))
+              this.#unavailableSourceSessions.add(worker.sessionId);
             item.source = sourceExcluded(
               "Worker source became unavailable during capture",
             );
@@ -695,6 +718,11 @@ export class CdpWorkerCapture {
           "workers",
           "invalid_protocol_value",
         );
+        continue;
+      }
+      const target = this.#workers.get(id);
+      if (target !== undefined && target.item.type !== "service_worker") {
+        this.#invalidServiceTarget(id);
         continue;
       }
       const clients =

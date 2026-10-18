@@ -649,7 +649,7 @@ const addPackageRole = (
     // Launch main uses Node's filesystem lookup, independently of renderer
     // metadata. Literal percent bytes are filename bytes at this boundary.
     ...(input.kind === "electron-main"
-      ? { moduleKind: "require" as const }
+      ? { runtimePathKind: "node-entrypoint" as const }
       : {}),
     files: context.filesByPath,
     directoryPaths: context.directoryPaths,

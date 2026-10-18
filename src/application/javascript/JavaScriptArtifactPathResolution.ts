@@ -1,5 +1,5 @@
 import { isBuiltin } from "node:module";
-import { posix } from "node:path";
+import { posix, win32 } from "node:path";
 
 import {
   normalizeJoinedLogicalPath,
@@ -275,15 +275,18 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
   if (
     input.runtimePathKind !== undefined &&
     input.runtimePathKind !== "url-resource" &&
-    posix.isAbsolute(input.declaredPath) &&
-    !looksExternal(input.declaredPath)
+    (posix.isAbsolute(input.declaredPath) ||
+      win32.isAbsolute(input.declaredPath))
   )
-    return (
-      rejectDeclaration(input.declaredPath, declaresLiteralPercent(input)) ??
-      unresolvedCandidate("unavailable", [
-        "An absolute runtime host path has no established mapping to the selected logical artifact root.",
-      ])
-    );
+    // Host syntax is not a canonical logical path. In particular, Windows
+    // separators and drive letters must not be reclassified as invalid/URLs.
+    return input.declaredPath.includes("\0")
+      ? unresolvedCandidate("rejected", [
+          "NUL is not admitted in a runtime path.",
+        ])
+      : unresolvedCandidate("unavailable", [
+          "An absolute runtime host path has no established mapping to the selected logical artifact root.",
+        ]);
   if (input.runtimePathKind === "node-entrypoint")
     return resolveNodeRuntimeEntrypoint(input);
   if (input.moduleKind === "compiler-dependent") {

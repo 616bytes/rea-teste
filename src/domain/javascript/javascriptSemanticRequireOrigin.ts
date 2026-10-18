@@ -19,6 +19,7 @@ import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPath
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticEffectTiming,
+  semanticBindingAtRead,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
@@ -271,18 +272,23 @@ const isCommonJsModuleObject = (
 ): boolean => {
   const value = unwrapJavaScriptExpression(node).node;
   if (!t.isIdentifier(value)) return false;
-  if (value.name === "module")
-    return resolveSemanticBindingState(state, value, "module") === undefined
-      ? !semanticResolutionBlocked(state, value, "module")
-      : isUnmodifiedCommonJsWrapperBinding(value, "module", state);
   const binding = resolveSemanticBindingState(state, value, value.name);
+  if (value.name === "module" && binding === undefined)
+    return !semanticResolutionBlocked(state, value, "module");
   if (binding === undefined || visited.has(binding.bindingId)) return false;
+  const read = semanticBindingAtRead(binding, value, state.parentsByNode);
+  if (
+    value.name === "module" &&
+    commonJsWrapperBindingDeclaration(value, "module", state) !== undefined &&
+    !read.hasDefiniteInitializer
+  )
+    return true;
   const next = new Set(visited).add(binding.bindingId);
-  return (
-    binding.initializers.length > 0 &&
-    binding.initializers.every(({ node: init }) =>
-      isCommonJsModuleObject(init, state, next),
-    )
+  // This is a may-alias fact: one possible module origin requires an ownership
+  // gap. Later writes cannot erase an earlier call, and uncertain branches
+  // cannot establish that the original loader was absent.
+  return read.binding.initializers.some(({ node: init }) =>
+    isCommonJsModuleObject(init, state, next),
   );
 };
 

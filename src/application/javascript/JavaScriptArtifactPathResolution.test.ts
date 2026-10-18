@@ -9,6 +9,47 @@ import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 
+describe("runtime host path classification", () => {
+  it.each(["exact-file", "application-file", "node-entrypoint"] as const)(
+    "keeps POSIX and Windows absolute %s paths unavailable before canonical admission",
+    (runtimePathKind) => {
+      for (const declaredPath of [
+        "/opt/app/main.cjs",
+        "C:/app/main.cjs",
+        "C:\\app\\main.cjs",
+        "\\\\server\\share\\main.cjs",
+        "//server/share/main.cjs",
+        "\\app\\main.cjs",
+      ])
+        expect(
+          resolve({
+            declaredPath,
+            sourcePath: "app/package.json",
+            context: "filesystem-expression",
+            runtimePathKind,
+            files: fileMap([
+              file("opt/app/main.cjs", "root"),
+              file("app/main.cjs", "root"),
+            ]),
+          }),
+        ).toMatchObject({
+          resolution_status: "unavailable",
+          resolved_path: null,
+          declared_path: declaredPath,
+        });
+      expect(
+        resolve({
+          declaredPath: "C:/app/\0main.cjs",
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind,
+          files: new Map(),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+});
+
 describe("artifact URI scheme classification", () => {
   it.each(["html-reference", "module-specifier", "url-reference"] as const)(
     "keeps digit-bearing schemes external in %s even when a local file matches",

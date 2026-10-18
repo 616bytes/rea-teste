@@ -14,6 +14,10 @@ cliTest.for(
       "module.require",
       "computed module.require",
       "module alias",
+      "later reassigned module alias",
+      "earlier reassigned module alias",
+      "conditional module alias",
+      "absolute main",
       "percent main",
       "pattern alias",
       "recursive alias",
@@ -30,10 +34,18 @@ cliTest.for(
     const root = await createTestTempDirectory("rea-loader-owner-");
     const single = loader === "single percent main";
     const percent = single || loader === "percent main";
-    const inert = ["builtin alias", "blocked alias", "local module"].includes(
-      loader,
-    );
-    const main = percent ? "main%2Fentry.cjs" : "main.cjs";
+    const inert = [
+      "builtin alias",
+      "blocked alias",
+      "local module",
+      "earlier reassigned module alias",
+    ].includes(loader);
+    const absolute = loader === "absolute main";
+    const main = absolute
+      ? "/opt/app/main.cjs"
+      : percent
+        ? "main%2Fentry.cjs"
+        : "main.cjs";
     const imports =
       loader === "pattern alias"
         ? { "#window/*": "./proxy/*.cjs" }
@@ -45,26 +57,35 @@ cliTest.for(
               ? { "#entry": "fs" }
               : { "#entry": null };
     const load =
-      loader === "module.require"
-        ? 'module.require("../shared/window.cjs");'
-        : loader === "computed module.require"
-          ? 'module["require"]("../shared/window.cjs");'
-          : loader === "module alias"
-            ? 'const current = module; current.require("../shared/window.cjs");'
-            : loader === "local module"
-              ? 'function local(module) { module.require("../shared/window.cjs"); }'
-              : loader === "pattern alias"
-                ? 'require("#window/window");'
-                : loader.endsWith("alias")
-                  ? 'require("#entry");'
-                  : 'require("../shared/window.cjs");';
+      loader === "absolute main"
+        ? 'require("../../shared/window.cjs");'
+        : loader === "later reassigned module alias"
+          ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
+          : loader === "earlier reassigned module alias"
+            ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
+            : loader === "conditional module alias"
+              ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
+              : loader === "module.require"
+                ? 'module.require("../shared/window.cjs");'
+                : loader === "computed module.require"
+                  ? 'module["require"]("../shared/window.cjs");'
+                  : loader === "module alias"
+                    ? 'const current = module; current.require("../shared/window.cjs");'
+                    : loader === "local module"
+                      ? 'function local(module) { module.require("../shared/window.cjs"); }'
+                      : loader === "pattern alias"
+                        ? 'require("#window/window");'
+                        : loader.endsWith("alias")
+                          ? 'require("#entry");'
+                          : 'require("../shared/window.cjs");';
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
-      "a/main.cjs": single
-        ? "module.exports = 1;"
-        : 'require("../shared/window.cjs");',
+      "a/main.cjs":
+        single || absolute
+          ? "module.exports = 1;"
+          : 'require("../shared/window.cjs");',
       "b/package.json": JSON.stringify({ main, imports }),
-      [`b/${main}`]: load,
+      [absolute ? "opt/app/main.cjs" : `b/${main}`]: load,
       "b/proxy/window.cjs": 'require("../../shared/window.cjs");',
       "b/node_modules/fixture-window/package.json": JSON.stringify({
         main: "index.cjs",
@@ -79,7 +100,7 @@ cliTest.for(
       "index.html": "artifact-root decoy",
     });
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    if (loader.endsWith("alias") && !inert && loader !== "module alias")
+    if (loader.endsWith("alias") && !inert && !loader.includes("module alias"))
       expect(graph.edges).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -93,9 +114,13 @@ cliTest.for(
         ]),
       );
     if (
-      ["module.require", "computed module.require", "module alias"].includes(
-        loader,
-      )
+      [
+        "module.require",
+        "computed module.require",
+        "module alias",
+        "later reassigned module alias",
+        "conditional module alias",
+      ].includes(loader)
     )
       expect(graph.edges).toEqual(
         expect.arrayContaining([
@@ -137,6 +162,16 @@ cliTest.for(
 );
 
 const cases = [
+  ...[
+    "C:/app/preload.cjs",
+    "C:\\app\\preload.cjs",
+    "\\\\server\\share\\preload.cjs",
+  ].map((path, index) => ({
+    directory: `windows-absolute-${index}`,
+    expression: JSON.stringify(path),
+    target: null,
+    status: "unavailable",
+  })),
   {
     directory: "absolute-runtime",
     expression: '"/outside%2Fname.cjs"',

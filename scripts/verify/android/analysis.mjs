@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../../dist/artifacts/AnalysisCleanupLease.js";
 import { execFile } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -43,11 +45,27 @@ const configuration = await resolveJadxConfigurationInputs(
   process.env,
   "inspect_android_package",
 );
-await validateJadxConfiguration(
-  configuration,
-  process.env,
-  "inspect_android_package",
-);
+const prerequisiteResources = new ArtifactResourceScope();
+try {
+  await validateJadxConfiguration(
+    configuration,
+    process.env,
+    "inspect_android_package",
+    {
+      resourceOwner: {
+        run: (operation) => prerequisiteResources.run(operation),
+        retain: (owner, resource) =>
+          prerequisiteResources.retain({
+            kind: "lease",
+            resource,
+            lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+          }),
+      },
+    },
+  );
+} finally {
+  await prerequisiteResources.close();
+}
 const { java, jvmArguments } = configuration;
 const execute = promisify(execFile);
 await execute(java, ["-version"], { timeout: 10_000 });

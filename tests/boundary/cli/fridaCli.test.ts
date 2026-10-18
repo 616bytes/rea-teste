@@ -231,7 +231,19 @@ it("preserves observed devices when CLI provider cleanup fails", async () => {
   const output: unknown = JSON.parse(stdout);
   expect(output).toMatchObject({
     code: "cleanup_incomplete",
-    details: { diagnostics: { partial_observation: { devices } } },
+    details: {
+      diagnostics: {
+        partial_observation: {
+          devices: [
+            {
+              device_id: "remote-device",
+              name: "selected endpoint",
+              type: "remote",
+            },
+          ],
+        },
+      },
+    },
   });
 });
 

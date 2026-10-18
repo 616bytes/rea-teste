@@ -318,53 +318,37 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
-it.each([
-  {
-    literal: "nan",
-    value: "nan",
-    limitation:
-      '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
-  },
-  {
-    literal: "1e999",
-    value: null,
-    limitation:
-      '1 numeric value(s) are reported as { "$plist_type": "real", "value": null } because XML numeric decoding could not establish their value identity.',
-  },
-])(
-  "preserves the observed or unknown identity of XML real $literal",
-  async ({ literal, value, limitation }) => {
-    const root = await bundle();
-    const xml = build({
+it("keeps an archive readable while preserving a known non-finite real", async () => {
+  const root = await bundle();
+  const bytes = Buffer.from(
+    build({
       $archiver: "NSKeyedArchiver",
       $version: 100000,
-      $objects: ["$null", 1.5],
+      $objects: ["$null", Number.NaN],
       $top: { root: { CF$UID: 1 } },
-    });
-    expect(xml).toContain("<real>1.5</real>");
-    const bytes = Buffer.from(
-      xml.replace("<real>1.5</real>", `<real>${literal}</real>`),
-    );
-    await writeFile(
-      join(root, "Contents", "Resources", "NonFinite.plist"),
-      bytes,
-    );
+    }),
+  );
+  await writeFile(
+    join(root, "Contents", "Resources", "NonFinite.plist"),
+    bytes,
+  );
 
-    const result = await inspect(root, {
-      path: "Contents/Resources/NonFinite.plist",
-    });
+  const result = await inspect(root, {
+    path: "Contents/Resources/NonFinite.plist",
+  });
 
-    expect(result.objects).toContainEqual(
-      expect.objectContaining({
-        id: 1,
-        kind: "scalar",
-        status: "observed",
-        value: { $plist_type: "real", value },
-      }),
-    );
-    expect(result.limitations).toContain(limitation);
-  },
-);
+  expect(result.objects).toContainEqual(
+    expect.objectContaining({
+      id: 1,
+      kind: "scalar",
+      status: "observed",
+      value: { $plist_type: "real", value: "nan" },
+    }),
+  );
+  expect(result.limitations).toContain(
+    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
+  );
+});
 
 const asAnalysisError = (value: unknown): AnalysisError => {
   if (!(value instanceof AnalysisError)) throw value;

@@ -82,6 +82,10 @@ it.each([
     }
 
     expect(result).toBeDefined();
+    expect(result).toMatchObject({
+      ok: false,
+      error: { providerId: "rea-cdp-electron" },
+    });
     if (failCapture) {
       expect(result).toMatchObject({
         ok: false,

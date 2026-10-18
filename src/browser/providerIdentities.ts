@@ -1,4 +1,5 @@
 import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 
 /** Identity available without loading the CdpBrowserProvider implementation. */
 export const CDP_BROWSER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
@@ -21,6 +22,13 @@ export const CDP_ELECTRON_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   name: "REA Electron file-page CDP observation provider",
   version: "1",
 });
+
+export const cdpProviderIdForOperation = (
+  operation: BrowserObservationOperation,
+): string =>
+  operation === "inspect_electron_page"
+    ? CDP_ELECTRON_PROVIDER_IDENTITY.id
+    : CDP_BROWSER_PROVIDER_IDENTITY.id;
 
 /** Identity available without loading the PlaywrightElectronActiveProvider implementation. */
 export const PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY: ProviderIdentity =

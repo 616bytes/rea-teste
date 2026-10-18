@@ -92,7 +92,7 @@ const CLEANUP_DOMAINS = [
 
 /** Passive browser observation through a selected user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
-  readonly #owner = new CdpTargetSessionOwner();
+  readonly #owner = new CdpTargetSessionOwner(CDP_BROWSER_PROVIDER_IDENTITY.id);
 
   close(): Promise<void> {
     return this.#owner.close();

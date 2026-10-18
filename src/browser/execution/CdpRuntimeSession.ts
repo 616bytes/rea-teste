@@ -4,8 +4,12 @@ import { AnalysisTimeoutError } from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
+import {
+  bindCdpTransportCleanup,
+  CdpTargetSessionOwner,
+} from "../CdpTargetSessionOwner.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import {
   WEB_RUNTIME_LIMITS,
@@ -104,15 +108,18 @@ export class CdpRuntimeSession {
         try {
           await owner.finish(transport.connection);
         } catch (cleanupCause: unknown) {
-          if (
-            cause instanceof AnalysisError &&
-            cleanupCause instanceof AnalysisError
-          )
-            throw analysisErrorWithCleanupFailure(
-              cause,
+          if (cleanupCause instanceof AnalysisError) {
+            const primary =
+              cause instanceof AnalysisError
+                ? cause
+                : new ProviderAdapterError("rea-cdp-browser", operation, {
+                    cause,
+                  });
+            throw bindCdpTransportCleanup(
               cleanupCause,
-              operation,
+              analysisErrorWithCleanupFailure(primary, cleanupCause, operation),
             );
+          }
           throw new AggregateError(
             [cause, cleanupCause],
             `CDP runtime setup ${operation} failed and cleanup remains incomplete.`,
@@ -264,24 +271,24 @@ export class CdpRuntimeSession {
         );
       }
     }
-    return failures.length === 0
-      ? undefined
-      : new ProviderCleanupError(
-          "rea-cdp-browser",
-          [this.target.target_id, "runtime-instrumentation"],
-          {
-            target_id: this.target.target_id,
-            cleanup_failures: failures,
-            previous_error:
-              previousError?.userMessage ?? previousError?.message ?? null,
-          },
-          {
-            operation: this.operation,
-            ...(transportFailure === undefined
-              ? {}
-              : { cause: transportFailure }),
-          },
-        );
+    if (failures.length === 0) return undefined;
+    const failure = new ProviderCleanupError(
+      "rea-cdp-browser",
+      [this.target.target_id, "runtime-instrumentation"],
+      {
+        target_id: this.target.target_id,
+        cleanup_failures: failures,
+        previous_error:
+          previousError?.userMessage ?? previousError?.message ?? null,
+      },
+      {
+        operation: this.operation,
+        ...(transportFailure === undefined ? {} : { cause: transportFailure }),
+      },
+    );
+    return transportFailure === undefined
+      ? failure
+      : bindCdpTransportCleanup(transportFailure, failure);
   }
 }
 

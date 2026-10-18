@@ -25,6 +25,7 @@ it.each([
   [" A Q I D\n", "AQID"],
   ["AQI", ""],
   ["AQ!ID", "AQID"],
+  ["AQI&#33;D", "AQI3"],
 ])("projects native Base64 data spelling %s", (source, expected) => {
   const parsed = parsePlistXml(`<plist><data>${source}</data></plist>`);
   if (!parsed.ok) throw parsed.error;

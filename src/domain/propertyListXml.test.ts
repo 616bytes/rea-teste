@@ -91,6 +91,7 @@ it.each([
   [" A Q I D\n", "AQID"],
   ["AQI", ""],
   ["AQ!ID", "AQID"],
+  ["AQI&#33;D", "AQI3"],
 ])("decodes native Base64 data spelling %s", (source, expected) => {
   const parsed = parseXmlPropertyList(`<plist><data>${source}</data></plist>`);
   expect(parsed.value).toEqual(

@@ -1,5 +1,6 @@
 import type { Document, Node } from "@xmldom/xmldom";
 
+import { getRawXmlDataContents } from "./xmlDocument.js";
 import {
   UnknownPlistReal,
   createPlistNumberCollector,
@@ -13,6 +14,7 @@ export const decodeXmlPropertyList = (document: Document) => {
   if (root?.nodeName !== "plist")
     throw new TypeError("malformed document. First element should be <plist>");
   const numbers = createPlistNumberCollector();
+  const rawDataContents = getRawXmlDataContents(document)[Symbol.iterator]();
   const requireContent = (node: Node): Node => {
     if (node.firstChild === null)
       throw new TypeError(`Cannot parse "" as ${node.nodeName}`);
@@ -133,10 +135,9 @@ export const decodeXmlPropertyList = (document: Document) => {
         return value;
       }
       case "data": {
-        const encoded = content(node, textNode).text.replace(
-          /[^A-Za-z0-9+/=]/gu,
-          "",
-        );
+        const source =
+          rawDataContents.next().value ?? content(node, textNode).text;
+        const encoded = source.replace(/[^A-Za-z0-9+/=]/gu, "");
         const complete = encoded.slice(
           0,
           encoded.length - (encoded.length % 4),

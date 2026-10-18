@@ -82,7 +82,7 @@ def main():
     inventory = bridge["_string_inventory"]
 
     def recording_inventory(document, addresses=None):
-        projections.append(None if addresses is None else sorted("0x%x" % a for a in addresses))
+        projections.append(None if addresses is None else ["0x%x" % a for a in sorted(addresses)])
         return inventory(document, addresses)
 
     bridge["_string_inventory"] = recording_inventory

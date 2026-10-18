@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  rm,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { inspect } from "node:util";
@@ -8,6 +15,9 @@ import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -31,6 +41,200 @@ const completedProcess = (text: string, stderr = "", processError?: Error) => {
   });
   return child;
 };
+
+// JSON omits Error.cause and Buffer inspection truncates long values. Walk the
+// actual public object graph, including non-enumerable causes and cleanupPrimary.
+const expectPrivateKeyLogResources = (error: AnalysisError) => {
+  const seen = new Set<object>();
+  const exposed: string[] = [];
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Buffer.isBuffer(value)) {
+      exposed.push("artifact bytes");
+      return;
+    }
+    if (value instanceof OwnedFileHandle) exposed.push("readable file owner");
+    if (value instanceof AnalysisCleanupLease)
+      exposed.push("cleanup capability");
+    if (value instanceof AnalysisError) visit(value.cleanupPrimary);
+    for (const descriptor of Object.values(
+      Object.getOwnPropertyDescriptors(value),
+    ))
+      if ("value" in descriptor) visit(descriptor.value);
+  };
+  visit(error);
+  expect(exposed, "Public error exposed confidential resources").toEqual([]);
+};
+
+const decodedMetadata = JSON.stringify([
+  {
+    _source: {
+      layers: {
+        "frame.number": ["1"],
+        "http.request.method": ["GET"],
+        "http.request.uri": ["/items"],
+      },
+    },
+  },
+]);
+
+it.each([
+  { stage: "source", cancel: false },
+  { stage: "source", cancel: true },
+  { stage: "integrity", cancel: false },
+])(
+  "keeps key-log read values and file owners private through failed close and retry: %j",
+  async ({ stage, cancel }) => {
+    const directory = await createTestTempDirectory("rea-tls-file-close-");
+    const tool = join(directory, "producer");
+    const path = join(directory, "capture.pcap");
+    const keyLog = join(directory, "keys.log");
+    await writeFile(tool, "fixture executable identity", { mode: 0o700 });
+    await writeFile(path, "fixture capture");
+    await writeFile(
+      keyLog,
+      `CLIENT_RANDOM ${"ab".repeat(32)} ${"cd".repeat(48)}\n`,
+    );
+    const controller = new AbortController();
+    const reason = { request: "cancel during key-log source close" };
+    let allowClose = false;
+    let privateRoot: string | undefined;
+    let held: FileHandle | undefined;
+    let nativeClose: (() => Promise<void>) | undefined;
+    let acquisitions = 0;
+    const closeFailure = Object.assign(
+      new Error("fixture descriptor close denied"),
+      { code: "EIO" },
+    );
+    const provider = new TsharkCaptureProvider(
+      { REA_TSHARK_COMMAND: tool, REA_TSHARK_PRLIMIT_COMMAND: tool },
+      async (input) => ({
+        process: completedProcess(
+          input.arguments.includes("--version")
+            ? "TShark (Wireshark) 4.6.9 (fixture)\n"
+            : decodedMetadata,
+        ),
+        ownership: {
+          runId: input.runId,
+          leaderPid: 41236,
+          processGroupId: 41236,
+        },
+        cleanup: async () => ({ cleaned: true, signaled: false }),
+      }),
+      async () => {
+        const root = await PrivateRuntimeRoot.create({
+          parent: directory,
+          prefix: "decoder-",
+        });
+        privateRoot = root.path;
+        return root;
+      },
+      "linux",
+      async (selected, maximumBytes, signal, fileSystem, scope) => {
+        acquisitions++;
+        const target =
+          stage === "source"
+            ? keyLog
+            : privateRoot === undefined
+              ? undefined
+              : join(privateRoot, "tls-key-log");
+        if (selected !== target)
+          return readStableArtifact(
+            selected,
+            maximumBytes,
+            signal,
+            fileSystem,
+            scope,
+          );
+        return readStableArtifact(
+          selected,
+          maximumBytes,
+          signal,
+          {
+            lstat: (name) => lstat(name, { bigint: true }),
+            open: async (name, flags) => {
+              const file = await open(name, flags);
+              held = file;
+              nativeClose = file.close.bind(file);
+              file.close = async () => {
+                if (!allowClose) {
+                  if (cancel) controller.abort(reason);
+                  throw closeFailure;
+                }
+                await nativeClose!();
+              };
+              return file;
+            },
+          },
+          scope,
+        );
+      },
+      async (limits) => limits,
+    );
+    onTestFinished(async () => {
+      allowClose = true;
+      try {
+        await provider.close();
+      } finally {
+        if (held !== undefined && held.fd >= 0) await nativeClose!();
+      }
+    });
+    const service = new PacketCaptureService(provider);
+    const input = {
+      path,
+      fields: ["http.request.method", "http.request.uri"],
+      tls_key_log_path: keyLog,
+    };
+    const result = await service.inspect(input, { signal: controller.signal });
+    if (result.ok)
+      throw new Error("Expected key-log descriptor cleanup failure");
+    const error = result.error;
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toEqual(
+      expect.arrayContaining([
+        stage === "source" ? keyLog : join(privateRoot!, "tls-key-log"),
+        privateRoot!,
+      ]),
+    );
+    if (cancel) {
+      let primary = error;
+      while (primary.cleanupPrimary !== undefined)
+        primary = primary.cleanupPrimary;
+      expect(primary._tag).toBe("AnalysisCancelledError");
+      expect(primary.cause).toBe(reason);
+    }
+    expect(held!.fd).toBeGreaterThanOrEqual(0);
+    const beforeRetry = acquisitions;
+    // A new request must first retry the old owner without reading another file.
+    const blocked = await service.inspect(input);
+    if (blocked.ok)
+      throw new Error("Expected retained descriptor to block admission");
+    expect(acquisitions).toBe(beforeRetry);
+    const closeError: unknown = await provider
+      .close()
+      .catch((cause: unknown) => cause);
+    expect(closeError).toBeInstanceOf(AnalysisError);
+    expect((closeError as AnalysisError).cleanupIncomplete).toBe(true);
+    expect(existsSync(privateRoot!)).toBe(true);
+    expectPrivateKeyLogResources(error);
+    expectPrivateKeyLogResources(blocked.error);
+    expectPrivateKeyLogResources(closeError as AnalysisError);
+    allowClose = true;
+    await provider.close();
+    expect(held!.fd).toBe(-1);
+    expect(existsSync(privateRoot!)).toBe(false);
+    for (const previous of [
+      error,
+      blocked.error,
+      closeError as AnalysisError,
+    ]) {
+      expect(previous.cleanupIncomplete).toBe(false);
+      expect(previous.cleanupResources).toEqual([]);
+      expectPrivateKeyLogResources(previous);
+    }
+  },
+);
 
 // Exercise the real adapter and failure projection with an injected command
 // outcome. No native process or installed TShark is required for this boundary.

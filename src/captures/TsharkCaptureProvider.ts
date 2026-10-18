@@ -417,6 +417,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             input.tls_key_log_path,
             TLS_KEY_LOG_MAX_BYTES,
             options?.signal,
+            "confidential",
           );
           const summary = summarizeTlsKeyLog(source.bytes, operation);
           if (!summary.ok) throw summary.error;
@@ -479,6 +480,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               await this.#resources.read(
                 keyLogSnapshotPath,
                 TLS_KEY_LOG_MAX_BYTES,
+                undefined,
+                "confidential",
               )
             ).sha256 !== keyLog.sha256
           )

@@ -1471,9 +1471,10 @@ const applyFormattedJsonEdit = (text: string, edit: Edit): string => {
  */
 const deleteJsonProperty = (
   text: string,
-  siblings: readonly Node[],
+  object: Node,
   property: Node,
 ): string => {
+  const siblings = object.children ?? [];
   const propertyIndex = siblings.indexOf(property);
   const previous = siblings[propertyIndex - 1];
   const next = siblings[propertyIndex + 1];
@@ -1506,26 +1507,45 @@ export interface ClientConfigurationShadowedMember {
 }
 
 /**
- * Delete every member named `key` from `object`, parsed from `text`. Removing
- * only the effective member would make the previous repeat effective. Members
- * are deleted from the last one back: each deletion edits text at or after the
- * end of the member before it, so the earlier offsets in this one syntax tree
- * stay valid, and separators are judged against the members still present.
+ * Delete every member named `key` from `object`, parsed from `text`, in one
+ * pass. Removing only the effective member would make the previous repeat
+ * effective. A separator stays only between members that remain, plus a JSONC
+ * trailing separator while any member remains; comments and whitespace
+ * outside the removed members and separators keep their bytes.
  */
 const deleteRepeatedJsonMember = (
   text: string,
   object: Node,
   key: string,
 ): string => {
-  const siblings = [...(object.children ?? [])];
-  let edited = text;
-  for (const property of siblings
-    .filter((member) => isJsonMember(member, key))
-    .reverse()) {
-    edited = deleteJsonProperty(edited, siblings, property);
-    siblings.splice(siblings.indexOf(property), 1);
+  const siblings = object.children ?? [];
+  const removed = siblings.map((member) => isJsonMember(member, key));
+  const anyKept = removed.includes(false);
+  const spans: { readonly start: number; readonly end: number }[] = [];
+  // Walk back so `laterKept` says whether a kept member follows a separator.
+  let laterKept = false;
+  for (const [index, member] of [...siblings.entries()].reverse()) {
+    const end = member.offset + member.length;
+    const separator = nextJsoncToken(text, end);
+    const last = index === siblings.length - 1;
+    // Admitted documents always separate members, so this is a parser defect.
+    if (separator.kind !== JSON_COMMA && !last)
+      throw new TypeError("JSON property separator was not found");
+    const keepSeparator = last ? anyKept : removed[index] !== true && laterKept;
+    if (separator.kind === JSON_COMMA && !keepSeparator)
+      spans.push({ start: separator.offset, end: separator.offset + 1 });
+    if (removed[index] === true) spans.push({ start: member.offset, end });
+    else laterKept = true;
   }
-  return edited;
+  // Spans were collected back to front and never overlap.
+  const kept: string[] = [];
+  let cursor = 0;
+  for (const span of spans.reverse()) {
+    kept.push(text.slice(cursor, span.start));
+    cursor = span.end;
+  }
+  kept.push(text.slice(cursor));
+  return kept.join("");
 };
 
 /**
@@ -1588,7 +1608,7 @@ const editJsonMember = (
       return removeShadowedMembers
         ? ok(deleteRepeatedJsonMember(text, object, key))
         : err({ kind: "shadowed_member", path });
-    return ok(deleteJsonProperty(text, object.children ?? [], property));
+    return ok(deleteJsonProperty(text, object, property));
   }
   throw new TypeError("JSON edit path is empty");
 };

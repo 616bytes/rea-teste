@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 
 import { localPathStringSchema } from "../localPath.js";
 import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
@@ -315,6 +317,34 @@ export type InspectBinaryLayoutInput = z.infer<
   typeof inspectBinaryLayoutInputSchema
 >;
 export type BinaryLayout = z.infer<typeof binaryLayoutSchema>;
+
+const validatedImmutableLayouts = new WeakSet<object>();
+
+/** Validate once per exact immutable source; mutable inputs always revalidate. */
+export const safeParseOwnedBinaryLayout = (
+  input: unknown,
+): z.ZodSafeParseResult<BinaryLayout> => {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    validatedImmutableLayouts.has(input)
+  )
+    return { success: true, data: input as BinaryLayout };
+  const parsed = binaryLayoutSchema.safeParse(input);
+  if (
+    parsed.success &&
+    typeof input === "object" &&
+    input !== null &&
+    isImmutableJsonSnapshot(input) &&
+    isDeepStrictEqual(input, parsed.data)
+  ) {
+    // Preserve normalization if the schema changes: only unchanged, completely
+    // validated data can be borrowed without retaining a duplicate layout.
+    validatedImmutableLayouts.add(input);
+    return { success: true, data: input as BinaryLayout };
+  }
+  return parsed;
+};
 
 const validateRelocationReferences = (
   value: z.output<typeof binaryLayoutObjectSchema>,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   freezeOwnedJsonSnapshotSteps,
+  immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { jsonValueValidationIssue, type JsonValue } from "./jsonValue.js";
@@ -23,6 +24,7 @@ describe("cooperative owned snapshot sealing", () => {
     expect(steps.next().done).toBe(false);
     expect(Object.isFrozen(value)).toBe(true);
     expect(isImmutableJsonSnapshot(value)).toBe(false);
+    expect(immutableJsonSnapshotMember(value, "deferred")).toBeUndefined();
     const introduced = { value: 2 };
     deferred.child = introduced;
     expect(complete(steps)).toBe(value);
@@ -49,6 +51,7 @@ describe("cooperative owned snapshot sealing", () => {
     expect(interrupted.next().done).toBe(false);
     interrupted.return(cancelled);
     expect(isImmutableJsonSnapshot(cancelled)).toBe(false);
+    expect(immutableJsonSnapshotMember(cancelled, "values")).toBeUndefined();
   });
 
   it("preserves aliases and rejects accessors, sparse values and cycles", () => {

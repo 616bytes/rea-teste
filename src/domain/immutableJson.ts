@@ -14,6 +14,28 @@ export const isImmutableJsonSnapshot = (value: unknown): value is JsonValue =>
   (typeof value === "number" && Number.isFinite(value)) ||
   (typeof value === "object" && immutableSnapshots.has(value));
 
+/** Borrow one own member of a completed snapshot, carrying its sealing proof. */
+export const immutableJsonSnapshotMember = (
+  snapshot: unknown,
+  key: string,
+): JsonValue | undefined => {
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    !immutableSnapshots.has(snapshot)
+  )
+    return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(snapshot, key);
+  if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+    return undefined;
+  // Completed sealing checked and froze every reachable member. Register only
+  // the selected child; do not traverse it again or add per-node weak entries.
+  const member = descriptor.value as JsonValue;
+  if (typeof member === "object" && member !== null)
+    immutableSnapshots.add(member);
+  return member;
+};
+
 /** Seal an already parsed, owned JSON snapshot for immutable zero-copy reuse. */
 export const freezeJsonSnapshot = <T extends JsonValue>(value: T): T => {
   const pending: SnapshotEntry[] = [{ value, exiting: false }];

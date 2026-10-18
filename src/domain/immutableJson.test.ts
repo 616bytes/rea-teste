@@ -3,10 +3,52 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 
 describe("owned immutable JSON snapshots", () => {
+  it("borrows only the selected own child of a completed sealed root", () => {
+    const value = freezeJsonSnapshot({
+      selected: { values: [1, 2] },
+      other: { value: 3 },
+      absent: null,
+    });
+    expect(isImmutableJsonSnapshot(value.selected)).toBe(false);
+    expect(immutableJsonSnapshotMember(value, "selected")).toBe(value.selected);
+    expect(isImmutableJsonSnapshot(value.selected)).toBe(true);
+    expect(isImmutableJsonSnapshot(value.other)).toBe(false);
+    expect(immutableJsonSnapshotMember(value.selected, "values")).toBe(
+      value.selected.values,
+    );
+    expect(isImmutableJsonSnapshot(value.selected.values)).toBe(true);
+    expect(immutableJsonSnapshotMember(value, "absent")).toBeNull();
+    expect(immutableJsonSnapshotMember(value, "missing")).toBeUndefined();
+    expect(immutableJsonSnapshotMember(value, "toString")).toBeUndefined();
+    expect(Reflect.set(value.selected.values, 0, 9)).toBe(false);
+  });
+
+  it("does not borrow children from unowned roots or invoke their accessors", () => {
+    let accessed = false;
+    const child = Object.freeze({ value: 1 });
+    const root = Object.freeze({ child });
+    expect(immutableJsonSnapshotMember(root, "child")).toBeUndefined();
+    expect(isImmutableJsonSnapshot(child)).toBe(false);
+    expect(
+      immutableJsonSnapshotMember(
+        {
+          get child() {
+            accessed = true;
+            return child;
+          },
+        },
+        "child",
+      ),
+    ).toBeUndefined();
+    expect(accessed).toBe(false);
+    expect(immutableJsonSnapshotMember(null, "child")).toBeUndefined();
+  });
+
   it("seals reachable data and preserves repeated references", () => {
     const shared = { values: [1, "observed"] };
     const value = { left: shared, right: shared };

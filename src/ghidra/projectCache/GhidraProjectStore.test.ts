@@ -411,9 +411,16 @@ describe("GhidraProjectStore resilience", () => {
           );
           expect(pruned.error.path).toBe(root);
         }
+        // A failed removal leaves the damaged entry in place.
+        await expect(stat(join(root, key))).resolves.toBeDefined();
       } finally {
         await chmod(root, 0o700);
       }
+      // Restoring write access lets a later prune finish the removal.
+      const retried = await store.prune();
+      if (!retried.ok)
+        throw new Error(`retry prune failed: ${retried.error.message}`);
+      expect(retried.value.removed).toEqual([key]);
       await expect(stat(join(root, key))).rejects.toThrow();
     },
   );

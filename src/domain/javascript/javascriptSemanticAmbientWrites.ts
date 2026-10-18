@@ -47,6 +47,39 @@ type AmbientPath = readonly (string | null)[];
 /** Undefined means a cyclic or conflicting projection can select any depth. */
 type AmbientProjection = AmbientPath | undefined;
 
+interface DestinationProof {
+  private: boolean;
+  unknown: boolean;
+  readonly dependencies: Set<DestinationProof>;
+  readonly users: Set<DestinationProof>;
+}
+
+/** Every alternative must reach a private identity; unresolved cycles prove nothing. */
+const provePrivateDestination = (
+  root: DestinationProof,
+  proofs: Iterable<DestinationProof>,
+): boolean => {
+  const remaining = new Map<DestinationProof, number>();
+  const ready: DestinationProof[] = [];
+  for (const proof of proofs) {
+    remaining.set(proof, proof.dependencies.size);
+    if (proof.private && !proof.unknown && proof.dependencies.size === 0)
+      ready.push(proof);
+  }
+  const proven = new Set<DestinationProof>();
+  while (ready.length > 0) {
+    const proof = ready.pop();
+    if (proof === undefined || proven.has(proof)) continue;
+    proven.add(proof);
+    for (const user of proof.users) {
+      const count = (remaining.get(user) ?? 0) - 1;
+      remaining.set(user, count);
+      if (count === 0 && !user.unknown) ready.push(user);
+    }
+  }
+  return proven.has(root);
+};
+
 const joinAmbientProjection = (
   left: AmbientProjection,
   right: AmbientProjection,
@@ -89,6 +122,7 @@ export const createAmbientPathResolver = (
     escapedContents = false,
     projection: AmbientProjection = [],
     localIdentity?: (node: t.Node, path: AmbientProjection) => void,
+    observePrivateDestination?: (privateDestination: boolean) => void,
   ): readonly AmbientPath[] => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
@@ -100,11 +134,46 @@ export const createAmbientPathResolver = (
       suffix: AmbientProjection;
       readsAtSelf?: true;
     }[] = [{ node, suffix: projection }];
+    const destinations =
+      observePrivateDestination === undefined
+        ? undefined
+        : new Map<t.Node, DestinationProof>();
+    const destination = (node: t.Node): DestinationProof | undefined => {
+      if (destinations === undefined) return undefined;
+      const root = electronMemberPath(node).root;
+      let proof = destinations.get(root);
+      if (proof === undefined) {
+        proof = {
+          private: false,
+          unknown: false,
+          dependencies: new Set(),
+          users: new Set(),
+        };
+        destinations.set(root, proof);
+      }
+      return proof;
+    };
+    const rootDestination = destination(node);
+    let activeDestination: DestinationProof | undefined;
+    const enqueue = (next: (typeof pending)[number]) => {
+      const child = destination(next.node);
+      // Stored contents cannot change an already selected fresh object's identity.
+      if (
+        activeDestination !== undefined &&
+        !activeDestination.private &&
+        child !== undefined
+      ) {
+        activeDestination.dependencies.add(child);
+        child.users.add(activeDestination);
+      }
+      pending.push(next);
+    };
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
     const expanded = new WeakMap<t.Node, AmbientProjection>();
     const retain = (path: AmbientPath) => {
+      if (activeDestination !== undefined) activeDestination.unknown = true;
       let canonical = canonicalAmbientPath(path);
       for (;;) {
         result.set(JSON.stringify(canonical), canonical);
@@ -132,6 +201,7 @@ export const createAmbientPathResolver = (
       const current = pending.pop();
       if (current === undefined) break;
       const { root, members } = electronMemberPath(current.node);
+      activeDestination = destination(root);
       let suffix: AmbientProjection =
         current.suffix === undefined
           ? undefined
@@ -152,10 +222,15 @@ export const createAmbientPathResolver = (
         }
       }
       expanded.set(root, suffix);
+      if (
+        activeDestination !== undefined &&
+        (suffix === undefined || suffix.includes(null))
+      )
+        activeDestination.unknown = true;
       // A widened projection is a possible write, never proof of an intrinsic.
       if (suffix === undefined && !possibleWrites) continue;
       const continueWith = (node: t.Node, path: AmbientProjection = suffix) =>
-        pending.push({
+        enqueue({
           node,
           suffix: path,
           ...(current.readsAtSelf && { readsAtSelf: true }),
@@ -178,6 +253,8 @@ export const createAmbientPathResolver = (
       };
       if (!t.isIdentifier(root) && facts?.freshObject(root)) {
         localIdentity?.(root, suffix);
+        if (activeDestination !== undefined && suffix?.length === 0)
+          activeDestination.private = true;
         for (const [source, path] of facts?.stores.get(root) ?? []) {
           const selected =
             suffix === undefined ||
@@ -201,7 +278,7 @@ export const createAmbientPathResolver = (
             suffix === undefined || path === undefined
               ? undefined
               : suffix.slice(path.length);
-          pending.push({
+          enqueue({
             node: source.node,
             readsAtSelf: true,
             suffix:
@@ -254,7 +331,7 @@ export const createAmbientPathResolver = (
             ? []
             : [stable];
         for (const initializer of initializers)
-          pending.push({
+          enqueue({
             node: initializer.node,
             readsAtSelf: true,
             suffix:
@@ -435,6 +512,10 @@ export const createAmbientPathResolver = (
       }
     }
     const paths = [...result.values()];
+    if (rootDestination !== undefined && destinations !== undefined)
+      observePrivateDestination?.(
+        provePrivateDestination(rootDestination, destinations.values()),
+      );
     if (!possibleWrites) cached.set(node, paths);
     return paths;
   };
@@ -643,17 +724,18 @@ export function* indexJavaScriptAmbientWritesSteps(
   }
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
-    let local = false;
-    const ambient = ambientWrites(
+    let privateDestination = false;
+    ambientWrites(
       source.target.object,
       source.mutation,
       false,
       [],
-      () => {
-        local = true;
+      undefined,
+      (privateProof) => {
+        privateDestination = privateProof;
       },
     );
-    if (!local || ambient.length > 0)
+    if (!privateDestination)
       escapes.push({
         node: source.mutation,
         targets: [

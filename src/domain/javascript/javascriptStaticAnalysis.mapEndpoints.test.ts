@@ -25,6 +25,68 @@ it("does not classify a local Map lookup as a network endpoint", () => {
 });
 
 it.each([
+  "condition ? {} : external",
+  "condition ? external : {}",
+  "external || {}",
+  "external ?? {}",
+  "external && {}",
+  "condition ? {} : unknownFactory()",
+  "condition ? unknownFactory() : {}",
+  "({ slot: external }).slot",
+  "({ slot: condition ? {} : external }).slot",
+  "[{}, external][index]",
+  "({ get slot() { return condition ? {} : external; } }).slot",
+])(
+  "retains an unresolved destination alongside private identities: %s",
+  (destination) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    function expose(external) {
+      const box = ${destination};
+      box.p = Map.prototype;
+    }
+    expose(holder); patch(holder); new Map().get('/accounts');
+  `);
+    expect(analysis.endpoints).toContainEqual(
+      expect.objectContaining({
+        value: "/accounts",
+        interpretation: "candidate",
+      }),
+    );
+  },
+);
+
+it.each([
+  "condition ? {} : {}",
+  "({ slot: {} }).slot",
+  "({ slot: condition ? {} : {} }).slot",
+  "[{}][0]",
+  "(() => { const inner = {}; return condition ? inner : inner; })()",
+])("keeps every proven private destination private: %s", (destination) => {
+  expect(
+    analyzeJavaScriptStaticSource(`
+    function keep() { const box = ${destination}; box.p = Map.prototype; }
+    keep(); new Map().get('/accounts');
+  `).endpoints,
+  ).toEqual([]);
+});
+
+it("keeps an unresolved alias cycle distinct from a private alternative", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    function expose() {
+      const cyclic = condition ? {} : cyclic;
+      cyclic.p = Map.prototype;
+    }
+    expose(); new Map().get('/accounts');
+  `);
+  expect(analysis.endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});
+
+it.each([
   'const records = new Map(); const alias = records; alias.get("/accounts"); records.delete("/accounts"); alias.get("/accounts")',
   'new Map().get("/accounts")',
   'new Map().delete("https://example.test/accounts")',

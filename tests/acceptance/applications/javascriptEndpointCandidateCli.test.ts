@@ -42,6 +42,8 @@ const candidateSources = {
     'const box = {}; box.run = eval; box.run("Map.prototype.get = fetch"); new Map().get("/stored-eval");',
   "generated.mjs":
     'Function("Map.prototype.get = fetch")(); new Map().get("/generated");',
+  "mixed-destination.mjs":
+    'function expose(external) { const box = condition ? {} : external; box.p = Map.prototype; } expose(holder); patch(holder); new Map().get("/mixed-destination");',
 };
 
 it("reports a candidate endpoint through the worker boundary in the public CLI", async () => {
@@ -103,6 +105,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       "/late-link",
       "/logical-assignment",
       "/method",
+      "/mixed-destination",
       "/network",
       "/opaque",
       "/prototype",
@@ -122,6 +125,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     "/late-link",
     "/logical-assignment",
     "/method",
+    "/mixed-destination",
     "/opaque",
     "/prototype",
     "/returned",

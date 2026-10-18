@@ -103,14 +103,25 @@ an evidence bundle. Do not repeat successful analysis solely to obtain a smaller
 reply. Current `batch_decompile` returns full per-item pseudocode and has no
 `detail: "summary"` input.
 
-A client timeout leaves provider completion unknown: analysis may continue, or
-cancellation may arrive after a successful result has settled. Before repeating
-analysis, use `get_evidence_bundle` with `detail: "summary"` to find matching
-completed `analyze_function` Evidence and reuse a matching dossier. Provider
+Before issuing `analyze_function`, record the matching Evidence IDs from
+`get_evidence_bundle` with `detail: "summary"` as a pre-call baseline. Match the
+selected subject, provider, profile and procedure, and keep any Evidence ID
+returned by this specific request. A client timeout leaves completion unknown:
+analysis may continue, or cancellation may arrive after success. Summary records
+have no request/session revision or chronology. A matching old dossier may predate
+an annotation edit; its presence does not establish completion of the timed request
+or current comments. A newly settled record absent from the baseline is usable as
+that request's result only when isolated requests and unchanged metadata establish
+that correlation; concurrent work or edits leave it ambiguous. Content-derived IDs
+are not request sequence numbers: unchanged repeated results may reuse an ID.
+Without a pre-call baseline or explicit request/result correlation, keep completion
+and metadata freshness unknown. Older Evidence remains a historical observation,
+not proof that a later request completed. Recheck summaries for discovery before
+repeating analysis; do not infer freshness from matching filters alone. Provider
 activity in `binary_session` is optional: Ghidra does not currently expose it,
 so `analysis_activity.status: "not_observed"` means unknown, not idle or failed.
-No matching record together with `not_observed` does not establish completion
-or failure. Keep the session open, allow the pending request to settle, and
+Neither a matching historical record nor its absence together with
+`not_observed` establishes completion or failure of the timed request. Keep the session open, allow the pending request to settle, and
 recheck for completed Evidence instead of immediately closing or repeating it.
 If closing is necessary, `close_binary` with an absolute `snapshot_path` drains
 earlier requests and saves their immutable snapshot before clearing session

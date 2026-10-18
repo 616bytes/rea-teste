@@ -603,14 +603,25 @@ function dossiers and cannot be passed to the native dossier view. Preserve or
 export their complete Evidence instead. `batch_decompile` currently returns full
 per-item pseudocode and does not accept `detail: "summary"`.
 
-A client timeout leaves provider completion unknown: analysis may continue, or
-cancellation may arrive after a successful result has settled. Before repeating
-analysis, use `get_evidence_bundle` with `detail: "summary"` to find matching
-completed `analyze_function` Evidence and reuse a matching dossier. Provider
+Before issuing `analyze_function`, record the matching Evidence IDs from
+`get_evidence_bundle` with `detail: "summary"` as a pre-call baseline. Match the
+selected subject, provider, profile and procedure, and keep any Evidence ID
+returned by this specific request. A client timeout leaves completion unknown:
+analysis may continue, or cancellation may arrive after success. Summary records
+have no request/session revision or chronology. A matching old dossier may predate
+an annotation edit; its presence does not establish completion of the timed request
+or current comments. A newly settled record absent from the baseline is usable as
+that request's result only when isolated requests and unchanged metadata establish
+that correlation; concurrent work or edits leave it ambiguous. Content-derived IDs
+are not request sequence numbers: unchanged repeated results may reuse an ID.
+Without a pre-call baseline or explicit request/result correlation, keep completion
+and metadata freshness unknown. Older Evidence remains a historical observation,
+not proof that a later request completed. Recheck summaries for discovery before
+repeating analysis; do not infer freshness from matching filters alone. Provider
 activity in `binary_session` is optional: Ghidra does not currently expose it,
 so `analysis_activity.status: "not_observed"` means unknown, not idle or failed.
-No matching record together with `not_observed` does not establish completion
-or failure. Keep the session open, allow the pending request to settle, and
+Neither a matching historical record nor its absence together with
+`not_observed` establishes completion or failure of the timed request. Keep the session open, allow the pending request to settle, and
 recheck for completed Evidence instead of immediately closing or repeating it.
 If closing is necessary, `close_binary` with an absolute `snapshot_path` drains
 earlier requests and saves their immutable snapshot before clearing session
@@ -722,8 +733,13 @@ same active target can reuse the current client, so it is not a fresh-start
 recovery. On the same connection:
 
 1. Keep useful inline Evidence and leave the session open while earlier work
-   settles. Use `get_evidence_bundle` with `detail: "summary"` to recheck for
-   matching completed Evidence before repeating analysis. `binary_session` shows
+   settles. Compare `get_evidence_bundle` summaries with the pre-call ID baseline
+   and any result ID correlated with that request, as described above. Matching
+   subject/provider/profile/procedure filters alone cannot distinguish a pre-edit
+   dossier from the timed re-analysis. Without a baseline or explicit correlation,
+   keep completion and metadata freshness unknown; concurrent requests or edits
+   can also make a new ID ambiguous. An identical result can reuse an old ID, so
+   no new ID does not prove failure. `binary_session` shows
    the selected binding and recorded state, but Ghidra does not expose activity;
    `not_observed` does not prove idle, failed, or completed work.
 2. If closing is necessary while work is pending or its completion is unknown,

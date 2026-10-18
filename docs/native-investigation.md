@@ -83,6 +83,12 @@ be reused. Check the reported cleanup outcome before retrying analysis.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.
+Metadata edits invalidate snapshot replay but retain historical Evidence. A summary
+match has no request/session revision or chronology and may describe pre-edit
+comments. Record matching IDs before analysis and correlate the settled result
+with that request; without that baseline or explicit correlation, completion and
+freshness after a client timeout remain unknown. Concurrent work/edits can make
+a new ID ambiguous, and an unchanged repeat can reuse its old content-derived ID.
 Snapshot closes drain earlier provider requests before saving and keep later
 requests waiting until the save and close finish. A concurrent successful edit
 therefore rejects the snapshot save and leaves the edited session open. If the

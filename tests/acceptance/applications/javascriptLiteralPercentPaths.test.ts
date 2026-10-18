@@ -8,6 +8,21 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
+const fixtureImports = (loader: string) => {
+  switch (loader) {
+    case "pattern alias":
+      return { "#window/*": "./proxy/*.cjs" };
+    case "recursive alias":
+      return { "#entry": "#window", "#window": "./proxy/window.cjs" };
+    case "external-package alias":
+      return { "#entry": "fixture-window" };
+    case "builtin alias":
+      return { "#entry": "fs" };
+    default:
+      return { "#entry": null };
+  }
+};
+
 cliTest.for(
   (["CLI", "stdio MCP"] as const).flatMap((surface) =>
     [
@@ -26,6 +41,9 @@ cliTest.for(
       "blocked alias",
       "local module",
       "projected module",
+      "resolve-only",
+      "missing wildcard alias",
+      "absolute require",
       "single percent main",
     ].map((loader) => ({ surface, loader })),
   ),
@@ -40,6 +58,8 @@ cliTest.for(
       "blocked alias",
       "local module",
       "projected module",
+      "resolve-only",
+      "missing wildcard alias",
       "earlier reassigned module alias",
     ].includes(loader);
     const absolute = loader === "absolute main";
@@ -48,40 +68,37 @@ cliTest.for(
       : percent
         ? "main%2Fentry.cjs"
         : "main.cjs";
-    const imports =
-      loader === "pattern alias"
-        ? { "#window/*": "./proxy/*.cjs" }
-        : loader === "recursive alias"
-          ? { "#entry": "#window", "#window": "./proxy/window.cjs" }
-          : loader === "external-package alias"
-            ? { "#entry": "fixture-window" }
-            : loader === "builtin alias"
-              ? { "#entry": "fs" }
-              : { "#entry": null };
+    const imports = fixtureImports(loader);
     const load =
-      loader === "projected module"
-        ? 'const { exports: api } = module; api.require = () => {}; api.require("../shared/window.cjs");'
-        : loader === "absolute main"
-          ? 'require("../../shared/window.cjs");'
-          : loader === "later reassigned module alias"
-            ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
-            : loader === "earlier reassigned module alias"
-              ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
-              : loader === "conditional module alias"
-                ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
-                : loader === "module.require"
-                  ? 'module.require("../shared/window.cjs");'
-                  : loader === "computed module.require"
-                    ? 'module["require"]("../shared/window.cjs");'
-                    : loader === "module alias"
-                      ? 'const current = module; current.require("../shared/window.cjs");'
-                      : loader === "local module"
-                        ? 'function local(module) { module.require("../shared/window.cjs"); }'
-                        : loader === "pattern alias"
-                          ? 'require("#window/window");'
-                          : loader.endsWith("alias")
-                            ? 'require("#entry");'
-                            : 'require("../shared/window.cjs");';
+      loader === "resolve-only"
+        ? 'require.resolve("../shared/window.cjs");'
+        : loader === "missing wildcard alias"
+          ? 'require("#missing/*");'
+          : loader === "absolute require"
+            ? 'require("/shared/window.cjs");'
+            : loader === "projected module"
+              ? 'const { exports: api } = module; api.require = () => {}; api.require("../shared/window.cjs");'
+              : loader === "absolute main"
+                ? 'require("../../shared/window.cjs");'
+                : loader === "later reassigned module alias"
+                  ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
+                  : loader === "earlier reassigned module alias"
+                    ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
+                    : loader === "conditional module alias"
+                      ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
+                      : loader === "module.require"
+                        ? 'module.require("../shared/window.cjs");'
+                        : loader === "computed module.require"
+                          ? 'module["require"]("../shared/window.cjs");'
+                          : loader === "module alias"
+                            ? 'const current = module; current.require("../shared/window.cjs");'
+                            : loader === "local module"
+                              ? 'function local(module) { module.require("../shared/window.cjs"); }'
+                              : loader === "pattern alias"
+                                ? 'require("#window/window");'
+                                : loader.endsWith("alias")
+                                  ? 'require("#entry");'
+                                  : 'require("../shared/window.cjs");';
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
       "a/main.cjs":
@@ -104,6 +121,19 @@ cliTest.for(
       "index.html": "artifact-root decoy",
     });
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    if (loader === "absolute require")
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              specifier: "/shared/window.cjs",
+              resolution_status: "unavailable",
+              resolved_path: null,
+            }),
+          }),
+        ]),
+      );
     if (loader.endsWith("alias") && !inert && !loader.includes("module alias"))
       expect(graph.edges).toEqual(
         expect.arrayContaining([
@@ -162,6 +192,52 @@ cliTest.for(
         )
         .map(({ properties }) => properties.resolved_path),
     ).toEqual(target === null ? [] : [target]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "resolves a proven application page across a nested ASAR boundary through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-asar-outer-page-");
+    const source = join(root, "source");
+    const application = join(root, "application");
+    await writeFixtureFiles(source, {
+      "package.json": JSON.stringify({ main: "main.cjs" }),
+      "main.cjs":
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("../page.html");',
+    });
+    await writeFixtureFiles(application, {
+      "resources/page.html": "owned outer page",
+    });
+    await createPackageWithOptions(
+      source,
+      join(application, "resources/app.asar"),
+      {},
+    );
+    const { graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      application,
+    );
+    const role = graph.nodes.find(({ kind }) => kind === "electron-renderer");
+    expect(role?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolved_path: "resources/page.html",
+            resolution_status: "resolved",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges
+        .filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === role?.node_id && relation === "maps_to",
+        )
+        .map(({ properties }) => properties.resolved_path),
+    ).toEqual(["resources/page.html"]);
   },
 );
 

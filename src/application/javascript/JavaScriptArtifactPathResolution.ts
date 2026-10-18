@@ -273,7 +273,9 @@ const conditionalResolution = (
 
 const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
   if (
-    input.runtimePathKind !== undefined &&
+    (input.runtimePathKind !== undefined ||
+      (input.context === "module-specifier" &&
+        input.moduleKind === "require")) &&
     input.runtimePathKind !== "url-resource" &&
     (posix.isAbsolute(input.declaredPath) ||
       win32.isAbsolute(input.declaredPath))
@@ -853,10 +855,6 @@ const resolvePackageImportAlias = (
   if (classified.kind === "invalid")
     return unresolvedCandidate("rejected", [
       `The package import specifier ${JSON.stringify(specifier)} is invalid; "#" and specifiers that end with "/" are not valid import aliases.`,
-    ]);
-  if (classified.kind === "pattern")
-    return unresolvedCandidate("unavailable", [
-      `Wildcard and directory package import aliases remain unresolved; ${JSON.stringify(specifier)} is not an exact imports key.`,
     ]);
   const metadata = enclosingPackageMetadata(input);
   if (metadata.kind === "none")
@@ -1545,14 +1543,18 @@ const findFileCandidate = (
   const target = input.files.get(path);
   if (
     target !== undefined &&
-    (source === undefined ||
+    ((input.runtimePathKind === "application-file" &&
+      input.applicationRootIsProven === true) ||
+      source === undefined ||
       target.container_sha256 === source.container_sha256)
   )
     return { resolvedPath: path, status: "resolved", limitations: [] };
   const unanalyzed = input.unanalyzedFiles?.get(path);
   if (
     unanalyzed !== undefined &&
-    (source === undefined ||
+    ((input.runtimePathKind === "application-file" &&
+      input.applicationRootIsProven === true) ||
+      source === undefined ||
       unanalyzed.container_sha256 === source.container_sha256)
   )
     return {

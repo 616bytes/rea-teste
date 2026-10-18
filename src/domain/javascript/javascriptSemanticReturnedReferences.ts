@@ -31,11 +31,16 @@ export interface SemanticReturnedReference {
   readonly projection: JavaScriptSemanticPropertyPath;
 }
 
-interface Candidate {
-  readonly node: t.Node;
+interface ValueSelection {
   readonly path: readonly (string | number | null)[];
-  readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
   readonly instance?: true;
+  /** Select this state from the result after resolving and invoking a callable. */
+  readonly invocation?: ValueSelection;
+}
+
+interface Candidate extends ValueSelection {
+  readonly node: t.Node;
+  readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
 }
 
 interface CallableReference {
@@ -296,9 +301,8 @@ const createSemanticCallableReferences = (
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   const classTargets = new WeakMap<t.Class, ClassTargetIndex>();
   const classLineages = new WeakMap<t.Class, ClassLineage>();
-  const isDefinitelyObject =
-    definiteObjectProof ??
-    createSemanticModuleInterop(state).isDefinitelyObject;
+  const interop = createSemanticModuleInterop(state);
+  const isDefinitelyObject = definiteObjectProof ?? interop.isDefinitelyObject;
   let factsReady = semanticFreshObjectFactsReady(state);
   return (callee, projection = []) => {
     const ready = semanticFreshObjectFactsReady(state);
@@ -339,7 +343,11 @@ const createSemanticCallableReferences = (
       }
       const { item, parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;
-      const pathKey = JSON.stringify([item.instance === true, item.path]);
+      const pathKey = JSON.stringify([
+        item.instance === true,
+        item.path,
+        item.invocation,
+      ]);
       const covered = expanded
         .get(node)
         ?.get(pathKey)
@@ -409,6 +417,32 @@ const createSemanticCallableReferences = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...item, node: last });
+      } else if (t.isAssignmentExpression(node, { operator: "=" })) {
+        pending.push({ ...item, node: node.right });
+      } else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        const invocation = interop.intrinsicInvocation(node);
+        const target = invocation?.arguments?.[0];
+        if (
+          invocation?.path.join(".") === "intrinsic.Reflect.construct" &&
+          t.isExpression(target)
+        ) {
+          // Nominal intrinsic selection adds possible result contents only.
+          // It cannot establish helper integrity or a strict receiver proof.
+          pending.push({ ...item, node: target, instance: true });
+        } else {
+          pending.push({
+            node: node.callee,
+            path: [],
+            initializers: item.initializers,
+            invocation: {
+              path: item.path,
+              ...(item.instance === true ? { instance: true } : {}),
+              ...(item.invocation === undefined
+                ? {}
+                : { invocation: item.invocation }),
+            },
+          });
+        }
       } else if (t.isFunction(node) && item.instance === true) {
         // An ordinary constructor's new object is distinct from the callable.
         // Only an explicit returned value can supply a callable result here.
@@ -417,6 +451,21 @@ const createSemanticCallableReferences = (
             pending.push({
               node: result.node,
               path: item.path,
+              initializers: item.initializers,
+              ...(item.invocation === undefined
+                ? {}
+                : { invocation: item.invocation }),
+            });
+      } else if (
+        t.isFunction(node) &&
+        item.path.length === 0 &&
+        item.invocation !== undefined
+      ) {
+        for (const result of semanticCallableResultExpressions(node))
+          if (result.node !== null)
+            pending.push({
+              ...item.invocation,
+              node: result.node,
               initializers: item.initializers,
             });
       } else if (
@@ -435,6 +484,7 @@ const createSemanticCallableReferences = (
               });
       } else if (
         t.isFunction(node) &&
+        item.invocation === undefined &&
         (item.path.length === 0 || mode === "function-values")
       ) {
         retain(node, item.path);
@@ -470,7 +520,14 @@ const createSemanticCallableReferences = (
         const [key, ...path] = prototype ? item.path.slice(1) : item.path;
         const lineage = classLineage(node, state, classLineages);
         const value = (node: t.Node, path: Candidate["path"]) =>
-          pending.push({ node, path, initializers: item.initializers });
+          pending.push({
+            node,
+            path,
+            initializers: item.initializers,
+            ...(item.invocation === undefined
+              ? {}
+              : { invocation: item.invocation }),
+          });
         const select = (layer: ClassMemberLayer): boolean => {
           for (const owner of lineage.classes) {
             const selected = selectClassTargets(

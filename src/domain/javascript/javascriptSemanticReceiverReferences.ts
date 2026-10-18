@@ -19,6 +19,7 @@ import {
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   isUnshadowedGlobal,
+  resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
@@ -261,6 +262,7 @@ export const createSemanticReceiverReferences = (
     const inactiveNodes = new WeakSet<t.Node>();
     const inactiveTargets = new Set<t.Function>();
     const storedSources: [t.Node, t.Node][] = [];
+    const escapedValues = new WeakSet<t.Node>();
     traverseJavaScriptAst(state.program, {
       enter: (node, parent) => {
         if (
@@ -277,39 +279,64 @@ export const createSemanticReceiverReferences = (
             for (const target of contents(node)) inactiveTargets.add(target);
           return;
         }
-        if (parent !== null && t.isClass(node)) {
+        if (parent !== null && t.isClassDeclaration(node)) {
           storedSources.push([node, parent]);
           return;
         }
-        if (
-          parent === null ||
-          !(
-            t.isIdentifier(node) ||
-            t.isMemberExpression(node) ||
-            t.isOptionalMemberExpression(node) ||
-            t.isFunctionExpression(node) ||
-            t.isArrowFunctionExpression(node) ||
-            t.isObjectExpression(node) ||
-            t.isArrayExpression(node)
-          )
-        )
-          return;
+        if (parent === null || !t.isExpression(node)) return;
         if (
           t.isIdentifier(node) &&
           !t.isReferenced(node, parent, state.parentsByNode.get(parent))
         )
           return;
-        let current = node;
-        while (
-          (t.isMemberExpression(parent) ||
-            t.isOptionalMemberExpression(parent)) &&
-          parent.object === current
-        ) {
+        let current: t.Node = node;
+        // Follow edges that select this value before deciding whether it is
+        // stored, consumed, or discarded. The expression's syntax alone does
+        // not distinguish an escaped instance from a local method receiver.
+        for (;;) {
           if (covered.has(current)) return;
+          if (
+            (t.isSequenceExpression(parent) &&
+              parent.expressions.at(-1) !== current) ||
+            (t.isConditionalExpression(parent) && parent.test === current) ||
+            (t.isExpressionStatement(parent) &&
+              parent.expression === current) ||
+            (t.isUnaryExpression(parent) &&
+              ["void", "typeof", "!"].includes(parent.operator)) ||
+            ((t.isIfStatement(parent) ||
+              t.isWhileStatement(parent) ||
+              t.isDoWhileStatement(parent)) &&
+              parent.test === current) ||
+            (t.isForStatement(parent) &&
+              (parent.init === current ||
+                parent.test === current ||
+                parent.update === current))
+          )
+            return;
+          if (
+            parent === null ||
+            !(
+              ((t.isMemberExpression(parent) ||
+                t.isOptionalMemberExpression(parent)) &&
+                parent.object === current) ||
+              unwrapJavaScriptExpression(parent).node === current ||
+              t.isSequenceExpression(parent) ||
+              t.isConditionalExpression(parent) ||
+              t.isLogicalExpression(parent) ||
+              (t.isAssignmentExpression(parent, { operator: "=" }) &&
+                parent.right === current &&
+                t.isIdentifier(parent.left) &&
+                resolveSemanticBindingState(
+                  state,
+                  parent.left,
+                  parent.left.name,
+                ) !== undefined)
+            )
+          )
+            break;
           current = parent;
           parent = state.parentsByNode.get(current) ?? null;
         }
-        if (covered.has(current)) return;
         if (
           (t.isVariableDeclarator(parent) &&
             parent.init === current &&
@@ -319,28 +346,31 @@ export const createSemanticReceiverReferences = (
             t.isClassPrivateProperty(parent) ||
             t.isClassAccessorProperty(parent)) &&
             parent.value === current) ||
+          t.isArrayExpression(parent) ||
+          (t.isSpreadElement(parent) &&
+            t.isArrayExpression(state.parentsByNode.get(parent))) ||
           (t.isClass(parent) && parent.superClass === current)
         ) {
           storedSources.push([node, parent]);
           return;
         }
+        if (escapedValues.has(current)) return;
+        escapedValues.add(current);
         // Literal invocation arrays can contain a consumed callable selection.
-        // Examine their leaves separately so the target is covered without
-        // hiding any other callable arguments or returned object contents.
-        const values = t.isArrayExpression(node)
-          ? node.elements.flatMap((element) =>
-              element === null
-                ? []
-                : [t.isSpreadElement(element) ? element.argument : element],
-            )
-          : [node];
-        for (const value of values) {
-          if (
-            t.isArrayExpression(node) &&
-            (covered.has(value) ||
-              t.isArrayExpression(unwrapJavaScriptExpression(value).node))
-          )
+        // Walk their leaves without hiding other arguments or nested contents.
+        const values = [current];
+        while (values.length > 0) {
+          const value = values.pop();
+          if (value === undefined || covered.has(value)) continue;
+          const unwrapped = unwrapJavaScriptExpression(value).node;
+          if (t.isArrayExpression(unwrapped)) {
+            for (const element of unwrapped.elements)
+              if (element !== null)
+                values.push(
+                  t.isSpreadElement(element) ? element.argument : element,
+                );
             continue;
+          }
           for (const target of contents(value)) retain(target, state.program);
         }
       },

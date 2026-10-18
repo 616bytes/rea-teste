@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
+import { createSemanticCallableTargets } from "./javascriptSemanticReturnedReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -40,6 +41,115 @@ describe("stored class-field receivers", () => {
     expect(analyze(setup)).toEqual([]);
   });
 });
+
+describe("escaped construction and invocation results", () => {
+  const local = "class C{set=function(){this.Q=other}};new C().set();";
+
+  it.each([
+    "consume(new C());",
+    "consume?.(new C());",
+    "use([new C()]);",
+    "consume({item:new C()});",
+    "globalThis.saved=new C();",
+    "let saved;saved=new C();consume(saved);",
+    "const box={};box.item=new C();consume(box);",
+    "let c;consume(c=new C());",
+    "let c;consume(c=Reflect.construct(C,[]));",
+    "let c;consume((c=new C()).set);",
+    "function make(){return new C()}consume(make());",
+    "const make=()=>new C();consume(make?.());",
+    "function make(){return new C()}globalThis.saved=make();",
+    "consume(flag?new C():null);",
+    "consume((0,new C()));",
+    "consume(flag&&new C());",
+    "consume(Reflect.construct(C,[]));",
+    "consume(Reflect.construct.call(null,C,[]));",
+    "const make=Reflect.construct;consume(make(C,[]));",
+    "const make=Reflect.construct.bind(null,C);consume(make([]));",
+    "function make(){return Reflect.construct(C,[])}consume(make());",
+    "function make(){return flag?new C():make()}consume(make());",
+    "consume([[new C()]]);",
+    "consume((flag?new C():new C()).set);",
+    "consume(class extends C{});",
+  ])("retains escaped result contents: %s", (escape) => {
+    expect(analyze(`${local}${escape}`)).toEqual([]);
+  });
+
+  it.each([
+    "new C();",
+    "Reflect.construct(C,[]);",
+    "const c=new C();c.set();",
+    "let c;c=new C();c.set();",
+    "const values=[new C()];values[0].set();",
+    "const box={item:new C()};box.item.set();",
+    "(new C(),0);",
+    "consume((new C(),0));",
+    "void new C();",
+    "(Reflect.construct(C,[]),0);",
+    "consume((Reflect.construct(C,[]),0));",
+    "if(new C()){}",
+    "!(new C());",
+    "typeof new C();",
+    "(flag?new C():new C()).set();",
+    "(0,new C()).set();",
+    "const values=[[new C()]];values[0][0].set();",
+    "let c;(c=new C()).set();",
+    "(class extends C{});",
+    "const Derived=class extends C{};new Derived().set();",
+  ])("keeps discarded and locally selected results separate: %s", (use) => {
+    expect(analyze(`${local}${use}`)).toMatchObject([{ channel: "kept" }]);
+  });
+
+  it("retains directly passed class fields with a shared source target", () => {
+    expect(
+      analyze(
+        "function set(){this.Q=other};new(class{set=set})().set();consume(class{set=set});",
+      ),
+    ).toEqual([]);
+  });
+});
+
+it.each([
+  ["function make(){return new C()}", "make()"],
+  ["function make(){return ()=>new C()}", "make()()"],
+  ["function make(){return {item:new C()}}", "make().item"],
+  ["function make(){return ()=>({item:new C()})}", "make()().item"],
+  ["function make(){return C}", "new (make())()"],
+  ["function make(){return flag?new C():make()}", "make()"],
+  [
+    "function make(){return again()}function again(){return flag?make():new C()}",
+    "make()",
+  ],
+])(
+  "expands source result contents with bounded contexts: %s",
+  (setup, result) => {
+    const parsed = parseJavaScriptSource(
+      `class C{set=function(){this.Q=other}};${setup};consume(${result});`,
+      "bundle.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const owner = parsed.program.body[0];
+    const member =
+      owner?.type === "ClassDeclaration" ? owner.body.body[0] : undefined;
+    const expected =
+      member?.type === "ClassProperty" ? member.value : undefined;
+    const statement = parsed.program.body.at(-1);
+    const call =
+      statement?.type === "ExpressionStatement"
+        ? statement.expression
+        : undefined;
+    const argument =
+      call?.type === "CallExpression" ? call.arguments[0] : undefined;
+    if (expected == null || argument == null)
+      throw new Error("Expected target and result");
+    const contents = createSemanticCallableTargets(index.bindings, "contents");
+    expect(contents(argument)).toContain(expected);
+    expect(contents(argument)).toContain(expected);
+  },
+);
 
 describe("normalized construction receivers", () => {
   it.each([

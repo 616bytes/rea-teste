@@ -47,7 +47,7 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
 </manifest>`;
 
 it("projects declared components with resolved names and export defaults", () => {
-  const inventory = parseAndroidManifestComponents(MANIFEST, "complete");
+  const inventory = parseAndroidManifestComponents(MANIFEST, "complete", "33");
   expect(inventory.status).toBe("complete");
   expect(inventory.limitations).toEqual([]);
   expect(inventory.items.map(({ kind, name }) => [kind, name])).toEqual([
@@ -62,19 +62,18 @@ it("projects declared components with resolved names and export defaults", () =>
   expect(inventory.items[0]).toMatchObject({
     declared_name: ".MainActivity",
     exported: true,
-    exported_by_intent_filter: true,
+    exported_default: true,
     actions: ["android.intent.action.MAIN"],
     categories: ["android.intent.category.LAUNCHER"],
   });
-  // Absent android:exported is the documented intent-filter default, not a
-  // declaration, so both fields are reported.
+  // Absent android:exported keeps the declaration and the default separate.
   expect(inventory.items[1]).toMatchObject({
     exported: null,
-    exported_by_intent_filter: true,
+    exported_default: true,
   });
   expect(inventory.items[2]).toMatchObject({
     exported: false,
-    exported_by_intent_filter: true,
+    exported_default: true,
   });
   expect(inventory.items[3]).toMatchObject({
     target_activity: ".MainActivity",
@@ -92,6 +91,43 @@ it("projects declared components with resolved names and export defaults", () =>
     "com.example.app.data",
     "com.example.app.backup",
   ]);
+});
+
+it("applies the provider export default from the target SDK", () => {
+  // API 16 and below default providers to exported; API 17 and up do not.
+  const legacy = parseAndroidManifestComponents(MANIFEST, "complete", "16");
+  expect(legacy.items[6]).toMatchObject({
+    kind: "provider",
+    exported: false,
+    exported_default: true,
+  });
+  const modern = parseAndroidManifestComponents(MANIFEST, "complete", "33");
+  expect(modern.items[6]?.exported_default).toBe(false);
+  // An unknown target SDK leaves the provider default unestablished.
+  const unknown = parseAndroidManifestComponents(MANIFEST, "complete", null);
+  expect(unknown.items[6]?.exported_default).toBeNull();
+  expect(unknown.limitations.join(" ")).toContain("export default");
+});
+
+it("ignores same-local-name attributes from other namespaces", () => {
+  const manifest = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android"',
+    '          xmlns:vendor="http://example.com/vendor"',
+    '          package="com.example.app">',
+    "  <application>",
+    '    <activity vendor:name=".Decoy" android:name=".Real" vendor:exported="true" android:exported="false" />',
+    "  </application>",
+    "</manifest>",
+  ].join("\n");
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(inventory.items).toHaveLength(1);
+  expect(inventory.items[0]).toMatchObject({
+    declared_name: ".Real",
+    name: "com.example.app.Real",
+    exported: false,
+    exported_default: false,
+  });
 });
 
 it("resolves relative names against the manifest package", () => {
@@ -140,10 +176,28 @@ it("bounds the component inventory and says so", () => {
   const inventory = parseAndroidManifestComponents(
     `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application>${repeated}</application></manifest>`,
     "complete",
+    "33",
   );
   expect(inventory.status).toBe("partial");
   expect(inventory.items).toHaveLength(ANDROID_MANIFEST_LIMITS.components);
   expect(inventory.limitations.join(" ")).toContain(
     String(ANDROID_MANIFEST_LIMITS.components),
+  );
+});
+
+it("counts unnamed declarations against the component bound", () => {
+  const unnamed = Array.from(
+    { length: ANDROID_MANIFEST_LIMITS.components + 1 },
+    () => "<activity />",
+  ).join("");
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application>${unnamed}</application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.status).toBe("partial");
+  expect(inventory.items).toHaveLength(0);
+  expect(inventory.limitations.join(" ")).toContain(
+    `${String(ANDROID_MANIFEST_LIMITS.components)} component`,
   );
 });

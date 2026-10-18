@@ -110,7 +110,7 @@ const manifestComponent = z.strictObject({
   declared_name: z.string().min(1),
   name: z.string().min(1),
   exported: z.boolean().nullable(),
-  exported_by_intent_filter: z.boolean(),
+  exported_default: z.boolean().nullable(),
   permission: z.string().nullable(),
   intent_filter_count: z.number().int().nonnegative(),
   actions: z.array(z.string()),

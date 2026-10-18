@@ -123,7 +123,11 @@ const inspectPackage = async (
     target_sdk: app.target_sdk || null,
     permissions: app.permissions,
     manifest,
-    components: parseAndroidManifestComponents(manifest.text, manifest.status),
+    components: parseAndroidManifestComponents(
+      manifest.text,
+      manifest.status,
+      app.target_sdk || null,
+    ),
     class_count: loaded.class_count,
     resource_count: loaded.resource_count,
     signature_verification: "not_performed",

@@ -12,7 +12,7 @@ Start a JEB client that serves MCP and point REA at it:
   - In official JEB Community Edition (CE) 5.48.0 (Linux x64), start the MCP server directly using its CLI `-c --mcp` route with explicit loopback binding and caller-selected target input:
     ```sh
     java -Xmx1536m -XX:ActiveProcessorCount=1 -jar bin/app/jeb.jar -c --mcp \
-      --interface=127.0.0.1 --port=18425 --infile=probe.elf
+      --interface=127.0.0.1 --port=8425 --infile=probe.elf
     ```
     This verified CE direct launch route provides native decompilation and unit listing, keeping CE native coverage distinct from licensed/Demo Android and GUI features.
   - In licensed JEB 5.48.0 distributions whose headless mode does not accept `--mcp` directly, use JEB's documented programmatic route (`JebMcpServerInstance` from the JEB API) with the JEB client on your classpath.

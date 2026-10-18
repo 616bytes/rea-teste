@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { access, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { RecordingHexRaysIdaMcp } from "../../tests/fixtures/idaHexRaysMcp.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
@@ -10,11 +10,33 @@ import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { runHexRaysQuery } from "./IdaHexRaysProtocol.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
 
 const roots: string[] = [];
+const windowsRuntimes = new Set<WindowsPrivateRuntime>();
+beforeEach(() => {
+  if (process.platform !== "win32") return;
+  const create = WindowsPrivateRuntime.create;
+  vi.spyOn(WindowsPrivateRuntime, "create").mockImplementation(
+    (parent, prefix) => {
+      const runtime = create(parent, prefix);
+      windowsRuntimes.add(runtime);
+      return runtime;
+    },
+  );
+});
 afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
+  try {
+    // A retained workspace keeps its native owner, which blocks rm on Windows.
+    for (const runtime of windowsRuntimes) {
+      await runtime.close();
+      windowsRuntimes.delete(runtime);
+    }
+    for (const root of roots.splice(0))
+      await rm(root, { recursive: true, force: true });
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 const fixture = async () => {

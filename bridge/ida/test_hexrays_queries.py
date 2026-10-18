@@ -97,6 +97,7 @@ def stand_ins():
     m["ida_loader"].PATH_TYPE_IDB = 1
     m["ida_loader"].get_path = lambda kind: "/private/input.i64"
     m["ida_nalt"].get_input_file_path = lambda: "/private/input"
+    m["ida_nalt"].retrieve_input_file_sha256 = lambda: bytes.fromhex("ab" * 32)
     m["ida_nalt"].get_imagebase = lambda: 0x400000
     m["ida_nalt"].get_root_filename = lambda: "input"
     m["ida_nalt"].get_tinfo = lambda tif, ea: False
@@ -228,12 +229,16 @@ class BridgeTest(unittest.TestCase):
             {
                 "status": "ok",
                 "input_path": "/private/input",
+                "input_sha256": "ab" * 32,
                 "idb_path": "/private/input.i64",
                 "imagebase": "0x400000",
                 "auto_analysis_ready": True,
                 "module": "input",
             },
         )
+        # A database that recorded no input hash reports none, not an empty digest.
+        sys.modules["ida_nalt"].retrieve_input_file_sha256 = lambda: None
+        self.assertIsNone(self.query("server_health", {})["input_sha256"])
         survey = self.query("survey_binary", {"detail_level": "minimal"})
         self.assertEqual(survey["segments"], [{"start": "0x1000", "end": "0x3000", "size": "0x2000"}])
         self.assertEqual(survey["statistics"], {"total_segments": 1})

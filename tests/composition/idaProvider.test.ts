@@ -380,7 +380,7 @@ describe("IDA database targets", () => {
     expect(listed.value.limitations).toContain(IDA_DATABASE_TARGET_LIMITATION);
     const open = producer.calls.find(({ name }) => name === "open_database");
     expect(open?.args.path).not.toBe(path);
-    expect(String(open?.args.path)).toMatch(
+    expect(String(open?.args.path).replaceAll("\\", "/")).toMatch(
       /rea-ida-[^/]+\/target\.exe\.i64$/u,
     );
 

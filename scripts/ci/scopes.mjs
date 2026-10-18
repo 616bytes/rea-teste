@@ -366,6 +366,12 @@ export const SCOPES = {
     "bridge/mitmproxy/**",
     "src/browser/history/**",
     "src/domain/webNetworkCapture*.ts",
+    // The verifier projects producer HARs through the api-surface view.
+    "src/domain/analysisView/WebNetworkApiSurfaceAccumulator.ts",
+    "src/domain/analysisView/webNetworkApiSurfaceView.ts",
+    "src/domain/analysisView/webNetworkRequestHeaderFacets.ts",
+    "src/domain/analysisView/analysisViewDataAdmission.ts",
+    "src/domain/asciiLowercase.ts",
     "src/domain/analysisError*.ts",
     "src/contracts/errorSchemas.ts",
     "src/domain/explicitSensitive*.ts",

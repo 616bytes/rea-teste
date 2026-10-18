@@ -935,6 +935,22 @@ async function inspect(mode, input, errorCategory) {
           projected.normalized_result.records.examined,
           value.normalized_result.records.length,
         );
+        const faceted = await client.callTool({
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: value.evidence_id,
+            },
+            view: { kind: "api-surface", request_header_facets: {} },
+          },
+        });
+        assert.notEqual(faceted.isError, true, mcpTextValue(faceted));
+        assertValueFreeHeaderFacets(
+          JSON.parse(mcpTextValue(faceted)).normalized_result,
+          projected.normalized_result,
+          value.normalized_result.records,
+        );
       }
     }
     return value.normalized_result;
@@ -1008,6 +1024,32 @@ function assertSensitiveLimitations(evidence, literals) {
       texts.every((text) => !text.includes(literal)),
       "Declared literal retained in authored limitations",
     );
+}
+
+/** Header facets add names and value shapes, never a recorded header or cookie value. */
+function assertValueFreeHeaderFacets(faceted, plain, records) {
+  assert.equal(faceted.records.examined, plain.records.examined);
+  assert.equal(faceted.groups.length, plain.groups.length);
+  for (const group of faceted.groups)
+    assert.equal(group.request_header_facets.scope, "script-settable");
+  const facetText = JSON.stringify(faceted.groups);
+  const plainText = JSON.stringify(plain.groups);
+  for (const record of records) {
+    const request = record.reported?.request ?? {};
+    for (const entry of [
+      ...(request.headers ?? []),
+      ...(request.cookies ?? []),
+    ]) {
+      const value = Array.isArray(entry) ? entry[1] : entry?.value;
+      if (typeof value !== "string" || value === "") continue;
+      const literal = JSON.stringify(value);
+      if (plainText.includes(literal)) continue;
+      assert.ok(
+        !facetText.includes(literal),
+        "Header facets repeated a recorded value",
+      );
+    }
+  }
 }
 
 function assertBinary(record, pointer, bytes) {

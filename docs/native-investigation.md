@@ -634,6 +634,24 @@ because a JSON number cannot carry the sign of zero. `inspect_plist` and
 Builder node attributes use the same value. Positive zero and integer zero,
 including an `<integer>-0</integer>` literal, remain the number `0`.
 
+Known non-finite reals are reported as
+`{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.
+These are canonical numeric labels, not a claim about original source spelling.
+Binary IEEE reals retain NaN versus signed infinity; NaN payload bits and sign
+are not represented in the JSON value, and the original bytes remain the source
+for those details. XML CFPropertyList literals (`nan`, `+infinity`, `-infinity`,
+`infinity`, `inf`, `+inf`, `-inf`, case-insensitively) decode to the same known
+values. Case and aliases normalize; original archive bytes retain source text.
+
+XML numeric text whose identity the decoder cannot establish, including
+unrecognized non-finite text and finite literals that overflow the numeric
+representation, remains `{ "$plist_type": "real", "value": null }` with a
+counted limitation. The XML decoder marks these values explicitly before shared
+projection, so they cannot be confused with known binary IEEE values.
+Incomplete numeric markup retains its existing compatibility behavior described
+above. Known non-finite and unresolved numeric values have separate counts.
+Native `inspect_plist` uses these same labels for plutil's XML conversion.
+
 ## Locate a byte signature
 
 Use `search_bytes` after opening a target with Ghidra to locate a known constant

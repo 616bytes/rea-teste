@@ -581,9 +581,11 @@ Evidence. Select its Evidence ID, then request a pseudocode page:
 
 Call `inspect_analysis_view` with that input and first inspect
 `normalized_result.item` in the Evidence envelope. An unavailable facet, including
-pseudocode, returns a singleton status object (`{available: false, reason}`)
-instead of text or rows. Unrecorded optional collections return that status too.
-Preserve the status and reason as an explicit unknown. For available pseudocode,
+pseudocode, returns a singleton status object with at least `available: false`
+and `reason`, instead of text or rows. Unrecorded optional collections return
+that status too. Preserve the entire item as explicit unknowns: unavailable
+`native_api` also carries `residual_unknowns` describing unresolved boundary types
+and jump-table mappings. For available pseudocode,
 follow `normalized_result.coverage.next_offset`; offsets and limits count UTF-16
 code units. Available assembly and recorded collection data use row pages.
 Singleton facets `procedure`, `native_api`, and `value_flow_summary`

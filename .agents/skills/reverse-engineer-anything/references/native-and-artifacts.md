@@ -83,10 +83,12 @@ For a large completed `analyze_function` dossier, retain its Evidence ID and rea
 `inspect_analysis_view` with `source: {kind: "retained-evidence", evidence_id: ID}`
 and `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`.
 First inspect the returned Evidence envelope's `normalized_result.item`. An
-unavailable facet, including pseudocode, returns a singleton status object
-(`{available: false, reason}`) instead of text or rows. Unrecorded optional
-collections return that status too. Preserve the status and reason as an explicit
-unknown. For available pseudocode, follow `normalized_result.coverage.next_offset`;
+unavailable facet, including pseudocode, returns a singleton status object with
+at least `available: false` and `reason`, instead of text or rows. Unrecorded
+optional collections return that status too. Preserve the entire item as explicit
+unknowns: unavailable `native_api` also carries `residual_unknowns` describing
+unresolved boundary types and jump-table mappings. For available pseudocode,
+follow `normalized_result.coverage.next_offset`;
 text offsets and limits count UTF-16 code units, not bytes or lines. Available
 assembly and recorded collection data use row pages. Singleton facets
 `procedure`, `native_api`, and `value_flow_summary` require offset 0. Paging

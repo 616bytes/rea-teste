@@ -393,6 +393,9 @@ it("advertises and returns native singleton and unavailable item shapes", async 
   expect(advertised?.description).toContain(
     "Unavailable facets (including pseudocode)",
   );
+  expect(advertised?.description).toContain(
+    "Preserve the entire unavailable item, including native_api.residual_unknowns",
+  );
   const parent = analysisViewNativeEvidence();
   expect(session.recordEvidence(parent).ok).toBe(true);
   for (const facet of ["procedure", "native_api", "value_flow_summary"]) {
@@ -439,6 +442,14 @@ it("advertises and returns native singleton and unavailable item shapes", async 
       result: {
         ...functionDossierSchema.parse(parent.normalized_result),
         pseudocode: "",
+        native_api: {
+          available: false,
+          reason: "Controlled external or bodyless procedure",
+          residual_unknowns: [
+            "Return and parameter boundary types are unavailable.",
+            "Jump-table mappings are unavailable.",
+          ],
+        },
         facet_availability: {
           pseudocode: {
             available: false,
@@ -462,6 +473,32 @@ it("advertises and returns native singleton and unavailable item shapes", async 
     item: { available: false, reason: "Controlled unavailable pseudocode" },
     unknowns: expect.arrayContaining(["Controlled unavailable pseudocode"]),
   });
+  expect(session.recordEvidence(unavailable).ok).toBe(true);
+  for (const source of [
+    { kind: "inline", evidence: unavailable },
+    { kind: "retained-evidence", evidence_id: unavailable.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: { kind: "native", facet: "native_api", offset: 0, limit: 32 },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const view = parseEvidence(response.structuredContent).normalized_result;
+    const boundary = functionDossierSchema.parse(
+      unavailable.normalized_result,
+    ).native_api;
+    expect(z.object({ item: z.unknown() }).parse(view).item).toEqual(boundary);
+    expect(view).toMatchObject({
+      unknowns: expect.arrayContaining([
+        "native_api unavailable: Controlled external or bodyless procedure",
+        "Return and parameter boundary types are unavailable.",
+        "Jump-table mappings are unavailable.",
+      ]),
+    });
+  }
 });
 
 it("advertises exact schemas and projects one layout section from retained Evidence", async () => {

@@ -268,6 +268,25 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     expect(view).toBe("unknown");
   });
 
+  it("does not count an ordinary copy reached after the private file was deleted as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let deleted = false;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        // The redirected view falls through to the ordinary AppData copy.
+        if (path === join(env.APPDATA, telemetry)) deleted = true;
+        return path;
+      },
+      lstat: (path) => {
+        if (deleted && path === join(privateRoaming, telemetry))
+          throw failure("ENOENT");
+        return fileSystem.lstat(path);
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+
   it("skips a folder that cannot be listed and decides from another", () => {
     const fileSystem = roamingFileSystem(
       [join("Microsoft", "locked", "x"), telemetry],

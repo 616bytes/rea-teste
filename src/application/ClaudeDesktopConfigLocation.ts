@@ -192,13 +192,13 @@ const processView = (
     try {
       if (fileSystem.realpath(join(appDataRoaming, probe)) === privateTarget)
         return "redirected";
-      view = "direct";
     } catch (cause: unknown) {
       if (!isMissing(cause)) return "unknown";
-      // A private file deleted meanwhile is missing from a redirected view too.
-      if (!isPrivateFile(fileSystem, privateRoaming, probe)) continue;
-      view = "direct";
     }
+    // A private file deleted meanwhile no longer shadows its AppData path, so a
+    // redirected view would also miss it or reach an ordinary copy there.
+    if (!isPrivateFile(fileSystem, privateRoaming, probe)) continue;
+    view = "direct";
   }
   return view;
 };

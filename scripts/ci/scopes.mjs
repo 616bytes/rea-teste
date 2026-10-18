@@ -161,6 +161,7 @@ export const SCOPES = {
     "tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts",
     "tests/boundary/providers/ghidra/ghidraLauncher.test.ts",
     "tests/fixtures/fakeGhidra.mjs",
+    "tests/fixtures/ghidraRuntime.ts",
     "tests/boundary/providers/ghidra/ghidraClient.fixture.ts",
     "tests/boundary/providers/ghidra/ghidraClient.test.ts",
     "tests/boundary/mcp/ghidraStartupCancellationMcp.test.ts",

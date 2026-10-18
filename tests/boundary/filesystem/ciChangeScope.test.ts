@@ -1258,6 +1258,7 @@ const stepRuns = z.object({
 
 it.each([
   "tests/fixtures/fakeGhidra.mjs",
+  "tests/fixtures/ghidraRuntime.ts",
   "tests/boundary/providers/ghidra/ghidraClient.fixture.ts",
   "tests/boundary/providers/ghidra/ghidraClient.test.ts",
   "tests/boundary/mcp/ghidraStartupCancellationMcp.test.ts",

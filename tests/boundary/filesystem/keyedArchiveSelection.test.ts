@@ -318,7 +318,7 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
-it("keeps an archive readable while preserving an observed non-finite real", async () => {
+it("keeps an archive readable while preserving a known non-finite real", async () => {
   const root = await bundle();
   const bytes = Buffer.from(
     build({

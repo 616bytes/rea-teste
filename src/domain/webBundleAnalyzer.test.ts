@@ -4367,6 +4367,116 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "frozen member target blocks later wait",
+    "'use strict';const box={};Object.freeze(box);(async()=>{let y;[box.x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "parameter default cannot read later parameter",
+    "(async(x=(later,globalThis.WebSocket),later)=>{new x(URL)})();",
+    false,
+  ],
+  [
+    "plain member write permits later wait",
+    "const box={};(async()=>{let y;[box.x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "null prototype member write resumes generator",
+    "let next;const box={__proto__:null};(async()=>{[box.x=await 0,next]=(function*(){yield undefined;new Socket(URL)})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "parameter write permits later wait",
+    "(async(x)=>{let y;[x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing member setter blocks later wait",
+    "const box={set x(v){throw 0}};(async()=>{let y;[box.x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unbraced loop wait precedes update",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++)await 0})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "continue after wait reaches update",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++){await 0;continue}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "conditional continue after wait reaches update",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++){await 0;if(skip)continue}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "switch discriminant throw enters waiting catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{switch(null.value){}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "switch test throw enters waiting catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{switch(0){case null.value:break}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unreachable switch continue cannot resume",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 1:await 0;continue;default:break}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "matched switch continue resumes",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(1){case 1:await 0;continue;default:break}break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "switch fallthrough reaches waiting continue",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 0:;case 1:await 0;continue;default:break}break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bigint pattern closes before later wait",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield 1n;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "negative bigint pattern closes before later wait",
+    "(async()=>{const[[x],y=await 0]=(function*(){try{yield -1n;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing pattern getter blocks later wait",
+    "(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){throw 0}};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "inert pattern getter permits later wait",
+    "(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){return 0}};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unary plus numeric sequence prefix",
+    "new(+1,globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "unary plus bigint sequence prefix throws",
+    "new(+1n,globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
+    "post default case test precedes default selection",
+    "(async()=>{switch(1){default:;case await 0:new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "matching case bypasses later default test",
+    "(async()=>{switch(1){case 1:;default:;case await 0:new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "returned arrow is immediately invoked",
     "(()=>()=>new Socket(URL))()();const Socket=globalThis.WebSocket;",
     false,

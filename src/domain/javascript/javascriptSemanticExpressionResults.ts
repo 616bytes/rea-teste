@@ -4,6 +4,8 @@ import { syntaxEvaluationCannotThrow } from "./javascriptSymbolicControlFlow.js"
 import {
   javaScriptExactResultOperand,
   unwrapJavaScriptExpression,
+  semanticStaticPropertyKey,
+  semanticFinalObjectMember,
 } from "./javascriptAstValues.js";
 import {
   semanticInitializerPrecedesRead,
@@ -11,6 +13,7 @@ import {
 } from "./javascriptSemanticEvaluationOrder.js";
 import {
   resolveSemanticBindingState,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -37,6 +40,28 @@ const bindingInitializedBeforeRead = (
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
   if (binding.runtimeImport) return false;
+  if (
+    binding.kind === "parameter" &&
+    binding.definitionNodes.some((definition) => {
+      const owner = state.parentsByNode.get(definition);
+      if (!t.isFunction(owner)) return false;
+      let current: t.Node | undefined = node;
+      while (
+        current !== undefined &&
+        state.parentsByNode.get(current) !== owner
+      )
+        current = state.parentsByNode.get(current);
+      return (
+        t.isFunction(owner) &&
+        owner.params.includes(definition as t.Identifier) &&
+        current === owner.body &&
+        (executionFrames?.(node) ?? [lexicalFrame(node, state)]).some(
+          (frame) => frame.owner === owner,
+        )
+      );
+    })
+  )
+    return true;
   if (binding.declarationKinds.has("var")) return true;
   if (
     binding.definitionNodes.some((definition) => {
@@ -75,23 +100,91 @@ const bindingInitializedBeforeRead = (
   });
 };
 
-/** Parameters, private names and arbitrary setters still need different completion proofs. */
-export const semanticAssignmentTargetCanComplete = (
-  targetNode: t.Node,
+/** Fresh unescaped literal data slots are writable; arbitrary setters stay unproven. */
+const memberAssignmentCanComplete = (
+  target: t.MemberExpression,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
-  const target = unwrapJavaScriptExpression(targetNode).node;
-  if (!t.isIdentifier(target)) return false;
-  const binding = resolveSemanticBindingState(state, target, target.name);
-  return (
-    binding !== undefined &&
-    ![...binding.declarationKinds].some(
-      (kind) => kind === "const" || kind === "using" || kind === "await using",
-    ) &&
-    bindingInitializedBeforeRead(binding, read, state, executionFrames)
+  const key = semanticStaticPropertyKey(target.property, target.computed);
+  if (key === null || key === "__proto__" || !t.isIdentifier(target.object))
+    return false;
+  const binding = resolveSemanticBindingState(
+    state,
+    target.object,
+    target.object.name,
   );
+  const initializer = semanticStableInitializer(binding, state);
+  if (
+    binding === undefined ||
+    initializer === undefined ||
+    initializer.projection.length !== 0 ||
+    !binding.declarationKinds.has("const") ||
+    binding.escapedPaths.length !== 0 ||
+    !bindingInitializedBeforeRead(binding, read, state, executionFrames)
+  )
+    return false;
+  const object = unwrapJavaScriptExpression(initializer.node).node;
+  if (
+    !t.isObjectExpression(object) ||
+    !syntaxEvaluationCannotThrow(object) ||
+    object.properties.some(
+      (property) =>
+        t.isSpreadElement(property) ||
+        semanticStaticPropertyKey(property.key, property.computed) === null,
+    )
+  )
+    return false;
+  const member = semanticFinalObjectMember(object, key, "set");
+  if (
+    t.isObjectProperty(member) ||
+    (t.isObjectMethod(member) && member.kind === "method")
+  )
+    return true;
+  if (
+    member !== undefined ||
+    semanticFinalObjectMember(object, key, "get") !== undefined
+  )
+    return false;
+  const prototype = object.properties.find(
+    (property) =>
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand &&
+      semanticStaticPropertyKey(property.key, false) === "__proto__",
+  );
+  return prototype === undefined
+    ? !state.ambientWrites.covers(["global", "Object", "prototype", key]) &&
+        !state.ambientEscapes.covers(["global", "Object", "prototype", key])
+    : t.isObjectProperty(prototype) && t.isNullLiteral(prototype.value);
+};
+
+/** Assignment result and pattern progress use the same completed target proof. */
+export const semanticAssignmentTargetCompletion = (
+  targetNode: t.Node,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): "completed" | "abrupt" | "unknown" => {
+  const target = unwrapJavaScriptExpression(targetNode).node;
+  if (t.isMemberExpression(target))
+    return memberAssignmentCanComplete(target, read, state, executionFrames)
+      ? "completed"
+      : "unknown";
+  if (!t.isIdentifier(target)) return "unknown";
+  const binding = resolveSemanticBindingState(state, target, target.name);
+  if (binding === undefined) return "unknown";
+  if (
+    binding.runtimeImport ||
+    [...binding.declarationKinds].some(
+      (kind) => kind === "const" || kind === "using" || kind === "await using",
+    )
+  )
+    return "abrupt";
+  return bindingInitializedBeforeRead(binding, read, state, executionFrames)
+    ? "completed"
+    : "unknown";
 };
 
 const prefixCanComplete = (
@@ -111,12 +204,12 @@ const prefixCanComplete = (
   return (
     t.isAssignmentExpression(node) &&
     node.operator === "=" &&
-    semanticAssignmentTargetCanComplete(
+    semanticAssignmentTargetCompletion(
       node.left,
       node,
       state,
       executionFrames,
-    ) &&
+    ) === "completed" &&
     prefixCanComplete(node.right, state, executionFrames)
   );
 };
@@ -135,12 +228,14 @@ export const semanticExactResultOperand = (
       .every((prefix) => prefixCanComplete(prefix, state, executionFrames))
   )
     return undefined;
-  return javaScriptExactResultOperand(node, (assignment) =>
-    semanticAssignmentTargetCanComplete(
-      assignment.left,
-      assignment,
-      state,
-      executionFrames,
-    ),
+  return javaScriptExactResultOperand(
+    node,
+    (assignment) =>
+      semanticAssignmentTargetCompletion(
+        assignment.left,
+        assignment,
+        state,
+        executionFrames,
+      ) === "completed",
   );
 };

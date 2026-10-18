@@ -249,6 +249,101 @@ const syntaxIfCompletion = (
   };
 };
 
+interface SwitchEntry {
+  readonly index: number;
+  readonly testCount: number;
+}
+const switchSelections = new WeakMap<
+  t.SwitchStatement,
+  { entries: readonly SwitchEntry[]; tests: readonly t.Node[] }
+>();
+
+/** Selection evaluates tests on both sides of default before choosing its entry. */
+const syntaxSwitchEntries = (node: t.SwitchStatement) => {
+  const cached = switchSelections.get(node);
+  if (cached !== undefined) return cached;
+  const discriminant = readExactJavaScriptLiteral(node.discriminant);
+  const entries: SwitchEntry[] = [];
+  const tests: t.Node[] = [];
+  let fallback = node.cases.length;
+  for (const [index, item] of node.cases.entries()) {
+    if (item.test == null) {
+      fallback = index;
+      continue;
+    }
+    tests.push(item.test);
+    const value = readExactJavaScriptLiteral(item.test);
+    if (discriminant.found && value.found) {
+      if (discriminant.value !== value.value) continue;
+      entries.push({ index, testCount: tests.length });
+      const result = { entries, tests };
+      switchSelections.set(node, result);
+      return result;
+    }
+    entries.push({ index, testCount: tests.length });
+  }
+  entries.push({ index: fallback, testCount: tests.length });
+  const result = { entries, tests };
+  switchSelections.set(node, result);
+  return result;
+};
+
+/** Only entries that can fall through to this body contribute test prerequisites. */
+export const syntaxSwitchCaseTests = (
+  node: t.SwitchStatement,
+  selected: t.SwitchCase,
+): readonly t.Node[] => {
+  const index = node.cases.indexOf(selected);
+  let firstReachable = 0;
+  for (let prior = 0; prior < index; prior += 1)
+    if (!syntaxCompletion(node.cases[prior], 0).normal)
+      firstReachable = prior + 1;
+  const { entries, tests } = syntaxSwitchEntries(node);
+  const reaching = entries.filter(
+    (entry) => entry.index >= firstReachable && entry.index <= index,
+  );
+  return reaching.length === 0
+    ? []
+    : tests.slice(
+        0,
+        reaching.reduce(
+          (count, entry) => Math.min(count, entry.testCount),
+          tests.length,
+        ),
+      );
+};
+
+const syntaxSwitchCompletion = (
+  node: t.SwitchStatement,
+  complete: CompleteSyntax,
+): SyntaxCompletion => {
+  const { entries, tests } = syntaxSwitchEntries(node);
+  const starts = new Set(entries.map((entry) => entry.index));
+  let normal = false;
+  const abrupt: SyntaxAbruptCompletion[] = [];
+  if (
+    !syntaxEvaluationCannotThrow(node.discriminant) ||
+    tests.some((test) => !syntaxEvaluationCannotThrow(test))
+  )
+    abrupt.push({ kind: "throw" });
+  let active = false;
+  for (const [index, item] of node.cases.entries()) {
+    active ||= starts.has(index);
+    if (!active) continue;
+    const route = complete(item);
+    normal ||= route.abrupt.some(
+      (exit) => exit.kind === "break" && exit.label === null,
+    );
+    abrupt.push(
+      ...route.abrupt.filter(
+        (exit) => exit.kind !== "break" || exit.label !== null,
+      ),
+    );
+    active = route.normal;
+  }
+  return { normal: normal || active || starts.has(node.cases.length), abrupt };
+};
+
 /** Each structured statement consumes its own jumps before facts escape it. */
 const syntaxCompletion = (
   node: t.Node | null | undefined,
@@ -287,15 +382,7 @@ const syntaxCompletion = (
   if (t.isIfStatement(node)) return syntaxIfCompletion(node, complete);
   if (t.isTryStatement(node)) return syntaxTryCompletion(node, complete);
   if (t.isLoop(node)) return syntaxLoopCompletion(node, complete);
-  if (t.isSwitchStatement(node))
-    return {
-      normal: true,
-      abrupt: node.cases.flatMap((item) =>
-        syntaxSequenceCompletion(item.consequent, complete).abrupt.filter(
-          (exit) => exit.kind !== "break" || exit.label !== null,
-        ),
-      ),
-    };
+  if (t.isSwitchStatement(node)) return syntaxSwitchCompletion(node, complete);
   if (t.isLabeledStatement(node))
     return syntaxLabeledCompletion(node, complete);
   if (t.isWithStatement(node)) return complete(node.body);
@@ -468,6 +555,8 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
             member.value == null ||
             syntaxEvaluationCannotThrow(member.value)),
       )) ||
+    (t.isUnaryExpression(node, { operator: "+" }) &&
+      t.isNumericLiteral(node.argument)) ||
     (t.isUnaryExpression(node, { operator: "-" }) &&
       (t.isNumericLiteral(node.argument) || t.isBigIntLiteral(node.argument)));
   if (t.isObjectExpression(node))

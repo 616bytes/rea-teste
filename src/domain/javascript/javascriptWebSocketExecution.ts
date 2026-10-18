@@ -36,6 +36,7 @@ import {
   syntaxAlwaysThrows,
   syntaxMayReachNextIteration,
   syntaxMayContinue,
+  syntaxSwitchCaseTests,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -466,11 +467,13 @@ const webSocketSuspensionPrefixes = new WeakMap<
 
 /** Break/return/throw paths bypass updates; only a continuing path can skip its wait. */
 const webSocketUpdateSuspension = (
-  body: t.BlockStatement,
+  body: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): WebSocketSuspension | undefined =>
   syntaxMayContinue(body)
-    ? undefined
+    ? t.isBlockStatement(body)
+      ? webSocketEveryExitSuspension(body)
+      : undefined
     : webSocketCompletedSuspension(body, state);
 
 /** Index sibling phases once rather than rescan a suspended body per socket. */
@@ -507,17 +510,14 @@ const webSocketPrecedingSuspension = (
     parent.cases.includes(child as t.SwitchCase)
   )
     return webSocketCompletedSuspension(parent.discriminant, state);
-  if (t.isSwitchCase(parent) && child !== parent.test && parent.test != null) {
+  if (t.isSwitchCase(parent) && child !== parent.test) {
     const selection = state.parentsByNode.get(parent);
     if (t.isSwitchStatement(selection)) {
-      const index = selection.cases.indexOf(parent);
-      const preceding = selection.cases[index - 1];
-      // Earlier matching cases may fall through without evaluating this test.
-      if (
-        index === 0 ||
-        (preceding !== undefined && !syntaxMayCompleteNormally(preceding))
-      ) {
-        const suspension = webSocketCompletedSuspension(parent.test, state);
+      for (const test of syntaxSwitchCaseTests(
+        selection,
+        parent,
+      ).toReversed()) {
+        const suspension = webSocketCompletedSuspension(test, state);
         if (suspension !== undefined) return suspension;
       }
     }
@@ -545,9 +545,7 @@ const webSocketPrecedingSuspension = (
       (t.isForStatement(parent) && child === parent.update))
   )
     return (
-      (t.isForStatement(parent) &&
-      child === parent.update &&
-      t.isBlockStatement(parent.body)
+      (t.isForStatement(parent) && child === parent.update
         ? webSocketUpdateSuspension(parent.body, state)
         : undefined) ??
       (parent.test == null

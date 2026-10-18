@@ -5,6 +5,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
   javaScriptExactResultOperand,
+  semanticDirectFunctionReturn,
 } from "./javascriptAstValues.js";
 import {
   syntaxEvaluationCannotThrow,
@@ -16,7 +17,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { semanticLiteralProjectionSlot } from "./javascriptSemanticLiteralProjection.js";
-import { semanticAssignmentTargetCanComplete } from "./javascriptSemanticExpressionResults.js";
+import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
 
 interface PatternWaitCache {
@@ -118,6 +119,7 @@ const generatorPrefixes = (
 
 type PatternValue = {
   readonly known: boolean;
+  readonly completionUnknown?: boolean;
   readonly node?: t.Node;
   readonly restStartIndex?: number;
   readonly ownedResultEscape?: t.Node;
@@ -169,15 +171,19 @@ const noniterablePatternValue = (
   if (!value.known || value.node === undefined) return false;
   const node = patternValueNode(value.node);
   const literal = readExactJavaScriptLiteral(node);
-  if (literal.found) {
+  const bigint =
+    t.isBigIntLiteral(node) ||
+    (t.isUnaryExpression(node, { operator: "-" }) &&
+      t.isBigIntLiteral(node.argument));
+  if (literal.found || bigint) {
     const boxed =
-      typeof literal.value === "number"
+      !bigint && literal.found && typeof literal.value === "number"
         ? "Number"
-        : typeof literal.value === "boolean"
+        : !bigint && literal.found && typeof literal.value === "boolean"
           ? "Boolean"
           : "BigInt";
     return (
-      typeof literal.value !== "string" &&
+      (bigint || (literal.found && typeof literal.value !== "string")) &&
       [boxed, "Object"].every(
         (name) =>
           !state.ambientWrites.covers(["global", name, "prototype", null]) &&
@@ -232,6 +238,12 @@ const patternPropertyValue = (
         : { ownedResultEscape: value.ownedResultEscape }),
     };
   if (selected.kind === "undefined") return { known: true };
+  if (selected.kind === "accessor") {
+    const returned = semanticDirectFunctionReturn(selected.node);
+    return returned !== undefined && syntaxEvaluationCannotThrow(returned)
+      ? { known: true, node: returned }
+      : { known: false, completionUnknown: true };
+  }
   return { known: false };
 };
 
@@ -262,21 +274,26 @@ type PatternCompletion =
   | "completed"
   | "suspended"
   | "blocked"
-  | "suspended-blocked";
+  | "suspended-blocked"
+  | "unproven"
+  | "suspended-unproven";
 const patternSuspended = (phase: PatternCompletion): boolean =>
-  phase === "suspended" || phase === "suspended-blocked";
-const patternBlocked = (phase: PatternCompletion): boolean =>
-  phase === "blocked" || phase === "suspended-blocked";
+  phase === "suspended" ||
+  phase === "suspended-blocked" ||
+  phase === "suspended-unproven";
+const patternStopped = (phase: PatternCompletion): boolean =>
+  phase !== "completed" && phase !== "suspended";
 const combinePatternCompletion = (
   before: PatternCompletion,
   after: PatternCompletion,
 ): PatternCompletion => {
-  if (patternBlocked(before)) return before;
-  return patternSuspended(before) || patternSuspended(after)
-    ? patternBlocked(after)
-      ? "suspended-blocked"
-      : "suspended"
-    : after;
+  if (patternStopped(before)) return before;
+  if (!patternSuspended(before) || patternSuspended(after)) return after;
+  return after === "blocked"
+    ? "suspended-blocked"
+    : after === "unproven"
+      ? "suspended-unproven"
+      : "suspended";
 };
 const patternExpressionCompletion = (
   node: t.Node,
@@ -301,14 +318,14 @@ const patternCompletedSuspension = (
   targetPath?: ReadonlySet<t.Node>,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): PatternCompletion => {
-  if (depth >= 128) return "blocked";
+  if (depth >= 128 || value.completionUnknown) return "unproven";
   if (pattern === target) return "completed";
   if (t.isAssignmentPattern(pattern)) {
     const selectsDefault = undefinedPatternValue(value, state);
     const prefix = selectsDefault
       ? patternExpressionCompletion(pattern.right, suspended)
       : "completed";
-    if (patternBlocked(prefix)) return prefix;
+    if (patternStopped(prefix)) return prefix;
     return combinePatternCompletion(
       prefix,
       patternCompletedSuspension(
@@ -335,7 +352,7 @@ const patternCompletedSuspension = (
           phase,
           patternExpressionCompletion(property.key, suspended),
         );
-      if (patternBlocked(phase)) return phase;
+      if (patternStopped(phase)) return phase;
       const key = semanticStaticPropertyKey(property.key, property.computed);
       const completion = patternCompletedSuspension(
         property.value,
@@ -350,7 +367,7 @@ const patternCompletedSuspension = (
         executionFrames,
       );
       phase = combinePatternCompletion(phase, completion);
-      if (patternBlocked(phase)) return phase;
+      if (patternStopped(phase)) return phase;
       if (targetPath?.has(property)) return phase;
     }
   }
@@ -372,7 +389,7 @@ const patternCompletedSuspension = (
         executionFrames,
       );
       phase = combinePatternCompletion(phase, completion);
-      if (patternBlocked(phase)) return phase;
+      if (patternStopped(phase)) return phase;
       if (targetPath?.has(element)) return phase;
     }
   }
@@ -385,19 +402,19 @@ const patternCompletedSuspension = (
       !t.isFunction(owner)
     )
       owner = state.parentsByNode.get(owner);
-    if (
-      t.isAssignmentExpression(owner) &&
-      !semanticAssignmentTargetCanComplete(
+    if (t.isAssignmentExpression(owner)) {
+      const completion = semanticAssignmentTargetCompletion(
         pattern,
         pattern,
         state,
         executionFrames,
-      )
-    )
-      return combinePatternCompletion(
-        patternExpressionCompletion(pattern, suspended),
-        "blocked",
       );
+      if (completion !== "completed")
+        return combinePatternCompletion(
+          patternExpressionCompletion(pattern, suspended),
+          completion === "abrupt" ? "blocked" : "unproven",
+        );
+    }
   }
   return phase;
 };
@@ -512,7 +529,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
       executionFrames,
     );
     if (patternSuspended(completion)) firstWait ??= index;
-    if (patternBlocked(completion)) {
+    if (patternStopped(completion)) {
       blockedAt = index;
       break;
     }

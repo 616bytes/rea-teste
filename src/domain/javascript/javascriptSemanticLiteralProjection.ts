@@ -4,6 +4,7 @@ import * as t from "@babel/types";
 import {
   semanticLiteralContainer,
   semanticLiteralProperty,
+  semanticFinalObjectMember,
 } from "./javascriptAstValues.js";
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
@@ -18,6 +19,7 @@ import type {
 
 type LiteralProjectionSlot =
   | { readonly kind: "value"; readonly node: t.Node }
+  | { readonly kind: "accessor"; readonly node: t.ObjectMethod }
   | { readonly kind: "undefined" }
   | { readonly kind: "unknown" | "invalid" };
 
@@ -78,6 +80,11 @@ export const semanticLiteralProjectionSlot = (
     return { kind: "invalid" };
   const value = semanticLiteralProperty(node, key, exactResult);
   if (value !== undefined) return { kind: "value", node: value };
+  if (t.isObjectExpression(container)) {
+    const member = semanticFinalObjectMember(container, String(key));
+    if (t.isObjectMethod(member) && member.kind === "get")
+      return { kind: "accessor", node: member };
+  }
   // Iterator exhaustion ignores inherited indexed properties; a hole within
   // the length does not. Spreads leave the actual length unknown.
   if (
@@ -108,7 +115,8 @@ export const semanticLiteralInitializerProjection = (
       state,
       onLiteralProjection === undefined ? undefined : { onLiteralProjection },
     );
-    if (selected.kind === "invalid") return undefined;
+    if (selected.kind === "invalid" || selected.kind === "accessor")
+      return undefined;
     if (selected.kind !== "value") break;
     node = selected.node;
     projection = projection.slice(1);

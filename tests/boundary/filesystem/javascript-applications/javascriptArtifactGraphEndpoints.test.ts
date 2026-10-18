@@ -682,6 +682,77 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "completion-member-write.js",
+    source:
+      'const box={};(async()=>{let y;[box.x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-null-prototype-write.js",
+    source:
+      'let next;const box={__proto__:null};(async()=>{[box.x=await 0,next]=(function*(){yield undefined;new Socket("wss://example.test/review-latest")})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-parameter-write.js",
+    source:
+      '(async(x)=>{let y;[x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-unbraced-update.js",
+    source:
+      '(async()=>{for(let i=0;i<1;new Socket("wss://example.test/review-latest"),i++)await 0})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-continue-update.js",
+    source:
+      '(async()=>{for(let i=0;i<1;new Socket("wss://example.test/review-latest"),i++){await 0;continue}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-switch-catch.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{switch(null.value){}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-unreachable-switch.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){switch(0){case 1:await 0;continue;default:break}break}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completion-bigint-pattern.js",
+    source:
+      '(async()=>{const[[x],y=await 0]=(function*(){try{yield 1n;yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completion-getter-pattern.js",
+    source:
+      '(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){throw 0}};yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completion-inert-getter-pattern.js",
+    source:
+      '(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){return 0}};yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "completion-numeric-prefix.js",
+    source: 'new(+1,globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "completion-post-default-test.js",
+    source:
+      '(async()=>{switch(1){default:;case await 0:new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "completion-adoption-0.js",
     source:
       '(async()=>{const pending=(async()=>{await 0;new Socket("wss://example.test/review-latest")})();await((_unused)=>pending)(0);const Socket=globalThis.WebSocket})();',
@@ -1115,7 +1186,9 @@ it("retains reviewed completion endpoints with filesystem source provenance", as
     const observations = graph.nodes
       .filter((node) => node.kind === "endpoint")
       .flatMap((node) => node.observations);
-    expect(observations).toHaveLength(37);
+    expect(observations).toHaveLength(
+      completedWriteAndConsumerSources.filter(({ present }) => present).length,
+    );
     for (const { file, present } of completedWriteAndConsumerSources) {
       const matching = observations.filter(
         ({ evidence }) =>

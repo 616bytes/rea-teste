@@ -556,7 +556,7 @@ def _search_results(document, kind, params):
     if not selected:
         return []
     if kind == "string":
-        records = _string_inventory(document)
+        records = _string_inventory(document, {int(address, 16) for address, _ in selected})
         return [{"address": address, **records[address]} for address, _ in selected]
     return [
             {

@@ -734,7 +734,7 @@ already open, and verifies real CLI client inspection, unit listing coverage,
 and method decompilation. The script records the engine's exact response to
 `open_jeb_project`; JEB 5.48.0 headless instances do not advertise that tool.
 REA does not install or launch JEB; see [JEB analysis](jeb-analysis.md) for
-the bring-your-own boundary. The Linux x86-64 JEB 5.48.0 Community Edition direct-launch route and its limits are documented separately in [JEB analysis](jeb-analysis.md); this does not change the caller-started-engine requirement of this verifier.Verified against JEB 5.48.0 serving
+the bring-your-own boundary. The Linux x86-64 JEB 5.48.0 Community Edition direct-launch route and its limits are documented separately in [JEB analysis](jeb-analysis.md); this does not change the caller-started-engine requirement of this verifier. Verified against JEB 5.48.0 serving
 `jeb-mcp-server` 1.3.0 at four scales: a compiled Java class fixture, a
 locally built signed probe APK with a launcher activity (manifest, v1/v2/v3
 certificates, dex bytecode, filtered and paginated listing), the published

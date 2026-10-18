@@ -47,11 +47,7 @@ export const registerFridaTools = (
             {
               ok: true,
               value: jsonValueSchema.parse({
-                devices: result.value.devices.map((device) => ({
-                  device_id: device.deviceId,
-                  name: device.name,
-                  type: device.type,
-                })),
+                devices: result.value.devices,
                 cleanup_error: result.value.cleanupError,
               }),
             },

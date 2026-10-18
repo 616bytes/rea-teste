@@ -394,7 +394,7 @@ it("advertises and returns native singleton and unavailable item shapes", async 
     "Unavailable facets (including pseudocode)",
   );
   expect(advertised?.description).toContain(
-    "Preserve the entire unavailable item, including native_api.residual_unknowns",
+    "The entire unavailable item, including native_api.residual_unknowns",
   );
   const parent = analysisViewNativeEvidence();
   expect(session.recordEvidence(parent).ok).toBe(true);

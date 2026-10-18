@@ -117,6 +117,23 @@ export const createAmbientPathResolver = (
       let canonical = canonicalAmbientPath(path);
       for (;;) {
         result.set(JSON.stringify(canonical), canonical);
+        // Preserve the nominal path and its possible inherited prototype owner.
+        // Constructor/prototype cycles do not prove strict intrinsic reads.
+        if (possibleWrites && canonical[0] === "commonjs-module") {
+          let prototypeEnd = 1;
+          while (canonical[prototypeEnd] === "__proto__") prototypeEnd += 1;
+          if (
+            canonical[prototypeEnd] === "constructor" &&
+            canonical[prototypeEnd + 1] === "prototype"
+          ) {
+            canonical = [
+              ...canonical.slice(0, prototypeEnd),
+              ...(prototypeEnd === 1 ? ["__proto__"] : []),
+              ...canonical.slice(prototypeEnd + 2),
+            ];
+            continue;
+          }
+        }
         if (
           possibleWrites &&
           canonical[0] === "global" &&
@@ -216,17 +233,6 @@ export const createAmbientPathResolver = (
       if (!t.isIdentifier(root) && facts?.freshObject(root)) {
         localIdentity?.(root, suffix);
         for (const [source, path] of facts?.stores.get(root) ?? []) {
-          if (semanticReferenceSourcesInactive(source, state, "syntax-only"))
-            continue;
-          const selectedAt =
-            path === undefined ? undefined : captures[path.length - 1];
-          // A later store cannot replace a reference already read from a slot.
-          // Unknown order remains a possible alias, including deferred calls.
-          if (
-            selectedAt !== undefined &&
-            semanticEffectTiming(selectedAt, source.mutation, state) === "after"
-          )
-            continue;
           const selected =
             suffix === undefined ||
             path === undefined ||
@@ -243,6 +249,18 @@ export const createAmbientPathResolver = (
               path !== undefined &&
               suffix.length < path.length &&
               !escapedContents)
+          )
+            continue;
+          if (semanticReferenceSourcesInactive(source, state, "syntax-only"))
+            continue;
+          const selectedAt =
+            path === undefined ? undefined : captures[path.length - 1];
+          // Only overlapping stores need ordering. Unrelated properties cannot
+          // replace this reference and must not replay costly timing queries.
+          // Unknown order remains a possible alias, including deferred calls.
+          if (
+            selectedAt !== undefined &&
+            semanticEffectTiming(selectedAt, source.mutation, state) === "after"
           )
             continue;
           const remaining =
@@ -546,7 +564,9 @@ export const createAmbientPathResolver = (
 export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-  observeOpaqueInvocation?: (node: t.Node) => void,
+  createOpaqueObserver?: (
+    paths: ReturnType<typeof createAmbientPathResolver>,
+  ) => ((node: t.Node) => void) | undefined,
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
@@ -592,6 +612,9 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
+  const observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
+  const opaqueCalls =
+    observeOpaqueInvocation === undefined ? undefined : new Set<t.Node>();
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (root, kind, writeSite) => {
@@ -622,7 +645,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       writes.push({ node, path });
     },
     (node, invocation) => {
-      observeOpaqueInvocation?.(node);
+      opaqueCalls?.add(node);
       // Escaping objects can change contents without replacing their identity.
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
@@ -752,6 +775,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     )
   )
     state.ambientEscapes.retain(["global", null]);
+  // Opaque callees can be stored after container creation. Resolve them with
+  // the completed store facts instead of a second resolver without those facts.
+  for (const node of opaqueCalls ?? []) observeOpaqueInvocation?.(node);
 }
 
 /**

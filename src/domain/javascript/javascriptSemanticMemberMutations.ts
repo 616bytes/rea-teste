@@ -36,6 +36,7 @@ import {
   semanticCopiedReferencePath,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
+  type JavaScriptSemanticReferenceSource,
 } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
@@ -279,11 +280,15 @@ export function* collectSemanticMemberMutationsSteps(
         source.node.start,
         source.node.end,
         source.projection,
+        source.selection?.start,
+        source.selection?.end,
       ]),
       reference.fallbackSources?.map((source) => [
         source.node.start,
         source.node.end,
         source.projection,
+        source.selection?.start,
+        source.selection?.end,
       ]),
       [...reference.bindings].sort(compareUnicodeCodePoints),
     ]);
@@ -927,14 +932,8 @@ interface IterableReference extends ReferencedValue {
   readonly mutation?: t.Node;
   readonly originAt: t.Node | undefined;
   readonly iterationOnly?: boolean;
-  readonly requiredSources?: readonly {
-    readonly node: t.Node;
-    readonly projection: PropertyPath;
-  }[];
-  readonly fallbackSources?: readonly {
-    readonly node: t.Node;
-    readonly projection: PropertyPath;
-  }[];
+  readonly requiredSources?: readonly JavaScriptSemanticReferenceSource[];
+  readonly fallbackSources?: readonly JavaScriptSemanticReferenceSource[];
 }
 
 const expandedIterationReferences = (

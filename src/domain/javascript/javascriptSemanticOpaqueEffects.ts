@@ -2,7 +2,7 @@ import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
+import type { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -95,13 +95,14 @@ export const indexSemanticOpaqueEffects = (
   }
 };
 
-/** The existing ambient invocation walk owns global effects; ordinary sources
- * neither retain a second call list nor create another alias resolver. */
+/** Share the ambient invocation walk and its completed container-store facts.
+ * Only sources referencing eval retain calls for deferred observation; the
+ * observer consumes the owner's resolver rather than rebuilding alias facts. */
 export const createSemanticOpaqueGlobalObserver = (
   state: JavaScriptSemanticAnalysisState,
+  ambientPaths: ReturnType<typeof createAmbientPathResolver>,
 ): ((node: t.Node) => void) | undefined => {
   if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
-  const ambientPaths = createAmbientPathResolver(state, true);
   let invocationSite: t.Node | undefined;
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {

@@ -124,10 +124,12 @@ interface BindPatternInput {
   readonly fallbackSources?: readonly {
     readonly node: t.Node;
     readonly projection: readonly (string | number | null)[];
+    readonly selection?: t.AssignmentPattern;
   }[];
   readonly requiredSources?: readonly {
     readonly node: t.Node;
     readonly projection: readonly (string | number | null)[];
+    readonly selection?: t.AssignmentPattern;
   }[];
 }
 
@@ -177,7 +179,7 @@ function* indexSemanticAmbientWritesSteps(
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
-    createSemanticOpaqueGlobalObserver(state),
+    (ambientPaths) => createSemanticOpaqueGlobalObserver(state, ambientPaths),
   );
   if (state.opaqueEffects.globalSites.length > 0)
     clearSemanticValueCaches(state);
@@ -1135,7 +1137,9 @@ function* collectDefinitionsSteps(
       if (
         t.isWithStatement(node) ||
         t.isForInStatement(node) ||
-        t.isForOfStatement(node)
+        t.isForOfStatement(node) ||
+        t.isObjectPattern(node) ||
+        t.isArrayPattern(node)
       )
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
@@ -1844,7 +1848,9 @@ const bindPattern = (input: BindPatternInput): void => {
           : (initializer ?? pattern.right),
       requiredSources: [
         ...(requiredSources ?? []),
-        ...(initializer === null ? [] : [{ node: initializer, projection }]),
+        ...(initializer === null
+          ? []
+          : [{ node: initializer, projection, selection: pattern }]),
       ],
     });
     bindPattern({
@@ -1858,7 +1864,9 @@ const bindPattern = (input: BindPatternInput): void => {
       referenceOnly: true,
       fallbackSources: [
         ...(fallbackSources ?? []),
-        ...(initializer === null ? [] : [{ node: initializer, projection }]),
+        ...(initializer === null
+          ? []
+          : [{ node: initializer, projection, selection: pattern }]),
       ],
       ...(requiredSources === undefined ? {} : { requiredSources }),
     });

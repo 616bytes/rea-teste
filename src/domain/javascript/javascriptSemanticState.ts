@@ -28,6 +28,8 @@ import type {
 export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** The default whose input slot is selected after earlier pattern effects. */
+  readonly selection?: t.AssignmentPattern;
   readonly entryBody?: t.BlockStatement;
 }
 

@@ -274,8 +274,9 @@ export const createSemanticModuleInterop = (
       let bindingArguments: JavaScriptIntrinsicInvocation["arguments"] =
         expandJavaScriptInvocationArguments(current.arguments);
       let captured = capturedIntrinsic(current.callee);
-      let terminal = captured?.path.at(-1) === "bind";
-      let path: readonly string[] | undefined = captured?.path.slice(0, -1);
+      const calleePath = captured?.path ?? intrinsicPath(current.callee);
+      let terminal = calleePath?.at(-1) === "bind";
+      let path: readonly string[] | undefined = calleePath?.slice(0, -1);
       if (members.at(-1) === "bind") {
         // A direct .bind may continue a bound callable, without discarding members.
         if (!terminal && members.length !== 1) return undefined;
@@ -297,9 +298,13 @@ export const createSemanticModuleInterop = (
         bindTarget = invocation.receiver;
         bindingArguments = invocation.arguments;
         captured = capturedIntrinsic(bindTarget);
-        terminal = captured !== undefined;
-        path = captured?.path;
+        path = captured?.path ?? intrinsicPath(bindTarget);
+        terminal = path !== undefined;
       }
+      // A possible alias can still invoke an intrinsic through bind. Keep its
+      // effects when capture proof is unavailable, without proving arguments or
+      // weakening the stricter capture proof used for namespace helpers.
+      opaqueArguments ||= terminal && captured === undefined;
       receiver = bindingArguments?.[0];
       const ownArguments = bindingArguments?.slice(1) ?? [];
       opaqueArguments ||=

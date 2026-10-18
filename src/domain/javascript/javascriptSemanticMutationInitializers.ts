@@ -147,7 +147,9 @@ export const semanticTopLevelEffectFollowsCapture = (
     before.declaratorIndex !== after.declaratorIndex
   )
     return false;
-  return expressionEvaluationOrder(capture, effect, parents) === "before";
+  return (
+    semanticExpressionEvaluationOrder(capture, effect, parents) === "before"
+  );
 };
 
 /** Include expression order when a write operation contains the read site. */
@@ -319,8 +321,10 @@ const expressionChildIndices = (
   if (cached !== undefined) return cached;
   const children = ((): readonly (t.Node | null)[] | null => {
     if (t.isSequenceExpression(node)) return node.expressions;
-    if (t.isArrayExpression(node)) return node.elements;
-    if (t.isObjectExpression(node)) return node.properties;
+    if (t.isArrayExpression(node) || t.isArrayPattern(node))
+      return node.elements;
+    if (t.isObjectExpression(node) || t.isObjectPattern(node))
+      return node.properties;
     if (t.isObjectProperty(node))
       return node.computed ? [node.key, node.value] : [node.value];
     if (
@@ -354,8 +358,8 @@ const expressionChildIndices = (
   return indices;
 };
 
-/** Unproved ordering stays distinct from proof that a write follows the read. */
-const expressionEvaluationOrder = (
+/** Order children within one evaluation; repeated activations remain caller-owned. */
+export const semanticExpressionEvaluationOrder = (
   earlier: t.Node,
   later: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
@@ -759,7 +763,7 @@ const selectInitializers = (
         source.declaratorIndex !== position.declaratorIndex
       )
         return undefined;
-      const order = expressionEvaluationOrder(
+      const order = semanticExpressionEvaluationOrder(
         origin.initializer.node,
         read,
         parents,

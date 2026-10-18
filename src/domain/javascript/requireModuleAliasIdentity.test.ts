@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 
@@ -24,6 +27,23 @@ describe("CommonJS module delegate aliases", () => {
       "const holder={target:module};const copy={...holder};copy.target.require=other;",
     ],
     ["prototype member", "module.__proto__.require=other;"],
+    ["constructor prototype", "module.constructor.prototype.require=other;"],
+    [
+      "prototype constructor cycle",
+      "Object.getPrototypeOf(module).constructor.prototype.require=other;",
+    ],
+    [
+      "repeated constructor prototype cycles",
+      "module.constructor.prototype.constructor.prototype.require=other;",
+    ],
+    [
+      "reflective constructor prototype alias",
+      "const proto=module.constructor.prototype;Reflect.set(proto,'require',other);",
+    ],
+    [
+      "constructor prototype in container",
+      "const holder={proto:module.constructor.prototype};holder.proto.require=other;",
+    ],
     [
       "prototype alias",
       "const proto=Object.getPrototypeOf(module);proto.require=other;",
@@ -80,6 +100,14 @@ describe("CommonJS module delegate aliases", () => {
       "const proto=Object.getPrototypeOf({});proto.require=other;",
     ],
     [
+      "unrelated constructor prototype",
+      "class Other{};Other.prototype.require=other;",
+    ],
+    [
+      "unrelated constructor prototype property",
+      "module.constructor.prototype.unrelated=other;",
+    ],
+    [
       "unrelated prototype property",
       "const proto=Object.getPrototypeOf(module);Object.assign(proto,{unrelated:other});",
     ],
@@ -123,6 +151,38 @@ describe("CommonJS module delegate aliases", () => {
         `${SHIM}new (Q("electron").BrowserWindow)({});module.__proto__.require=other;`,
       ).electron.browser_windows,
     ).toHaveLength(1);
+  });
+});
+
+describe("CommonJS constructor path normalization", () => {
+  it.each([
+    {
+      name: "unrelated constructor property",
+      source:
+        "module.constructor.unrelated={};module.constructor.unrelated.require=other;",
+      paths: [
+        ["commonjs-module", "constructor", "unrelated"],
+        ["commonjs-module", "constructor", "unrelated", "require"],
+      ],
+    },
+    {
+      name: "constructor beneath an unrelated module property",
+      source:
+        "module.unrelated={constructor:class Other{}};module.unrelated.constructor.prototype.require=other;",
+      paths: [
+        ["commonjs-module", "unrelated"],
+        ["commonjs-module", "unrelated", "constructor", "prototype", "require"],
+      ],
+    },
+  ])("preserves the nominal path for $name", ({ source, paths }) => {
+    // Replaced module properties remain conservative aliases in loader analysis;
+    // the path owner must nevertheless keep unrelated properties out of cycles.
+    const parsed = parseJavaScriptSource(source, "app.cjs");
+    if (parsed === null) throw new Error("Expected parsed source");
+    const state = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    expect(state.ambientWriteEffects.map(({ path }) => path)).toEqual(paths);
   });
 });
 

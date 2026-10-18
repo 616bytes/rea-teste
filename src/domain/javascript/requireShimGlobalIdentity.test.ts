@@ -42,6 +42,36 @@ describe("script require shim global binding identity", () => {
   });
 
   it.each([
+    'const box={};box.run=eval;box.run("Q=other");',
+    'const box=[];box[0]=eval;(0,box[0])("Q=other");',
+    'const box={inner:{}};box.inner.run=globalThis.eval;box.inner.run.call(null,"Q=other");',
+    'const box={};({run:box.run}={run:eval});box.run("Q=other");',
+    'const box={};box.run=eval;const invoke=box.run.bind(null);invoke("Q=other");',
+    'const box={};box.run=eval;const invoke=box.run.bind(null);box.run=other;invoke("Q=other");',
+    'const box={};box.run=eval;const invoke=Function.prototype.bind.call(box.run,null);invoke("Q=other");',
+    'const holder={};const box={get target(){return holder;}};const saved=box.target;holder.run=eval;saved.run("Q=other");',
+  ])(
+    "rejects indirect eval reached through a later container store: %s",
+    (setup) => {
+      expect(ipcOf(`${SHIM}${setup}${CONSUMER}`)).toEqual([]);
+    },
+  );
+
+  it.each([
+    'const box={run:other};box.run("Q=other");box.run=eval;',
+    'const box={run:other};const saved=box.run;box.run=eval;saved("Q=other");',
+    'const box={run:other};const saved=box.run.bind(null);box.run=eval;saved("Q=other");',
+    'const eval=other;const box={};box.run=eval;box.run("Q=other");',
+  ])(
+    "does not treat unrelated or earlier container calls as eval: %s",
+    (setup) => {
+      expect(ipcOf(`${SHIM}${setup}${CONSUMER}`)).toMatchObject([
+        { channel: "local" },
+      ]);
+    },
+  );
+
+  it.each([
     "{value:other,writable:false}",
     "{get(){return other},set(value){}}",
   ])(

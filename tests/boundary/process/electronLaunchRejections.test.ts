@@ -13,6 +13,8 @@ import {
 const script = `
 import { PlaywrightElectronActiveProvider } from "./dist/browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "./dist/domain/javascript/electronActiveObservation.js";
+import { BrowserObservationError } from "./dist/domain/browserObservationError.js";
+import { ProviderAdapterError } from "./dist/domain/providerAdapterError.js";
 import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
 
 const [scenario, executable, root] = JSON.parse(process.argv[1]);
@@ -111,6 +113,20 @@ if (scenario === "concurrentFailures" || scenario === "failureThenSuccess" || sc
   results = [await capture(launches[scenario] ?? undefined)];
 }
 await new Promise((resolve) => setTimeout(resolve, 50));
+const cleanupComposition = (result) => {
+  if (result.ok || !(result.error instanceof ProviderAdapterError) || !(result.error.cause instanceof AggregateError))
+    return null;
+  const aggregate = result.error.cause;
+  const [primary, cleanup] = aggregate.errors;
+  return {
+    errorCount: aggregate.errors.length,
+    primaryIsCause: aggregate.cause === primary,
+    primaryReason: primary instanceof BrowserObservationError ? primary.reason : null,
+    cleanupReason: cleanup instanceof BrowserObservationError ? cleanup.reason : null,
+    primaryCleanupIncomplete: primary instanceof BrowserObservationError ? primary.cleanupIncomplete : null,
+    cleanupIncomplete: result.error.cleanupIncomplete && cleanup instanceof BrowserObservationError && cleanup.cleanupIncomplete,
+  };
+};
 console.log(JSON.stringify({
   before,
   during,
@@ -118,6 +134,7 @@ console.log(JSON.stringify({
   observedRejections,
   errors: results.map((result) => result.ok ? null : projectAnalysisError(result.error)),
   ok: results.map((result) => result.ok),
+  compositions: results.map(cleanupComposition),
 }));
 `;
 
@@ -132,6 +149,14 @@ type Outcome = {
   readonly ok: readonly boolean[];
   readonly errors: readonly (AnalysisErrorProjection | null)[];
   readonly observedRejections: number;
+  readonly compositions: readonly ({
+    readonly errorCount: number;
+    readonly primaryIsCause: boolean;
+    readonly primaryReason: string | null;
+    readonly cleanupReason: string | null;
+    readonly primaryCleanupIncomplete: boolean | null;
+    readonly cleanupIncomplete: boolean;
+  } | null)[];
 };
 
 const run = async (
@@ -329,6 +354,17 @@ processTest(
     expect(observed.after).toBe(observed.before);
     expect(observed.observedRejections).toBe(3);
     expect(observed.ok).toEqual([false, false, false, false, false]);
+    expect(observed.compositions).toEqual([
+      null,
+      ...Array.from({ length: 4 }, () => ({
+        errorCount: 2,
+        primaryIsCause: true,
+        primaryReason: "process_ownership_unavailable",
+        cleanupReason: "cleanup_failed",
+        primaryCleanupIncomplete: false,
+        cleanupIncomplete: true,
+      })),
+    ]);
     expect(observed.errors).toMatchObject([
       {
         details: {

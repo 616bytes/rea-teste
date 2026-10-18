@@ -144,3 +144,136 @@ describe("destructuring reference selection order", () => {
     expect(result?.status).toBe("unknown");
   });
 });
+
+describe("named-source destructuring reads", () => {
+  it.each([
+    "const source={x:{},method:()=>{}};const {x:target=fallback}=source;",
+    "const source={x:{},method(){},pattern:/x/};const {x:target=fallback}=source;",
+    "const source={x:{},get unused(){this.x=undefined}};const {x:target=fallback}=source;",
+    "const source={trigger:{method:()=>{}},x:{}};const {trigger,x:target=fallback}=source;",
+    "const source={nested:{x:{},method:()=>{}}};const {nested:{x:target=fallback}}=source;",
+    "const source={x:{method:()=>{}}};const {x:target=fallback}=source;",
+  ])("ignores unaccessed named-source values: %s", (setup) => {
+    const result = onlyCallable(
+      analyzeJavaScriptSemantics(`
+        export function result(){
+          const fallback={value:1};
+          ${setup}
+          target.value=2;
+          return fallback.value;
+        }
+      `),
+      "result",
+    ).returnSites[0]?.value;
+    expect(result).toEqual({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    "const source={get trigger(){this.x=undefined},x:{},method:()=>{}};const {trigger,x:target=fallback}=source;",
+    "const source={nested:{get trigger(){this.x=undefined},x:{}},method:()=>{}};const {nested:{trigger,x:target=fallback}}=source;",
+    "const source={x:{v:{}},method:()=>{}};const {x:saved,t:unused=(saved.v=undefined),x:{v:target=fallback}}=source;",
+    "const source={x:{v:{}},method:()=>{}};const {x:saved,[(saved.v=undefined,'t')]:unused,x:{v:target=fallback}}=source;",
+    "Object.defineProperty(Object.prototype,'trigger',{get(){this.x=undefined}});const source={x:{},method:()=>{}};const {trigger,x:target=fallback}=source;",
+    "const source={get x(){return undefined},method:()=>{}};const {x:target=fallback}=source;",
+    "const source={head:[{},{}],x:{},method:()=>{}};Object.defineProperty(source.head,0,{get(){source.x=undefined}});const {head:[unused],x:target=fallback}=source;",
+    "const source={x:{},method:()=>{}};source.x=undefined;const {x:target=fallback}=source;",
+  ])("retains named-source reads that may change the input: %s", (setup) => {
+    const result = onlyCallable(
+      analyzeJavaScriptSemantics(`
+        export function result(){
+          const fallback={value:1};
+          ${setup}
+          target.value=2;
+          return fallback.value;
+        }
+      `),
+      "result",
+    ).returnSites[0]?.value;
+    expect(result?.status).toBe("unknown");
+  });
+
+  it.each([
+    ["early", "literal"],
+    ["late", "unknown"],
+  ] as const)(
+    "keeps the %s selection ordered around one getter",
+    (target, status) => {
+      const result = onlyCallable(
+        analyzeJavaScriptSemantics(`
+        export function result(){
+          const fallback={value:1};
+          const source={a:{},get trigger(){this.b=undefined},b:{},method:()=>{}};
+          const {a:early=fallback,trigger,b:late=fallback}=source;
+          ${target}.value=2;
+          return fallback.value;
+        }
+      `),
+        "result",
+      ).returnSites[0]?.value;
+      expect(result?.status).toBe(status);
+      if (status === "literal")
+        expect(result).toEqual({ status: "literal", value: 1 });
+    },
+  );
+});
+
+describe("destructuring enumeration before reference selection", () => {
+  it.each(
+    [
+      [
+        "duplicate nested receiver",
+        "const source={head:{x:{},get y(){this.x=undefined}},method:()=>{}};",
+        "head:{...rest}",
+        "head:{x:target=fallback}",
+      ],
+      [
+        "aliased nested receiver",
+        "const head={x:{},get y(){this.x=undefined}};const source={left:head,right:head,method:()=>{}};",
+        "left:{...rest}",
+        "right:{x:target=fallback}",
+      ],
+      [
+        "deeper nested receiver",
+        "const source={head:{child:{x:{},get y(){this.x=undefined}}},method:()=>{}};",
+        "head:{child:{...rest}}",
+        "head:{child:{x:target=fallback}}",
+      ],
+    ].flatMap(([name, setup, enumeration, selection]) => [
+      [name, setup, `${enumeration},${selection}`, "unknown"],
+      [name, setup, `${selection},${enumeration}`, "literal"],
+    ]),
+  )("orders %s with %s and %s as %s", (_name, setup, pattern, status) => {
+    const result = onlyCallable(
+      analyzeJavaScriptSemantics(`
+        export function result(){
+          const fallback={value:1};
+          ${setup}
+          const {${pattern}}=source;
+          target.value=2;
+          return fallback.value;
+        }
+      `),
+      "result",
+    ).returnSites[0]?.value;
+    expect(result?.status).toBe(status);
+    if (status === "literal")
+      expect(result).toEqual({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    "const source={head:{x:{}},method:()=>{}};const {head:{...rest},head:{x:target=fallback}}=source;",
+  ])("keeps a complete enumerated receiver inert: %s", (setup) => {
+    const result = onlyCallable(
+      analyzeJavaScriptSemantics(`
+        export function result(){
+          const fallback={value:1};
+          ${setup}
+          target.value=2;
+          return fallback.value;
+        }
+      `),
+      "result",
+    ).returnSites[0]?.value;
+    expect(result).toEqual({ status: "literal", value: 1 });
+  });
+});

@@ -25,7 +25,10 @@ import {
   childNodes,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import type {
+  JavaScriptSemanticProperty,
+  JavaScriptSemanticValue,
+} from "./javascriptSemanticValueTypes.js";
 
 /** A retained source and the pattern selection that guards its reference. */
 export interface JavaScriptSemanticReferenceSource {
@@ -74,9 +77,14 @@ interface PatternSelectionFacts {
     readonly node: t.ObjectProperty;
     readonly projection: PropertyPath;
   }[];
+  readonly objectRests: readonly {
+    readonly node: t.RestElement;
+    readonly projection: PropertyPath;
+  }[];
   readonly projections: WeakMap<t.Node, PropertyPath>;
   readonly inertPrefixes: WeakMap<t.AssignmentPattern, boolean>;
   readonly prototypeReads: WeakMap<t.Node, readonly t.Node[]>;
+  readonly uncertainReads: WeakMap<JavaScriptSemanticValue, readonly t.Node[]>;
 }
 
 const patternSelectionFacts = new WeakMap<t.Node, PatternSelectionFacts>();
@@ -106,6 +114,7 @@ const selectionFacts = (
   const effects: t.Node[] = [];
   const arrays: t.ArrayPattern[] = [];
   const reads: { node: t.ObjectProperty; projection: PropertyPath }[] = [];
+  const objectRests: { node: t.RestElement; projection: PropertyPath }[] = [];
   const projections = new WeakMap<t.Node, PropertyPath>();
   projections.set(root, []);
   const selections: t.AssignmentPattern[] = [];
@@ -141,6 +150,8 @@ const selectionFacts = (
         for (const [index, element] of node.elements.entries())
           if (element !== null)
             projections.set(element, [...projection, index]);
+      } else if (t.isRestElement(node) && t.isObjectPattern(parent)) {
+        objectRests.push({ node, projection });
       }
     },
   });
@@ -148,12 +159,51 @@ const selectionFacts = (
     effects,
     arrays,
     reads,
+    objectRests,
     projections,
     inertPrefixes: new WeakMap(),
     prototypeReads: new WeakMap(),
+    uncertainReads: new WeakMap(),
   };
   for (const node of selections) patternSelectionFacts.set(node, facts);
   return facts;
+};
+
+const referenceSelectionPrecedes = (
+  selection: t.AssignmentPattern,
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  // The selected input is read before its default or nested pattern executes.
+  // A member assignment target is different: its receiver/key is evaluated
+  // before that input read, while its eventual setter runs afterward.
+  let current: t.Node | undefined = node;
+  while (current !== undefined && current !== selection) {
+    if (current === selection.right) return true;
+    if (
+      current === selection.left &&
+      (t.isObjectPattern(current) || t.isArrayPattern(current))
+    )
+      return true;
+    current = state.parentsByNode.get(current);
+  }
+  return (
+    semanticExpressionEvaluationOrder(selection, node, state.parentsByNode) ===
+    "before"
+  );
+};
+
+const selectionProjectsSource = (
+  source: JavaScriptSemanticReferenceSource,
+  selection: t.AssignmentPattern,
+  facts: PatternSelectionFacts,
+): boolean => {
+  const projection = facts.projections.get(selection);
+  return (
+    projection !== undefined &&
+    projection.length === source.projection.length &&
+    projection.every((key, index) => key === source.projection[index])
+  );
 };
 
 /** Earlier defaults, keys, stores and custom iteration can change a later slot. */
@@ -164,28 +214,8 @@ const referenceSelectionStable = (
   const selection = source.selection;
   if (selection === undefined) return true;
   const facts = selectionFacts(selection, state);
-  const followsSelection = (node: t.Node): boolean => {
-    // The selected input is read before its default or nested pattern executes.
-    // A member assignment target is different: its receiver/key is evaluated
-    // before that input read, while its eventual setter runs afterward.
-    let current: t.Node | undefined = node;
-    while (current !== undefined && current !== selection) {
-      if (current === selection.right) return true;
-      if (
-        current === selection.left &&
-        (t.isObjectPattern(current) || t.isArrayPattern(current))
-      )
-        return true;
-      current = state.parentsByNode.get(current);
-    }
-    return (
-      semanticExpressionEvaluationOrder(
-        selection,
-        node,
-        state.parentsByNode,
-      ) === "before"
-    );
-  };
+  const followsSelection = (node: t.Node): boolean =>
+    referenceSelectionPrecedes(selection, node, state);
   let inertPrefix = facts.inertPrefixes.get(selection);
   if (inertPrefix === undefined) {
     inertPrefix = facts.effects.every(
@@ -206,12 +236,9 @@ const referenceSelectionStable = (
   }
   if (!inertPrefix || state.prototypeEnumerationMayAffect === false)
     return inertPrefix;
-  const projection = facts.projections.get(selection);
   if (
     !facts.arrays.every(followsSelection) ||
-    projection === undefined ||
-    projection.length !== source.projection.length ||
-    !projection.every((key, index) => key === source.projection[index])
+    !selectionProjectsSource(source, selection, facts)
   )
     return false;
   let prototypeReads = facts.prototypeReads.get(source.node);
@@ -304,6 +331,68 @@ const semanticDataSource = (root: JavaScriptSemanticValue): boolean => {
   return safe;
 };
 
+const semanticSlotReadKnown = (
+  slot: JavaScriptSemanticProperty | undefined,
+): boolean =>
+  slot?.presence === "absent" ||
+  (slot?.presence === "present" &&
+    (slot.value.status === "literal" ||
+      slot.value.status === "union" ||
+      slot.value.status === "object" ||
+      slot.value.status === "array"));
+
+/** Only reads before this selection can run an accessor that changes its input. */
+const semanticReadPrefixKnown = (
+  source: JavaScriptSemanticReferenceSource,
+  value: JavaScriptSemanticValue,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const selection = source.selection;
+  if (selection === undefined) return false;
+  const facts = selectionFacts(selection, state);
+  const followsSelection = (node: t.Node): boolean =>
+    referenceSelectionPrecedes(selection, node, state);
+  // Array element reads come from iteration, not the object-property inventory.
+  // Retain the complete data proof for any iteration before this selection.
+  if (
+    !facts.arrays.every(followsSelection) ||
+    !selectionProjectsSource(source, selection, facts)
+  )
+    return false;
+  let uncertainReads = facts.uncertainReads.get(value);
+  if (uncertainReads === undefined) {
+    const selectedSlot = (projection: PropertyPath) => {
+      const path = referenceSourcePath({ ...source, projection });
+      return path === undefined ? undefined : semanticSlotAtPath(value, path);
+    };
+    const propertyReads = facts.reads
+      .filter((read) => {
+        // Missing properties are inert once the shared prototype proof passed.
+        // A known container is a data value; its unread children are irrelevant.
+        return !semanticSlotReadKnown(selectedSlot(read.projection));
+      })
+      .map(({ node }) => node);
+    // Object rest reads every retained own field, including getters omitted
+    // from the explicit-property inventory. Keep their effects ordered too.
+    const restReads = facts.objectRests
+      .filter((read) => {
+        const slot = selectedSlot(read.projection);
+        if (slot?.presence !== "present") return true;
+        const container = semanticContainer(slot.value);
+        // Rest copies field values without traversing the values' children.
+        return (
+          container === null ||
+          container.coverage.status !== "complete" ||
+          !container.slots.every(semanticSlotReadKnown)
+        );
+      })
+      .map(({ node }) => node);
+    uncertainReads = [...propertyReads, ...restReads];
+    facts.uncertainReads.set(value, uncertainReads);
+  }
+  return uncertainReads.every(followsSelection);
+};
+
 const selectedDefaultInput = (
   source: JavaScriptSemanticReferenceSource,
   state: JavaScriptSemanticAnalysisState,
@@ -314,7 +403,11 @@ const selectedDefaultInput = (
   // An inert pattern prefix preserves the RHS capture until this selection.
   // Reuse that capture, including its shared named-source snapshot cache.
   const value = evaluateSemanticExpression(source.node, state, source.node);
-  if (!syntaxDataSource(source.node) && !semanticDataSource(value))
+  if (
+    !syntaxDataSource(source.node) &&
+    !semanticDataSource(value) &&
+    !semanticReadPrefixKnown(source, value, state)
+  )
     return undefined;
   return semanticSlotAtPath(value, path);
 };

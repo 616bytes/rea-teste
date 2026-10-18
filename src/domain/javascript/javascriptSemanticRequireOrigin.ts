@@ -440,7 +440,7 @@ const writesModuleRequire = (
           method === "defineProperties" &&
           isModuleObject(args?.[0] ?? t.nullLiteral())
         ) {
-          if (objectMayDefineRequire(args?.[1])) writes.push(node);
+          if (objectMayDefineDelegate(args?.[1])) writes.push(node);
         } else if (
           owner === "Object" &&
           method === "assign" &&
@@ -449,7 +449,7 @@ const writesModuleRequire = (
           if (
             args
               ?.slice(1)
-              .some((source) => objectMayDefineRequire(source, true))
+              .some((source) => objectMayDefineDelegate(source, true))
           )
             writes.push(node);
         }
@@ -506,9 +506,10 @@ const createModuleProjectionWriteQuery = (
 };
 
 /** Unknown keys and spreads cannot prove the loader delegate was untouched. */
-const objectMayDefineRequire = (
+const objectMayDefineDelegate = (
   node: t.Node | undefined,
   invokesSetters = false,
+  delegate: "require" | "_load" = "require",
 ): boolean =>
   !t.isObjectExpression(node) ||
   node.properties.some((property) => {
@@ -516,10 +517,11 @@ const objectMayDefineRequire = (
     const key = semanticStaticPropertyKey(property.key, property.computed);
     return (
       key === null ||
-      key === "require" ||
+      key === delegate ||
       // Object.assign invokes the legacy prototype setter for an own
       // __proto__ key. A literal prototype initializer creates no own key.
       (invokesSetters &&
+        delegate === "require" &&
         key === "__proto__" &&
         (t.isObjectMethod(property) || property.computed || property.shorthand))
     );
@@ -650,14 +652,21 @@ const isModuleDelegateWrite = (
   interop: ReturnType<typeof createSemanticModuleInterop>,
 ): boolean => {
   if (path[0] !== "commonjs-module") return false;
+  // The inherited instance method dispatches through Module._load as well.
+  const delegate =
+    path.length === 3 && path[1] === "constructor" ? "_load" : "require";
   const receiver = path.slice(1, -1);
   if (
+    delegate === "require" &&
     !receiver.every((key) => semanticPropertyPathKeyMatches(key, "__proto__"))
   )
     return false;
   const key = path.at(-1)!;
   if (path.length === 1) return true;
-  if (!semanticPropertyPathKeyMatches(key, "require") && key !== "__proto__")
+  if (
+    !semanticPropertyPathKeyMatches(key, delegate) &&
+    !(delegate === "require" && key === "__proto__")
+  )
     return false;
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     const invocation = interop.intrinsicInvocation(node);
@@ -666,9 +675,12 @@ const isModuleDelegateWrite = (
     if (method === "assign")
       return (
         args === undefined ||
-        args.slice(1).some((source) => objectMayDefineRequire(source, true))
+        args
+          .slice(1)
+          .some((source) => objectMayDefineDelegate(source, true, delegate))
       );
-    if (method === "defineProperties") return objectMayDefineRequire(args?.[1]);
+    if (method === "defineProperties")
+      return objectMayDefineDelegate(args?.[1], false, delegate);
     // Defining an own __proto__ property does not invoke the legacy setter.
     return key !== "__proto__" || method === "set";
   }

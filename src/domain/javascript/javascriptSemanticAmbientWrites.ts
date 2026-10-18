@@ -15,7 +15,13 @@ import {
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  isImportMetaUrl,
+  stringValue,
+} from "./javascriptStaticAnalysisHelpers.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
+import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
@@ -54,6 +60,22 @@ type AmbientPath = readonly (string | null)[];
 /** Undefined means a cyclic or conflicting projection can select any depth. */
 type AmbientProjection = AmbientPath | undefined;
 type AmbientCaptures = readonly (t.Node | undefined)[];
+
+/** Node exports the constructor whose prototype owns the wrapper delegate. */
+const moduleConstructorPath = (
+  origin: JavaScriptModuleOrigin,
+  projection: AmbientProjection,
+): AmbientPath | undefined => {
+  if (!["module", "node:module"].includes(origin.specifier)) return undefined;
+  const path = [...origin.importedPath, ...(projection ?? [null])];
+  // ESM namespace slots select the constructor; the namespace is not itself it.
+  if (origin.resolutionMode !== "require") {
+    const selected = path.shift();
+    if (selected !== "default" && selected !== "Module" && selected !== null)
+      return undefined;
+  }
+  return ["commonjs-module", "constructor", ...path];
+};
 
 const joinAmbientProjection = (
   left: AmbientProjection,
@@ -122,6 +144,29 @@ export const createAmbientPathResolver = (
         if (possibleWrites && canonical[0] === "commonjs-module") {
           let prototypeEnd = 1;
           while (canonical[prototypeEnd] === "__proto__") prototypeEnd += 1;
+          if (prototypeEnd === 2 && canonical[prototypeEnd] === "constructor") {
+            canonical = ["commonjs-module", ...canonical.slice(prototypeEnd)];
+            continue;
+          }
+          if (
+            canonical[prototypeEnd] === "constructor" &&
+            canonical[prototypeEnd + 1] === null
+          ) {
+            // An unknown key can select the self export or prototype. Their
+            // different depths widen once rather than enumerating alias paths.
+            canonical = ["commonjs-module", null];
+            continue;
+          }
+          if (
+            canonical[prototypeEnd] === "constructor" &&
+            canonical[prototypeEnd + 1] === "Module"
+          ) {
+            canonical = [
+              ...canonical.slice(0, prototypeEnd + 1),
+              ...canonical.slice(prototypeEnd + 2),
+            ];
+            continue;
+          }
           if (
             canonical[prototypeEnd] === "constructor" &&
             canonical[prototypeEnd + 1] === "prototype"
@@ -320,6 +365,11 @@ export const createAmbientPathResolver = (
             ? semanticBindingAtRead(binding, readAt, state.parentsByNode)
                 .binding
             : binding;
+        if (possibleWrites)
+          for (const origin of selected.directOrigins) {
+            const path = moduleConstructorPath(origin, suffix);
+            if (path !== undefined) retain(path);
+          }
         const initializers = possibleWrites
           ? selected.initializers
           : stable === undefined
@@ -403,6 +453,20 @@ export const createAmbientPathResolver = (
           [root, ...captures],
         );
         continue;
+      }
+      if (
+        possibleWrites &&
+        t.isCallExpression(root) &&
+        ["module", "node:module"].includes(stringValue(root.arguments[0]) ?? "")
+      ) {
+        const origin =
+          semanticRequireOrigin(root, state)?.origin ??
+          semanticRequireShimOrigin(root, state)?.origin;
+        const path =
+          origin === undefined
+            ? undefined
+            : moduleConstructorPath(origin, suffix);
+        if (path !== undefined) retain(path);
       }
       if (
         possibleWrites &&
@@ -748,16 +812,19 @@ export function* indexJavaScriptAmbientWritesSteps(
         ),
       });
   }
+  // Resolve possible identities against one completed store snapshot before
+  // publishing any writes. Incremental publication would invalidate loader
+  // origin indexes for every target and replay a full source scan each time.
+  const targetPaths = targets.map(({ node, capture }) =>
+    ambientWrites(node, capture),
+  );
   for (const { node, path } of writes) {
-    const target =
-      path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
+    const resolvedTargets =
+      path[0] === "pending-target" ? targetPaths[Number(path[1])] : undefined;
     const paths =
-      target === undefined
+      resolvedTargets === undefined
         ? [path]
-        : ambientWrites(target.node, target.capture).map((identity) => [
-            ...identity,
-            ...path.slice(2),
-          ]);
+        : resolvedTargets.map((identity) => [...identity, ...path.slice(2)]);
     for (const resolved of paths) {
       state.ambientWrites.retain(resolved);
       state.ambientWriteEffects.push({ path: resolved, node });

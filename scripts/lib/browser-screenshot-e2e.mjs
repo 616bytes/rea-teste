@@ -16,10 +16,7 @@ import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
   const browser = await chromium.connectOverCDP(endpoint);
-  const context = await browser.newContext({
-    viewport: { width: 2048, height: 1536 },
-    deviceScaleFactor: 1,
-  });
+  const context = await browser.newContext({ viewport: null });
   const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -32,6 +29,32 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     const page = await context.newPage();
     await page.goto(`${origin}/screenshot-noise`);
     await page.waitForFunction(() => document.body.dataset.ready === "true");
+    const targetSession = await context.newCDPSession(page);
+    const targetInfo = await targetSession.send("Target.getTargetInfo");
+    const nativeWindow = await browser.newBrowserCDPSession();
+    try {
+      const { windowId, bounds } = await nativeWindow.send(
+        "Browser.getWindowForTarget",
+        { targetId: targetInfo.targetInfo.targetId },
+      );
+      const current = await page.evaluate(() => ({
+        width: innerWidth,
+        height: innerHeight,
+      }));
+      await nativeWindow.send("Browser.setWindowBounds", {
+        windowId,
+        bounds: {
+          width: bounds.width + 2048 - current.width,
+          height: bounds.height + 1536 - current.height,
+        },
+      });
+      await page.waitForFunction(
+        () => innerWidth === 2048 && innerHeight === 1536,
+      );
+    } finally {
+      await nativeWindow.detach();
+      await targetSession.detach();
+    }
     const targets = await (await fetch(`${endpoint}/json/list`)).json();
     const target = targets.find((value) => value.url === page.url());
     assert.ok(

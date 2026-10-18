@@ -55,7 +55,12 @@ const executionContextEvent = z.object({
     id: z.number(),
     origin: z.string(),
     name: z.string(),
-    auxData: z.object({ frameId: z.string().optional() }).optional(),
+    auxData: z
+      .object({
+        frameId: z.string().optional(),
+        isDefault: z.boolean().optional(),
+      })
+      .optional(),
   }),
 });
 const scriptParsedEvent = z.object({
@@ -338,7 +343,10 @@ export class PlaywrightScenarioStorage {
     try {
       if (method === "Runtime.executionContextCreated") {
         const { context } = executionContextEvent.parse(params);
-        if (context.name === this.#sourceUrl)
+        if (
+          context.name === this.#sourceUrl ||
+          context.auxData?.isDefault === true
+        )
           target.contexts.set(context.id, context);
       } else if (method === "Runtime.executionContextDestroyed") {
         const { executionContextId } = z
@@ -415,20 +423,56 @@ export class PlaywrightScenarioStorage {
     const contextId = target.scripts.get(frame.location.scriptId);
     const context =
       contextId === undefined ? undefined : target.contexts.get(contextId);
-    const seed =
-      context === undefined ? undefined : this.#seeds.get(context.origin);
+    if (this.#closed) return;
+    // Isolated worlds can report an empty origin even for an ordinary HTTP
+    // document. Select the document principal from its same-frame default
+    // context; the private script identity above still owns this pause.
+    const frameId = context?.auxData?.frameId;
+    const documentContexts = () =>
+      [...target.contexts.values()].filter(
+        (candidate) =>
+          candidate.auxData?.isDefault === true &&
+          candidate.auxData.frameId === frameId,
+      );
+    const documents = documentContexts();
+    const documentContext = documents[0];
     if (
-      this.#closed ||
-      seed === undefined ||
-      context?.auxData?.frameId === undefined
+      frameId === undefined ||
+      documentContext === undefined ||
+      documents.length !== 1
     )
-      return;
+      throw new BrowserObservationError(
+        "capture_browser_scenario",
+        "protocol_error",
+        {
+          detail:
+            "The paused storage frame has no unique verified document context.",
+        },
+      );
+    const seed = this.#seeds.get(documentContext.origin);
+    if (seed === undefined) return;
 
     const storageKey = storageKeyResponse.parse(
       await this.sendObserved(target, "Storage.getStorageKey", {
-        frameId: context.auxData.frameId,
+        frameId,
       }),
     ).storageKey;
+    if (this.#closed) return;
+    const currentDocuments = documentContexts();
+    if (
+      target.scripts.get(frame.location.scriptId) !== contextId ||
+      contextId === undefined ||
+      target.contexts.get(contextId) !== context ||
+      currentDocuments.length !== 1 ||
+      currentDocuments[0] !== documentContext
+    )
+      throw new BrowserObservationError(
+        "capture_browser_scenario",
+        "protocol_error",
+        {
+          detail: "The storage frame document identity changed before seeding.",
+        },
+      );
     const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
     const local =
       this.#initializedLocal.has(storageKey) || seed.local.length === 0

@@ -12,6 +12,7 @@ import {
   allowedSanitizedUrl,
   recordValue,
   cdpStringValue,
+  numberValue,
 } from "./CdpCaptureValues.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { captureFrames } from "./CdpCaptureDocuments.js";
@@ -72,17 +73,38 @@ export const captureCdpScreenshot = async (
   });
   let result: ReturnType<typeof recordValue>;
   let after: unknown;
+  let afterMetrics: unknown;
+  let viewportBefore: ScreenshotViewport | undefined;
   try {
+    const metrics = recordValue(
+      await context.connection.send(
+        "Page.getLayoutMetrics",
+        {},
+        context.sessionId,
+        context.signal,
+      ),
+    );
+    viewportBefore = screenshotViewport(metrics);
     result = recordValue(
       await context.connection.send(
         "Page.captureScreenshot",
-        { format: "png", fromSurface: true, captureBeyondViewport: false },
+        {
+          format: "png",
+          fromSurface: true,
+          captureBeyondViewport: false,
+        },
         context.sessionId,
         context.signal,
       ),
     );
     after = await context.connection.send(
       "Page.getFrameTree",
+      {},
+      context.sessionId,
+      context.signal,
+    );
+    afterMetrics = await context.connection.send(
+      "Page.getLayoutMetrics",
       {},
       context.sessionId,
       context.signal,
@@ -105,6 +127,15 @@ export const captureCdpScreenshot = async (
     navigation.changed ||
     afterUrl !== beforeUrl ||
     allowedSanitizedUrl(afterUrl, origins) === undefined
+  )
+    throw new BrowserObservationError("inspect_web_page", "target_changed");
+  const afterViewport = screenshotViewport(afterMetrics);
+  if (
+    viewportBefore === undefined ||
+    viewportBefore.x !== afterViewport.x ||
+    viewportBefore.y !== afterViewport.y ||
+    viewportBefore.width !== afterViewport.width ||
+    viewportBefore.height !== afterViewport.height
   )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   await context.progress?.report({
@@ -160,4 +191,29 @@ const observeScreenshotNavigation = (
   state.changed = true;
   if (allowedSanitizedUrl(frame?.url, origins) === undefined)
     state.leftScope = true;
+};
+
+type ScreenshotViewport = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+};
+
+const screenshotViewport = (metrics: unknown): ScreenshotViewport => {
+  const viewport = recordValue(recordValue(metrics)?.cssVisualViewport);
+  const x = numberValue(viewport?.pageX);
+  const y = numberValue(viewport?.pageY);
+  const width = numberValue(viewport?.clientWidth);
+  const height = numberValue(viewport?.clientHeight);
+  if (
+    x === undefined ||
+    y === undefined ||
+    width === undefined ||
+    width <= 0 ||
+    height === undefined ||
+    height <= 0
+  )
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  return { x, y, width, height };
 };

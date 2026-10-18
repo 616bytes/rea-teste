@@ -16,6 +16,7 @@ export async function verifyBrowserSocketTransport({
   endpoint,
   target,
   origin,
+  assertStableScripts,
 }) {
   const [port, path] = (
     await readFile(join(profile, "DevToolsActivePort"), "utf8")
@@ -92,9 +93,14 @@ export async function verifyBrowserSocketTransport({
   );
   if (!compared.ok) throw compared.error;
   assert.equal(compared.value.dimensions.dom_structure.status, "unchanged");
-  assert.equal(compared.value.dimensions.scripts.status, "unchanged");
+  const scriptIdentity = assertStableScripts(
+    throughHttpInspection.value,
+    evidence.normalized_result,
+    compared.value.dimensions.scripts,
+  );
   return {
     targets: throughSocket.targets.length,
+    scriptIdentity,
     revision: throughSocket.browser.revision,
   };
 }

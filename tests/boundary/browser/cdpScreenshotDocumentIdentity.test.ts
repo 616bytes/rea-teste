@@ -82,3 +82,132 @@ describe("screenshot committed document identity", () => {
     },
   );
 });
+
+it.each([23, -23])(
+  "preserves native capture options at current document scroll coordinate %s",
+  async (pageX) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }) =>
+        method === "Page.getLayoutMetrics"
+          ? {
+              cssVisualViewport: {
+                pageX,
+                pageY: 47,
+                clientWidth: 320,
+                clientHeight: 200,
+                scale: 2,
+              },
+            }
+          : undefined,
+    });
+    onTestFinished(() => browser.close());
+    const result = await new CdpBrowserProvider().captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(
+      browser.commands.find(({ method }) => method === "Page.captureScreenshot")
+        ?.params,
+    ).toEqual({
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    expect(
+      browser.commands.some(
+        ({ method }) =>
+          method.startsWith("Emulation.") || method === "Runtime.evaluate",
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([
+  {},
+  {
+    cssVisualViewport: {
+      pageX: null,
+      pageY: 0,
+      clientWidth: 320,
+      clientHeight: 200,
+    },
+  },
+  {
+    cssVisualViewport: {
+      pageX: 0,
+      pageY: 0,
+      clientWidth: 0,
+      clientHeight: 200,
+    },
+  },
+  {
+    cssVisualViewport: {
+      pageX: 0,
+      pageY: 0,
+      clientWidth: 320,
+      clientHeight: null,
+    },
+  },
+])(
+  "rejects invalid current-viewport metrics before reading pixels: %j",
+  async (metrics) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }) =>
+        method === "Page.getLayoutMetrics" ? metrics : undefined,
+    });
+    onTestFinished(() => browser.close());
+    const result = await new CdpBrowserProvider().captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "protocol_error" },
+    });
+    expect(
+      browser.commands.some(
+        ({ method }) => method === "Page.captureScreenshot",
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each(["pageX", "pageY", "clientWidth", "clientHeight"] as const)(
+  "rejects a changed %s between viewport selection and pixel capture",
+  async (field) => {
+    let reads = 0;
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }) => {
+        if (method !== "Page.getLayoutMetrics") return undefined;
+        const viewport = {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 320,
+          clientHeight: 200,
+        };
+        if (++reads > 1) viewport[field] += 1;
+        return { cssVisualViewport: viewport };
+      },
+    });
+    onTestFinished(() => browser.close());
+    const result = await new CdpBrowserProvider().captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "target_changed" },
+    });
+    expect(reads).toBe(2);
+  },
+);

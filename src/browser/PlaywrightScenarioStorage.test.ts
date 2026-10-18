@@ -163,7 +163,11 @@ const createInitializedStorage = async (
   return owner;
 };
 
-const emitSeedPause = (cdp: FakeCdp): void => {
+const emitSeedPause = (
+  cdp: FakeCdp,
+  privateOrigin = "https://storage.example.test",
+  documentOrigin: string | undefined = "https://storage.example.test",
+): void => {
   const addScript = cdp.calls.find(
     ({ method }) => method === "Page.addScriptToEvaluateOnNewDocument",
   );
@@ -171,10 +175,19 @@ const emitSeedPause = (cdp: FakeCdp): void => {
     throw new Error("Storage seed script is missing");
   const sourceUrl = (addScript.params as { readonly worldName: string })
     .worldName;
+  if (documentOrigin !== undefined)
+    cdp.emit("Runtime.executionContextCreated", {
+      context: {
+        id: 3,
+        origin: documentOrigin,
+        name: "",
+        auxData: { frameId: "root-frame", isDefault: true },
+      },
+    });
   cdp.emit("Runtime.executionContextCreated", {
     context: {
       id: 4,
-      origin: "https://storage.example.test",
+      origin: privateOrigin,
       name: sourceUrl,
       auxData: { frameId: "root-frame" },
     },
@@ -463,3 +476,123 @@ it("retains the exact in-flight detach after the bounded wait expires", async ()
   await retry;
   expect(cdp.detachCalls).toBe(1);
 });
+
+it("uses the exact document principal when the private isolated world omits its origin", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  emitSeedPause(cdp, "");
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  await owner?.close();
+});
+
+it("does not authorize a document from the private world's claimed origin", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  cdp.emit("Runtime.executionContextCreated", {
+    context: {
+      id: 8,
+      origin: "https://storage.example.test",
+      name: "",
+      auxData: { frameId: "other-frame", isDefault: true },
+    },
+  });
+  emitSeedPause(
+    cdp,
+    "https://storage.example.test",
+    "https://foreign.example.test",
+  );
+  await owner?.settle();
+  expect(
+    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toBe(false);
+  expect(cdp.calls.some(({ method }) => method === "Debugger.resume")).toBe(
+    true,
+  );
+  await owner?.close();
+});
+
+it("rejects an owned storage pause after its document principal was destroyed", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  emitSeedPause(cdp, "");
+  cdp.emit("Runtime.executionContextDestroyed", { executionContextId: 3 });
+  await expect(owner?.settle()).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "protocol_error",
+  });
+  expect(
+    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toBe(false);
+  expect(cdp.calls.some(({ method }) => method === "Debugger.resume")).toBe(
+    true,
+  );
+  await owner?.close();
+});
+
+it("rejects ambiguous default principals for the exact paused frame", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  cdp.emit("Runtime.executionContextCreated", {
+    context: {
+      id: 9,
+      origin: "https://foreign.example.test",
+      name: "",
+      auxData: { frameId: "root-frame", isDefault: true },
+    },
+  });
+  emitSeedPause(cdp, "");
+  await expect(owner?.settle()).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "protocol_error",
+  });
+  expect(
+    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toBe(false);
+  expect(cdp.calls.some(({ method }) => method === "Debugger.resume")).toBe(
+    true,
+  );
+  await owner?.close();
+});
+
+it.each(["document", "private"] as const)(
+  "rejects a replaced %s context while the storage-key reply is pending",
+  async (kind) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const owner = await createInitializedStorage(contextApi, page);
+    cdp.holdMethod = "Storage.getStorageKey";
+    emitSeedPause(cdp, "");
+    await waitForCall(cdp, "Storage.getStorageKey");
+    const contextId = kind === "document" ? 3 : 4;
+    cdp.emit("Runtime.executionContextDestroyed", {
+      executionContextId: contextId,
+    });
+    cdp.emit("Runtime.executionContextCreated", {
+      context: {
+        id: contextId,
+        origin: "https://foreign.example.test",
+        name: "replacement-context",
+        auxData: { frameId: "root-frame", isDefault: kind === "document" },
+      },
+    });
+    cdp.releaseHeldReply();
+    await expect(owner?.settle()).rejects.toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "protocol_error",
+    });
+    expect(
+      cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+    ).toBe(false);
+    expect(cdp.calls.some(({ method }) => method === "Debugger.resume")).toBe(
+      true,
+    );
+    await owner?.close();
+  },
+);

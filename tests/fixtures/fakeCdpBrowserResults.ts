@@ -22,6 +22,15 @@ export const resultFor = (
       return scriptSourceResult();
     case "Network.getResponseBody":
       return responseBodyResult(options);
+    case "Page.getLayoutMetrics":
+      return {
+        cssVisualViewport: {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 1,
+          clientHeight: 1,
+        },
+      };
     case "Page.captureScreenshot":
       return screenshotResult();
     case "Browser.getVersion":

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import assert from "node:assert/strict";
+import { chromium } from "playwright-core";
+import { CdpConnection } from "../dist/browser/CdpConnection.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { access, mkdtemp, rm } from "node:fs/promises";
@@ -107,7 +110,26 @@ try {
   });
   const endpoint = `http://127.0.0.1:${String(port)}`;
   const provider = new CdpBrowserProvider();
-  const target = await pageTarget(provider, endpoint);
+  const fixtureBrowser = await chromium.connectOverCDP(endpoint);
+  try {
+    const fixtureContext = fixtureBrowser.contexts()[0];
+    if (fixtureContext === undefined)
+      throw new Error("Owned browser did not expose its default context");
+    const startupPages = fixtureContext.pages();
+    const fixturePage = await fixtureContext.newPage();
+    await fixturePage.goto(`${site.origin}/app?startup=browser-secret-value`, {
+      waitUntil: "load",
+    });
+    for (const startupPage of startupPages) await startupPage.close();
+  } finally {
+    await fixtureBrowser.close();
+  }
+  const target = await pageTarget(
+    provider,
+    endpoint,
+    site.origin,
+    `${site.origin}/app?startup=browser-secret-value`,
+  );
   const observed = await provider.inspectPage(
     inspectWebPageInputSchema.parse({
       cdp_endpoint: endpoint,
@@ -188,11 +210,12 @@ try {
     }),
   );
   if (!captureDiff.ok) throw captureDiff.error;
-  if (
-    captureDiff.value.dimensions.dom_structure.status !== "unchanged" ||
-    captureDiff.value.dimensions.scripts.status !== "unchanged"
-  )
-    throw new Error("Real Chrome stable capture identities did not reconcile");
+  assert.equal(captureDiff.value.dimensions.dom_structure.status, "unchanged");
+  const stableScriptIdentity = assertStableScripts(
+    observed.value,
+    withSource.value,
+    captureDiff.value.dimensions.scripts,
+  );
 
   const screenshot = await provider.captureScreenshot(
     captureWebScreenshotInputSchema.parse({
@@ -249,6 +272,7 @@ try {
     endpoint,
     target,
     origin: site.origin,
+    assertStableScripts,
   });
   const attachedScenarioInput = browserScenario(
     {
@@ -382,6 +406,7 @@ try {
   const urlUserInfo = await verifyBrowserUrlUserInfo(endpoint, site.origin);
   report = {
     browser: observed.value.browser.product,
+    stableScriptIdentity,
     endpoint,
     target,
     domNodes: observed.value.dom.nodes.length,
@@ -497,7 +522,12 @@ async function verifyPublicBundle(endpoint, target, origin) {
 }
 
 async function verifyPageScopedTransport(provider, proxy, origin) {
-  const target = await pageTarget(provider, proxy.endpoint);
+  const target = await pageTarget(
+    provider,
+    proxy.endpoint,
+    origin,
+    `${origin}/app/session-1?startup=browser-secret-value`,
+  );
   const input = inspectWebPageInputSchema.parse({
     cdp_endpoint: proxy.endpoint,
     allowed_origins: [origin],
@@ -581,18 +611,45 @@ async function browserExecutable() {
   );
 }
 
-async function pageTarget(provider, endpoint) {
+async function pageTarget(provider, endpoint, origin, expectedUrl) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const listed = await provider.listTargets(
       listBrowserTargetsInputSchema.parse({
         cdp_endpoint: endpoint,
+        allowed_origins: [origin],
       }),
     );
-    if (listed.ok && listed.value.targets[0] !== undefined)
-      return listed.value.targets[0].target_id;
+    if (listed.ok) {
+      const targets = listed.value.targets.filter(
+        (candidate) =>
+          candidate.url === expectedUrl &&
+          new URL(candidate.url).origin === origin,
+      );
+      for (const target of targets) {
+        const discovered = await (await fetch(`${endpoint}/json/list`)).json();
+        const nativeTarget = discovered.find(
+          (candidate) => candidate.id === target.target_id,
+        );
+        if (typeof nativeTarget?.webSocketDebuggerUrl === "string") {
+          const connection = await CdpConnection.connect(
+            nativeTarget.webSocketDebuggerUrl,
+            "inspect_web_page",
+          );
+          try {
+            const frame = await connection.send("Page.getFrameTree");
+            if (frame?.frameTree?.frame?.url === expectedUrl)
+              return target.target_id;
+          } finally {
+            await connection.close();
+          }
+        }
+      }
+    }
     await delay(25);
   }
-  throw new Error("Real Chrome did not expose the local test page target");
+  throw new Error(
+    `Real Chrome did not expose the owned fixture page ${expectedUrl}`,
+  );
 }
 
 function delay(milliseconds) {
@@ -617,4 +674,73 @@ async function stopProcess(child) {
 
 function waitForExit(child) {
   return new Promise((resolve) => child.once("exit", resolve));
+}
+
+/** Check retained identities without claiming completeness for omitted scripts. */
+function assertStableScripts(before, after, dimension) {
+  const project = (capture) =>
+    capture.scripts.items.map(
+      ({
+        script_key,
+        url,
+        cdp_hash,
+        length,
+        is_module,
+        language,
+        source_map_url,
+      }) => ({
+        script_key,
+        url,
+        cdp_hash,
+        length,
+        is_module,
+        language,
+        source_map_url,
+      }),
+    );
+  assert.deepEqual(project(before), project(after));
+  assert.equal(dimension.total_changes, 0);
+  assert.deepEqual(dimension.changes, []);
+  const omissions = [before, after].map((capture) => {
+    for (const field of [
+      "truncated_sections",
+      "unavailable_sections",
+      "attach_limited_sections",
+    ])
+      assert(
+        !capture.completeness[field].includes("scripts"),
+        `Unexpected ${field} script gap`,
+      );
+    assert.equal(capture.completeness.dropped_events.scripts, 0);
+    const excluded = capture.completeness.excluded.filter(
+      ({ section }) => section === "scripts",
+    );
+    for (const omission of excluded) {
+      assert.equal(omission.reason, "unattributed_origin");
+      assert(Number.isInteger(omission.count) && omission.count > 0);
+    }
+    assert.equal(
+      capture.completeness.policy_filtered_sections.includes("scripts"),
+      excluded.length > 0,
+    );
+    return excluded.reduce((total, omission) => total + omission.count, 0);
+  });
+  if (omissions.some((count) => count > 0)) {
+    assert(omissions.every((count) => count > 0));
+    assert.equal(dimension.status, "unknown");
+    assert.equal(
+      dimension.reason,
+      "Script inventory was incomplete in at least one observation.",
+    );
+  } else {
+    assert.equal(dimension.status, "unchanged");
+    assert.equal(dimension.reason, null);
+  }
+  return {
+    retained_identities_equal: true,
+    retained_script_count: before.scripts.items.length,
+    global_inventory_status: dimension.status,
+    global_inventory_reason: dimension.reason,
+    unattributed_origin_omissions: omissions,
+  };
 }

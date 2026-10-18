@@ -9,7 +9,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # x-release-please-start-version
-RUN npm install -g rea-agents@6.5.0
+RUN npm install -g rea-agents@6.7.0
 # x-release-please-end
 
 RUN useradd -m rea

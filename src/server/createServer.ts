@@ -137,7 +137,7 @@ import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 
 const TARGET_FREE_INSTRUCTIONS =
-  "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations.";
+  "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations. An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
@@ -176,6 +176,8 @@ export interface CreateServerOptions {
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
+  /** Selects who closes the shared optional observation providers. */
+  readonly optionalObservationProviderOwner?: "server" | "caller";
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
@@ -308,7 +310,9 @@ export const createServer = (
   const webModuleTrace =
     options.webModuleTrace ?? createWebModuleTraceService(environment);
   const goBinary = options.goBinary ?? createGoBinaryService();
+  const rustBinary = options.rustBinary ?? createRustBinaryService();
   const peResources = createPeResourcesService();
+  const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
   const javascriptRecovery =
@@ -358,16 +362,21 @@ export const createServer = (
     options.packetCapture ?? createPacketCaptureService(environment);
   const signalRecording =
     options.signalRecording ?? createSignalRecordingService(environment);
+  const webRuntime = options.webRuntime ?? createWebRuntimeService();
   const apktool =
     options.apktoolAnalysis ??
     createApktoolResourceAnalysisProvider(environment);
   const jeb = options.jebAnalysis ?? createJebAnalysisProvider(environment);
   const adbDevice =
     options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment);
+  const cutter = new CutterBridgeService(
+    new CutterBridgeClient(providerEnvironment),
+  );
   let providerClose: Promise<void> | undefined;
   const closeProviders = (): Promise<void> => {
     providerClose ??= Promise.allSettled([
       android.close(),
+      cutter.close(),
       fridaInstrumentation.closeAll(),
       wasmArtifact.close(),
       packetCapture.close(),
@@ -384,9 +393,20 @@ export const createServer = (
       webSourceLocation.close(),
       webModuleTrace.close(),
       goBinary.close(),
+      rustBinary.close(),
       peResources.close(),
+      electronFuses.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
+      ...(options.optionalObservationProviderOwner === "caller"
+        ? []
+        : [
+            options.browserObservation?.close?.() ?? Promise.resolve(),
+            options.browserScenarioCapture?.close?.() ?? Promise.resolve(),
+            options.electronObservation?.close?.() ?? Promise.resolve(),
+            options.electronActiveObservation?.close?.() ?? Promise.resolve(),
+          ]),
+      webRuntime.provider.close?.() ?? Promise.resolve(),
       artifactResources.close(),
       reverseEngineering.close(),
       firmwareAnalysis.close(),
@@ -433,7 +453,9 @@ export const createServer = (
     withAdmittedAnalysis: analysisAdmission,
     artifactResources,
     goBinary,
+    rustBinary,
     peResources,
+    electronFuses,
     webNetworkCapture,
   };
   registerBinaryAnalysisTools(toolContext);
@@ -470,7 +492,7 @@ export const createServer = (
   );
   registerCutterTools(
     server,
-    new CutterBridgeService(new CutterBridgeClient(providerEnvironment)),
+    cutter,
     toolLogger,
     delivery,
     session === undefined
@@ -535,6 +557,7 @@ export const createServer = (
     evmInterface,
     jeb,
     firmwareAnalysis,
+    webRuntime,
   );
   registerAdbTools(
     server,
@@ -581,6 +604,7 @@ export const createServer = (
         adbDevice.inspectAvailability(signal),
       apktoolAnalysisAvailability: (signal) =>
         apktool.inspectAvailability(signal),
+      jebAnalysisAvailability: (signal) => jeb.inspectAvailability(signal),
       startedAt,
     });
   }
@@ -629,6 +653,7 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
     withAdmittedAnalysis,
     goBinary,
+    rustBinary,
     peResources,
     webNetworkCapture,
   }: ServerToolContext,
@@ -637,6 +662,7 @@ const registerConfiguredAnalysisTools = (
   evmInterface: EvmInterfaceService,
   jeb: JebAnalysisPort,
   firmwareAnalysis: FirmwareAnalysisService,
+  webRuntime: WebRuntimeService,
 ): void => {
   registerAndroidTools(
     server,
@@ -684,7 +710,7 @@ const registerConfiguredAnalysisTools = (
   );
   registerRustTools(
     server,
-    options.rustBinary ?? createRustBinaryService(),
+    rustBinary,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -742,7 +768,7 @@ const registerConfiguredAnalysisTools = (
   );
   registerWebRuntimeTools(
     server,
-    options.webRuntime ?? createWebRuntimeService(),
+    webRuntime,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -795,7 +821,9 @@ const createSessionRecorders = (
 
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
+  readonly rustBinary: RustBinaryService;
   readonly peResources: PeResourcesService;
+  readonly electronFuses: ElectronFuseService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
   readonly server: EvidenceMcpServer;
@@ -862,6 +890,7 @@ const registerBinaryAnalysisTools = ({
 };
 
 const registerObservationTools = ({
+  electronFuses,
   evidenceById,
   server,
   options,
@@ -889,7 +918,7 @@ const registerObservationTools = ({
     evidenceById,
     electron: options.electronObservation,
     electronActive: options.electronActiveObservation,
-    electronFuses: options.electronFuses ?? createElectronFuseService(),
+    electronFuses,
     observationLoadFailure:
       options.optionalProviderLoadFailures?.electronObservation,
     activeLoadFailure:

@@ -461,6 +461,21 @@ const pullFailure = z.strictObject({
   message: z.string().min(1),
 });
 
+/** Display ownership and source declarations, including unknown identities. */
+export const adbWindowFocusContextSchema = z.strictObject({
+  scope: z.enum(["display", "unscoped"]),
+  display_id: z.string().nullable(),
+  header_line: z.string().nullable(),
+  declarations: z.array(
+    z.strictObject({
+      field: z.enum(["mCurrentFocus", "mFocusedApp"]),
+      value: z.string().nullable(),
+      raw_line: z.string().min(1),
+    }),
+  ),
+});
+export type AdbWindowFocusContext = z.infer<typeof adbWindowFocusContextSchema>;
+
 /** Portable ADB observations with explicit identity and coverage limitations. */
 export const adbResultSchemas = {
   inspect_adb_client: z.strictObject({
@@ -527,7 +542,13 @@ export const adbResultSchemas = {
     serial: z.string().min(1),
     package_name: packageNameSchema,
     version_name: z.string().nullable(),
-    version_code: z.number().int().nullable(),
+    version_code: z
+      .string()
+      .regex(/^-?\d+$/u)
+      .nullable()
+      .describe(
+        "Long version code exactly as dumpsys package prints it; may exceed the JSON safe-integer range",
+      ),
     first_install_time: z.string().nullable(),
     last_update_time: z.string().nullable(),
     installer_package_name: z.string().nullable(),
@@ -646,6 +667,9 @@ export const adbResultSchemas = {
   inspect_adb_window: z.strictObject({
     client,
     serial: z.string().min(1),
+    source_section: z.enum(["windows", "displays"]),
+    focus_contexts: z.array(adbWindowFocusContextSchema),
+    focus_summary: z.enum(["single_context", "ambiguous", "unavailable"]),
     focused_window: z.string().nullable(),
     focused_app: z.string().nullable(),
     observed_lines: z.array(z.string().min(1)),
@@ -726,6 +750,12 @@ export const adbResultSchemas = {
   }),
 } as const;
 
+/** Parsed focus facts, before the adapter supplies client and command identity. */
+export type AdbWindowFocusObservation = Omit<
+  z.infer<typeof adbResultSchemas.inspect_adb_window>,
+  "client" | "serial" | "source_section"
+>;
+
 /** Launch-attempt facts retained when Activity Manager does not report success. */
 export type AdbActivityStartPartialObservation =
   | {
@@ -751,15 +781,17 @@ export type AdbAcquiredFilePartialObservation =
   | {
       readonly provider_id: "adb";
       readonly operation: "pull_adb_file";
-      readonly result: {
-        readonly client: z.infer<
-          typeof adbResultSchemas.pull_adb_file
-        >["client"];
-        readonly serial: string;
-        readonly local_path: string;
-        readonly device_path: string;
-        readonly digest_status: "unknown";
-      };
+      readonly result:
+        | {
+            readonly client: z.infer<
+              typeof adbResultSchemas.pull_adb_file
+            >["client"];
+            readonly serial: string;
+            readonly local_path: string;
+            readonly device_path: string;
+            readonly digest_status: "unknown";
+          }
+        | z.infer<typeof adbResultSchemas.pull_adb_file>;
     }
   | {
       readonly provider_id: "adb";

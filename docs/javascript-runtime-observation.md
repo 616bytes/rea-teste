@@ -95,6 +95,11 @@ pauses or resumes execution, calls `Runtime.runIfWaitingForDebugger`, launches
 the target, instruments JavaScript, or invokes Electron APIs. Closing a call
 closes only REA's WebSocket.
 
+Each WebSocket handshake and command response has its own 20-second deadline,
+separate from the caller-selected observation window. A stalled handshake or
+command reports `provider_timeout` and retains observations already received;
+caller cancellation still reports cancellation.
+
 The direct observations are:
 
 - `Debugger.scriptParsed`, establishing that a bounded script location was
@@ -104,7 +109,9 @@ The direct observations are:
 - `Runtime.executionContextCreated`,
   `Runtime.executionContextDestroyed`, and
   `Runtime.executionContextsCleared`, establishing context lifecycle within
-  the capture window.
+  the capture window. A created or destroyed event whose context ID is
+  missing or not a safe integer adds no context record; it is retained only
+  as a count reported in `unknowns`.
 
 The Inspector protocol does not directly expose require/import caller edges,
 EventEmitter emissions or listener invocation, Electron IPC messages or

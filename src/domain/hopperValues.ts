@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fixedTupleSchema } from "./fixedTupleSchema.js";
 import { addressCoordinate } from "./native/addressCoordinate.js";
 
 import type { JsonValue } from "./jsonValue.js";
@@ -286,10 +287,10 @@ const swiftStringLiteralFields = {
   value: z
     .string()
     .describe("Decoded UTF-8 text, including the canonical empty string."),
-  registers: z.tuple([z.string(), z.string()]),
-  words: z
-    .tuple([z.string(), z.string()])
-    .describe("Observed constant register values, in register order."),
+  registers: fixedTupleSchema([z.string(), z.string()]),
+  words: fixedTupleSchema([z.string(), z.string()]).describe(
+    "Observed constant register values, in register order.",
+  ),
 };
 
 /** A Swift String literal decoded from the two words of its ABI value, not a data reference. */
@@ -524,6 +525,39 @@ export const parseSegmentImageBase = (
     segments.every((segment) => segment.image_base === base)
     ? base
     : undefined;
+};
+
+/** Project the same overview from complete lists or provider-owned aggregates. */
+export const projectBinaryOverview = (input: {
+  readonly document: string;
+  readonly procedure_count: number;
+  readonly string_count: number;
+  readonly segments?: readonly SegmentSummary[];
+}): JsonValue => {
+  const { document, procedure_count, string_count, segments } = input;
+  const imageBase =
+    segments === undefined ? undefined : parseSegmentImageBase(segments);
+  return {
+    document,
+    ...(imageBase === undefined ? {} : { image_base: imageBase }),
+    ...(segments === undefined
+      ? {}
+      : {
+          segments: segments.map(
+            ({ name, start, end, image_base, address_space }) => ({
+              name,
+              start,
+              end,
+              length: addressDistance(start, end),
+              ...(image_base === undefined ? {} : { image_base }),
+              ...(address_space === undefined ? {} : { address_space }),
+            }),
+          ),
+          segment_count: segments.length,
+        }),
+    procedure_count,
+    string_count,
+  };
 };
 
 /** Parse direct or wrapped provider document names. */

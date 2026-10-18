@@ -173,12 +173,11 @@ const cleanupInventoryOwners = async ({
   for (const owner of owners) {
     const attempt = await options.resourceScope.release(owner);
     if (attempt.kind === "released") continue;
-    const primary =
-      cleanupFailure ??
-      (outcome.kind === "failed" ? outcome.cause : attempt.cause);
-    cleanupFailure = ArtifactReaderFailure.withCleanup(
-      primary,
-      ArtifactReaderFailure.cleanupObservation(attempt.cause, owner.resource),
+    cleanupFailure = options.resourceScope.cleanupFailure(
+      cleanupFailure === undefined
+        ? outcome
+        : { kind: "failed", cause: cleanupFailure },
+      [attempt],
       outcome.kind === "completed"
         ? { kind: "artifact-inventory", inventory: outcome.snapshot }
         : undefined,
@@ -289,7 +288,6 @@ const buildInventorySnapshot = async (
     provenance: reader?.provenance() ?? [],
     integrity_contradictions: integrityContradictions,
     coverage,
-    coverage_status: coverage.status === "complete" ? "complete" : "partial",
     limitations: buildLimitations(
       [...traversal.limitations, ...edgeResult.limitations],
       integrityContradictions,

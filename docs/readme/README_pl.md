@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · **Polski** · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA: Reverse Engineer Anything
 
@@ -166,7 +166,7 @@ Statyczna analiza JavaScript i .NET odczytuje dostarczone pliki bez uruchamiania
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../installation.md#hopper), [przewodnik IDA](../ida-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
+Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../installation.md#hopper), [przewodnik IDA](../ida-provider.md), [Kuna](../kuna-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
 
 ## Przykłady zastosowań
 
@@ -272,7 +272,7 @@ Zgłaszaj podatności zgodnie z [SECURITY.md](../../SECURITY.md).
 
 ## Historia gwiazdek
 
-🎉 **200 000 gwiazdek na GitHubie — dziękujemy!**
+🎉 **300 000 gwiazdek na GitHubie — dziękujemy!**
 
 Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują nowe funkcje, testują kompilacje i przesyłają poprawki.
 

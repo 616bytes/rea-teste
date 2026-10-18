@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -22,7 +22,7 @@ import {
 const executableAvailable = (path: string): boolean => {
   try {
     accessSync(path, constants.X_OK);
-    return true;
+    return statSync(path).isFile();
   } catch {
     return false;
   }
@@ -65,7 +65,12 @@ const ghidraProjectCacheConfig = (
 export const parseConfig = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Result<AppConfig, ConfigurationError> => {
-  const parsed = parseEnvironment(environment);
+  // JEB validates its own timeout during optional provider composition. It is
+  // not an AppConfig setting and must not prevent unrelated CLI/MCP startup.
+  // Registration validation still checks the complete environment directly.
+  const { REA_JEB_MCP_TIMEOUT_MS: _jebTimeout, ...appEnvironment } =
+    environment;
+  const parsed = parseEnvironment(appEnvironment);
   if (!parsed.ok) return parsed;
   const env = parsed.value;
   // An existing Ghidra project is opened with -process and already carries its

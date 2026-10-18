@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · **Español** · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA: Ingeniería inversa de cualquier cosa
 
@@ -166,7 +166,7 @@ La inspección estática de JavaScript y .NET lee los archivos suministrados sin
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Los formatos nativos y los sistemas anfitriones compatibles varían según el proveedor. Consulta [configuración de Hopper y Ghidra](../installation.md#hopper), la [guía de IDA](../ida-provider.md) y la [compatibilidad experimental de Ghidra en Windows](../windows-ghidra-p0.md). Ghidra también admite [análisis de DOS de 16 bits](../ghidra-dos.md). Para elegir un proveedor, consulta la [guía de CLI](../cli.md#choose-a-provider). Comprueba la [disponibilidad por versión](../installation.md#released-package-and-main) de las funciones añadidas después de la última versión publicada en npm.
+Los formatos nativos y los sistemas anfitriones compatibles varían según el proveedor. Consulta [configuración de Hopper y Ghidra](../installation.md#hopper), la [guía de IDA](../ida-provider.md), [Kuna](../kuna-provider.md) y la [compatibilidad experimental de Ghidra en Windows](../windows-ghidra-p0.md). Ghidra también admite [análisis de DOS de 16 bits](../ghidra-dos.md). Para elegir un proveedor, consulta la [guía de CLI](../cli.md#choose-a-provider). Comprueba la [disponibilidad por versión](../installation.md#released-package-and-main) de las funciones añadidas después de la última versión publicada en npm.
 
 ## Casos prácticos
 
@@ -272,7 +272,7 @@ Informa de vulnerabilidades siguiendo [SECURITY.md](../../SECURITY.md).
 
 ## Historial de estrellas
 
-🎉 **200.000 estrellas en GitHub: ¡gracias!**
+🎉 **300.000 estrellas en GitHub: ¡gracias!**
 
 Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban compilaciones y contribuyen con correcciones.
 

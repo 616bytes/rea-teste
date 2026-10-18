@@ -202,15 +202,22 @@ const addEndpoint = (
     ) ?? input.asset;
   const key = compactStringIdentityKey(input.value.value);
   const candidate = input.value.interpretation === "candidate";
+  const partial = input.value.resolution === "partial";
   const candidateLimitation =
     "The unbound method-like argument is only a candidate; its receiver does not establish a network call.";
+  const partialLimitation =
+    "The request target is not an exact literal; the endpoint value retains the unresolved source expression.";
   const label = `${input.value.kind} ${candidate ? "endpoint candidate" : "endpoint"}`;
   const node = context.accumulator.addNode({
     kind: "endpoint",
     identity: artifactLocalIdentity(
       input.file.sha256,
       input.value.kind,
-      JSON.stringify([input.value.interpretation ?? "literal", key]),
+      JSON.stringify([
+        input.value.interpretation ?? "literal",
+        ...(partial ? ["partial", input.value.location] : []),
+        key,
+      ]),
     ),
     observations: [
       {
@@ -221,6 +228,7 @@ const addEndpoint = (
           value: input.value.value,
           mechanism: input.value.mechanism,
           ...(candidate ? { interpretation: input.value.interpretation } : {}),
+          ...(partial ? { resolution: input.value.resolution } : {}),
         },
         evidence: candidate
           ? staticInferenceEvidence({
@@ -238,6 +246,7 @@ const addEndpoint = (
               range: input.value.location,
               operation: "discover-static-endpoint",
               coverage: input.coverage,
+              ...(partial ? { limitations: [partialLimitation] } : {}),
             }),
       },
     ],
@@ -252,13 +261,16 @@ const addEndpoint = (
     properties: {
       mechanism: input.value.mechanism,
       ...(candidate ? { interpretation: input.value.interpretation } : {}),
+      ...(partial ? { resolution: input.value.resolution } : {}),
     },
     ...(candidate
       ? {
           confidence: "low" as const,
           limitations: [candidateLimitation],
         }
-      : {}),
+      : partial
+        ? { limitations: [partialLimitation] }
+        : {}),
   });
 };
 
@@ -266,6 +278,9 @@ const addStorage = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticStorage>,
 ): void => {
+  const candidate = input.value.interpretation === "candidate";
+  const limitation =
+    "The constructor name is only a candidate; an unchanged SQLite module API origin is unproven.";
   const source =
     sourceNodeFor(
       context,
@@ -277,7 +292,7 @@ const addStorage = (
     kind: "storage",
     identity: artifactLocalIdentity(
       input.file.sha256,
-      input.value.kind,
+      candidate ? `${input.value.kind}:candidate` : input.value.kind,
       input.value.name ?? input.value.mechanism,
     ),
     observations: [
@@ -287,14 +302,25 @@ const addStorage = (
           storage_kind: input.value.kind,
           name: input.value.name,
           mechanism: input.value.mechanism,
+          ...(candidate ? { interpretation: "candidate" } : {}),
         },
-        evidence: astObservationEvidence({
-          sha256: input.file.sha256,
-          path: input.file.path,
-          range: input.value.location,
-          operation: "discover-static-storage",
-          coverage: input.coverage,
-        }),
+        evidence: candidate
+          ? staticInferenceEvidence({
+              sha256: input.file.sha256,
+              path: input.file.path,
+              range: input.value.location,
+              operation: "classify-static-storage-candidate",
+              coverage: input.coverage,
+              confidence: "low",
+              limitations: [limitation],
+            })
+          : astObservationEvidence({
+              sha256: input.file.sha256,
+              path: input.file.path,
+              range: input.value.location,
+              operation: "discover-static-storage",
+              coverage: input.coverage,
+            }),
       },
     ],
   });
@@ -305,7 +331,13 @@ const addStorage = (
     range: input.value.location,
     coverage: input.coverage,
     relation: "persists_to",
-    properties: { mechanism: input.value.mechanism },
+    properties: {
+      mechanism: input.value.mechanism,
+      ...(candidate ? { interpretation: "candidate" } : {}),
+    },
+    ...(candidate
+      ? { confidence: "low" as const, limitations: [limitation] }
+      : {}),
   });
 };
 

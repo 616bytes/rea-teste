@@ -600,6 +600,7 @@ const launchExistingProject = async (
     analyzeHeadlessPath: fixturePath,
     platform: "linux",
     javaHome,
+    configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
     bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
     existingProject: { projectPath, programName: "game.exe" },
     spawnProcess: async (options) => {
@@ -828,26 +829,13 @@ describe("Ghidra Windows launcher", () => {
 });
 
 describe("Ghidra Windows launcher runtime", () => {
-  it.skipIf(process.platform !== "win32").each([
-    {
-      properties:
-        "application.version=12.1.4\napplication.release.name=PUBLIC\n",
-      release: "ghidra_12.1.4_PUBLIC",
-    },
-    { properties: undefined, release: "renamed-install" },
-    { properties: "application.version=12.1.4\n", release: "renamed-install" },
-  ])(
-    "prepares the release directory through the Windows runtime ($release)",
-    async ({ properties, release }) => {
+  it
+    .skipIf(process.platform !== "win32")
+    .each(["ghidra_12.1.4_PUBLIC", "ghidra_12.1.2_DEV"])(
+    "prepares the inspected release directory through the Windows runtime (%s)",
+    async (release) => {
       const parent = await createTestTempDirectory("rea-launch-config-");
       const installRoot = join(parent, "renamed-install");
-      if (properties !== undefined) {
-        await mkdir(join(installRoot, "Ghidra"), { recursive: true });
-        await writeFile(
-          join(installRoot, "Ghidra", "application.properties"),
-          properties,
-        );
-      }
       const runtime = await createGhidraTestRuntime(parent);
       runtimes.push(runtime);
       const spawnProcess = vi.fn(async () => {
@@ -856,6 +844,7 @@ describe("Ghidra Windows launcher runtime", () => {
       const launcher = new GhidraHeadlessLauncher({
         environment: process.env,
         platform: "win32",
+        configurationDirectoryName: release,
         analyzeHeadlessPath: join(
           installRoot,
           "support",
@@ -910,6 +899,7 @@ describe("Ghidra Windows launcher runtime", () => {
         // Select the fixture's Node PATH and injected JVM options explicitly.
         environment: process.env,
         analyzeHeadlessPath: fixturePath,
+        configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
         // POSIX follows the real inspected-JVM route; Windows uses the official
         // batch script because its launcher contract differs.
         platform: "win32",

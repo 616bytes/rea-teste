@@ -556,13 +556,34 @@ export const createAmbientPathResolver = (
           for (const element of root.elements)
             if (t.isSpreadElement(element)) continueWith(element.argument);
             else if (t.isExpression(element)) continueWith(element);
+        } else if (possibleWrites) {
+          const index = Number(key);
+          if (
+            key !== null &&
+            (!Number.isInteger(index) || index < 0 || String(index) !== key)
+          )
+            continue;
+          let minimumOffset = 0;
+          let uncertainOffset = false;
+          for (const element of root.elements) {
+            if (t.isSpreadElement(element)) {
+              if (key === null || index >= minimumOffset)
+                continueWith(element.argument, [null, ...suffix.slice(1)]);
+              uncertainOffset = true;
+            } else {
+              if (
+                t.isExpression(element) &&
+                (key === null ||
+                  index === minimumOffset ||
+                  (uncertainOffset && index >= minimumOffset))
+              )
+                continueWith(element, suffix.slice(1));
+              minimumOffset += 1;
+            }
+          }
         } else if (!root.elements.some(t.isSpreadElement)) {
           const index = Number(key);
-          if (key === null && possibleWrites) {
-            for (const element of root.elements)
-              if (t.isExpression(element))
-                continueWith(element, suffix.slice(1));
-          } else if (
+          if (
             key !== null &&
             Number.isInteger(index) &&
             index >= 0 &&

@@ -78,6 +78,8 @@ const candidateSources = {
     'class Run extends Function("Map.prototype.get = fetch") { constructor() { (() => super())(); } } new Run(); new Map().get("/arrow-superclass");',
   "awaited-thenable.mjs":
     'await { then: Function("resolve", "Map.prototype.get = fetch; resolve()") }; new Map().get("/awaited-thenable");',
+  "spread-constructor.mjs":
+    'const callbacks = [Function("Map.prototype.get = fetch")]; Reflect.construct(function Run(fn) { fn(); }, [...callbacks]); new Map().get("/spread-constructor");',
   "mixed-destination.mjs":
     'function expose(external) { const box = condition ? {} : external; box.p = Map.prototype; } expose(holder); patch(holder); new Map().get("/mixed-destination");',
 };
@@ -112,6 +114,7 @@ const candidateEndpoints = [
   "/prototype",
   "/returned",
   "/returned-write",
+  "/spread-constructor",
   "/stored-eval",
 ];
 
@@ -194,6 +197,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       "/prototype",
       "/returned",
       "/returned-write",
+      "/spread-constructor",
       "/stored-eval",
       "session",
     ]);

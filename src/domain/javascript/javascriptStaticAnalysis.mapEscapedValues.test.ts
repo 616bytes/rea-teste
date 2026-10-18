@@ -3,6 +3,46 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  'const callbacks = [Function("Map.prototype.get=fetch")]; Reflect.construct(function Run(fn) { fn(); }, [...callbacks]);',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; const nested = [...callbacks]; Reflect.construct(Run, [...nested]);',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; Reflect.construct(Run, [...unknown, ...callbacks]);',
+  'const callbacks = Object.freeze([Function("Map.prototype.get=fetch")]); Reflect.construct(Run, [...callbacks]);',
+  'const source = { toString: Function("Map.prototype.get=fetch;return 0") }; const args = [source]; Reflect.construct(Function, [...args]);',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; const values = [...unknown, ...callbacks]; consume(values[1]);',
+  'const values = [...unknown, Function("Map.prototype.get=fetch")]; consume(values[0]);',
+  "const values = [...unknown, {}]; values[0].prototype = Map.prototype;",
+  "const values = [{}, ...unknown]; values[1].prototype = Map.prototype;",
+])(
+  "retains selected capabilities through array spread carriers: %s",
+  (prefix) => {
+    expect(
+      analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+        .endpoints,
+    ).toContainEqual(
+      expect.objectContaining({
+        value: "/accounts",
+        interpretation: "candidate",
+      }),
+    );
+  },
+);
+
+it.each([
+  'const callbacks = [Function("Map.prototype.get=fetch")]; const values = [...callbacks];',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; const values = [{}, ...callbacks]; consume(values[0]);',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; const values = [, ...callbacks]; consume(values[0]);',
+  "const values = [{}, ...unknown]; values[0].prototype = Map.prototype;",
+  'const callbacks = [Function("Map.prototype.get=fetch")]; Reflect.construct(Function, [...callbacks]);',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; Reflect.construct(Function, [], callbacks[0]);',
+  'const args = [{ unused: Function("Map.prototype.get=fetch"), toString() { return ""; } }]; Reflect.construct(Function, [...args]);',
+])("preserves unrelated and inert spread-array selections: %s", (prefix) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+      .endpoints,
+  ).toEqual([]);
+});
+
+it.each([
   'class Run extends Function("Map.prototype.get=fetch") { constructor() { (() => super())(); } } new Run();',
   'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); const alias = start; alias(); } } new Run();',
   'class Run extends Function("Map.prototype.get=fetch") { constructor() { const start = () => super(); const outer = () => start(); outer(); } } new Run();',

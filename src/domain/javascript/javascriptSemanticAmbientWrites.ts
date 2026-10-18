@@ -17,6 +17,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticIterationSources,
   type SemanticIterationSource,
@@ -238,14 +239,32 @@ export const createAmbientPathResolver = (
         if (binding === undefined) continue;
         const stable = semanticStableInitializer(binding, state);
         const readAt = current.readsAtSelf ? root : capture;
+        const selected =
+          possibleWrites && readAt !== undefined
+            ? semanticBindingAtRead(binding, readAt, state.parentsByNode)
+                .binding
+            : binding;
         const initializers = possibleWrites
-          ? readAt === undefined
-            ? binding.initializers
-            : semanticBindingAtRead(binding, readAt, state.parentsByNode)
-                .binding.initializers
+          ? selected.initializers
           : stable === undefined
             ? []
             : [stable];
+        if (possibleWrites)
+          for (const initializer of selected.referenceInitializers) {
+            const path = semanticCopiedReferencePath(
+              initializer,
+              suffix ?? [null],
+              escapedContents ? "escape" : "reference",
+            );
+            if (path === null) continue;
+            pending.push({
+              node: initializer.node,
+              readsAtSelf: true,
+              suffix: path.map((key) =>
+                key === null || typeof key === "object" ? null : String(key),
+              ),
+            });
+          }
         for (const initializer of initializers)
           pending.push({
             node: initializer.node,

@@ -1,5 +1,14 @@
 import * as t from "@babel/types";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
+import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+import {
+  collectJavaScriptIdentityWritesSteps,
+  electronMemberPath,
+} from "./javascriptElectronMemberWrites.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
@@ -265,6 +274,12 @@ const moduleRequireWrites = new WeakMap<
   readonly t.Node[]
 >();
 
+/** Each property is read at its own capture, including shallow-copy slots. */
+type ModuleProjection = readonly {
+  readonly key: string | number | null;
+  readonly capture: t.Node;
+}[];
+
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
 ): readonly t.Node[] => {
@@ -275,16 +290,31 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, []);
   const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
+  const projectionMayAliasModule = createModuleProjectionWriteQuery(
+    state,
+    interop,
+  );
   const isModuleObject = (
     node: t.Node,
     visited = new Set<string>(),
+    projection: ModuleProjection = [],
   ): boolean => {
-    const value = unwrapJavaScriptExpression(node).node;
+    const { root: value, members } = electronMemberPath(node);
+    const selected = [
+      ...members.map((key) => ({ key, capture: node })),
+      ...projection,
+    ];
     if (!t.isIdentifier(value)) return false;
-    if (value.name === "module")
-      return resolveSemanticBindingState(state, value, "module") === undefined
-        ? !semanticResolutionBlocked(state, value, "module")
-        : isUnmodifiedCommonJsWrapperBinding(value, "module", state);
+    if (value.name === "module") {
+      const original =
+        resolveSemanticBindingState(state, value, "module") === undefined
+          ? !semanticResolutionBlocked(state, value, "module")
+          : isUnmodifiedCommonJsWrapperBinding(value, "module", state);
+      return (
+        original &&
+        (selected.length === 0 || projectionMayAliasModule(selected))
+      );
+    }
     const binding = resolveSemanticBindingState(state, value, value.name);
     if (binding === undefined || visited.has(binding.bindingId)) return false;
     const next = new Set(visited).add(binding.bindingId);
@@ -293,12 +323,50 @@ const writesModuleRequire = (
       value,
       state.parentsByNode,
     ).binding;
-    // A property projection belongs to that property, not the module itself.
-    // Retain every possible whole-object alias, including default sources;
-    // later unrelated assignments must not hide an earlier delegate write.
-    return [...atRead.initializers, ...atRead.referenceInitializers].some(
-      ({ node: init, projection }) =>
-        projection.length === 0 && isModuleObject(init, next),
+    // A module property starts distinct, but a visible replacement can store
+    // the module itself. Retain the complete path through nested projections.
+    // Separate capture sites keep a copied slot fixed while allowing a later
+    // read of a property inside that captured object to see intervening writes.
+    const sources = [
+      ...atRead.initializers.map((initializer) => ({
+        node: initializer.node,
+        path: [
+          ...initializer.projection.map((key) => ({
+            key,
+            capture: initializer.node,
+          })),
+          ...selected,
+        ],
+      })),
+      ...atRead.referenceInitializers.flatMap((initializer) => {
+        const path = semanticCopiedReferencePath(
+          initializer,
+          selected.map(({ key }) => key),
+          "reference",
+        );
+        if (path === null) return [];
+        const captures = [
+          ...initializer.projection.map(() => initializer.node),
+          ...selected.map(({ capture }) => capture),
+        ];
+        const offset = initializer.copyProjectionOffset;
+        if (offset !== undefined) {
+          captures.splice(offset, 1);
+          captures[offset] = initializer.node;
+        }
+        return [
+          {
+            node: initializer.node,
+            path: path.map((key, index) => ({
+              key: typeof key === "object" ? null : key,
+              capture: captures[index] ?? initializer.node,
+            })),
+          },
+        ];
+      }),
+    ];
+    return sources.some(({ node: init, path }) =>
+      isModuleObject(init, next, path),
     );
   };
   traverseJavaScriptAst(state.program, {
@@ -309,35 +377,17 @@ const writesModuleRequire = (
             t.isUnaryExpression(node, { operator: "delete" })
           ? node.argument
           : undefined;
-      if (target !== undefined) {
-        const members: string[] = [];
-        let root: t.Node = target;
-        while (
-          t.isMemberExpression(root) ||
-          t.isOptionalMemberExpression(root)
-        ) {
-          const key = semanticStaticPropertyKey(root.property, root.computed);
-          if (key === null) break;
-          members.unshift(key);
-          root = root.object;
-        }
+      if (
+        (t.isMemberExpression(target) ||
+          t.isOptionalMemberExpression(target)) &&
+        isModuleObject(target.object)
+      ) {
+        const key = semanticStaticPropertyKey(target.property, target.computed);
         if (
-          members.length === 1 &&
-          (members[0] === "require" ||
-            (members[0] === "__proto__" && t.isAssignmentExpression(node))) &&
-          isModuleObject(root)
+          key === null ||
+          key === "require" ||
+          (key === "__proto__" && t.isAssignmentExpression(node))
         )
-          writes.push(node);
-        else if (
-          members.length === 0 &&
-          (t.isMemberExpression(target) ||
-            t.isOptionalMemberExpression(target)) &&
-          target.computed &&
-          semanticStaticPropertyKey(target.property, true) === null &&
-          isModuleObject(target.object)
-        )
-          // An unknown computed key may be "require"; retain uncertainty rather
-          // than treating this direct delegate write as a proven unrelated slot.
           writes.push(node);
       }
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -394,6 +444,51 @@ const writesModuleRequire = (
   });
   moduleRequireWrites.set(state, writes);
   return writes;
+};
+
+/** A replaced module property may refer back to its owner. Query nominal paths
+ * from the shared write collector rather than guessing property values. Build
+ * this index only when a projected module alias actually needs the proof. */
+const createModuleProjectionWriteQuery = (
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+) => {
+  type Write = { node: t.Node; path: readonly (string | null)[] };
+  let writes: Write[] | undefined;
+  return (projection: ModuleProjection): boolean => {
+    if (writes === undefined) {
+      const collected: Write[] = [];
+      writes = collected;
+      const paths = createAmbientPathResolver(state, true);
+      completeSemanticSteps(
+        collectJavaScriptIdentityWritesSteps(
+          state.program,
+          (node, kind, site) => (kind === "member" ? paths(node, site) : []),
+          interop.intrinsicInvocation,
+          interop.staticString,
+          interop.isFreshObject,
+          (node, path) => {
+            if (path[0] === "commonjs-module")
+              collected.push({ node, path: path.slice(1) });
+          },
+        ),
+      );
+    }
+    return writes.some(({ node, path }) => {
+      const capture = projection[path.length - 1]?.capture;
+      return (
+        capture !== undefined &&
+        path.length <= projection.length &&
+        path.every(
+          (key, index) =>
+            key === null ||
+            projection[index]?.key === null ||
+            key === String(projection[index]?.key),
+        ) &&
+        semanticEffectTiming(capture, node, state) !== "after"
+      );
+    });
+  };
 };
 
 /** Unknown keys and spreads cannot prove the loader delegate was untouched. */

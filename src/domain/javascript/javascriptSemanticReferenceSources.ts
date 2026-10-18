@@ -1,6 +1,13 @@
 import type * as t from "@babel/types";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import type {
+  JavaScriptSemanticAnalysisState,
+  JavaScriptSemanticBindingState,
+} from "./javascriptSemanticState.js";
+import {
+  semanticArrayIndex,
+  type JavaScriptSemanticPropertyPath as PropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 
@@ -50,4 +57,48 @@ export const semanticSelectedReferenceSlot = (
     evaluateSemanticExpression(source.node, state, capturePoint),
     path,
   );
+};
+
+/** Follow copied child references without equating a fresh rest copy with its source. */
+export const semanticCopiedReferencePath = (
+  initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
+  path: PropertyPath,
+  effect: "write" | "escape" | "reference",
+): PropertyPath | null => {
+  const offset = initializer.copyProjectionOffset;
+  if (offset === undefined) return [...initializer.projection, ...path];
+  const copiedPath = [...initializer.projection.slice(offset + 1), ...path];
+  if (effect === "write" && copiedPath.length < 2) return null;
+  if (effect === "reference" && copiedPath.length === 0) return null;
+  let [key, ...remaining] = copiedPath;
+  if (initializer.copyKind === "array-rest") {
+    const startIndex = initializer.copyStartIndex ?? 0;
+    if (key === undefined || key === null)
+      key = { excludedKeys: [], startIndex };
+    else if (typeof key === "object")
+      key = {
+        excludedKeys: key.excludedKeys.flatMap((name) => {
+          const index = semanticArrayIndex(name);
+          return index === null ? [] : [String(index + startIndex)];
+        }),
+        startIndex: (key.startIndex ?? 0) + startIndex,
+      };
+    else {
+      const index = semanticArrayIndex(key);
+      if (index === null) return null;
+      key = index + startIndex;
+    }
+  } else {
+    const excludedKeys = initializer.copyExcludedKeys ?? [];
+    if (key === undefined || key === null) key = { excludedKeys };
+    else if (typeof key === "object")
+      key = {
+        ...key,
+        excludedKeys: [...new Set([...key.excludedKeys, ...excludedKeys])].sort(
+          compareUnicodeCodePoints,
+        ),
+      };
+    else if (excludedKeys.includes(String(key))) return null;
+  }
+  return [...initializer.projection.slice(0, offset), key, ...remaining];
 };

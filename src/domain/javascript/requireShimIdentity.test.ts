@@ -152,6 +152,48 @@ describe("host require delegate identity", () => {
   });
 });
 
+describe("module property alias captures", () => {
+  it.each([
+    "module.exports=module;const {exports:target}=module;",
+    "module.self=module;const {self:target}=module;",
+    "module.child={back:module};const {child:c}=module;const {back:target}=c;",
+    "const {exports:c}=module;module.exports.back=module;const {back:target}=c;",
+    "module.exports=module;const {exports:target}=module;module.exports={};",
+    'Reflect.set(module,"exports",module);const {exports:target}=module;',
+    "Object.assign(module,{exports:module});const {exports:target}=module;",
+    "module.exports=module;const target=module.exports;",
+    "const {missing:m=module}={};m.exports=module;const {exports:target}=module;",
+    "module.exports=module;const {...copy}=module;const target=copy.exports;",
+    "const {...copy}=module;module.exports.back=module;const target=copy.exports.back;",
+    "const original=module;original.self=module;const {self:target}=original;",
+  ])("retains a possible module self-reference captured by %s", (capture) => {
+    for (const loader of ["require", "Q"]) {
+      expect(
+        electronOf(
+          `${SHIM}${capture}target.require=other;new (${loader}("electron").BrowserWindow)({});`,
+        ).browser_windows,
+      ).toEqual([]);
+    }
+  });
+
+  it.each([
+    "const {exports:target}=module;module.exports=module;",
+    "module.other=module;const {exports:target}=module;",
+    "const {exports:{back:target}}=module;module.exports.back=module;",
+    "module.exports.self=module;const {exports:target}=module;",
+    "module.exports=module;const {...target}=module;",
+    "const {...copy}=module;module.exports=module;const target=copy.exports;",
+  ])("preserves a distinct export object captured by %s", (capture) => {
+    for (const loader of ["require", "Q"]) {
+      expect(
+        electronOf(
+          `${SHIM}${capture}target.require=other;new (${loader}("electron").BrowserWindow)({});`,
+        ).browser_windows,
+      ).toHaveLength(1);
+    }
+  });
+});
+
 describe("Electron identity through esbuild's __require shim", () => {
   it("follows a minified require shim produced by esbuild", () => {
     const electron = electronOf(SHIM + CONSUMER);

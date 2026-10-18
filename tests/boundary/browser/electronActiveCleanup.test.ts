@@ -88,6 +88,7 @@ describe("PlaywrightElectronActiveProvider cleanup retry", () => {
       failingService,
       "rea-playwright-electron-active",
       "capture_electron_scenario",
+      new AbortController().signal,
     );
 
     expect(finished).toMatchObject({

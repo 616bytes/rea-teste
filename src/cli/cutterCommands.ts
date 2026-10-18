@@ -122,7 +122,6 @@ export const registerCutterCommands = (
             cutter,
             "cutter",
             "cutter_command",
-            undefined,
             signal,
           );
         }),

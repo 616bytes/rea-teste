@@ -318,7 +318,7 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
-it("keeps an archive readable when a non-finite real is an explicit unknown", async () => {
+it("keeps an archive readable while preserving a known non-finite real", async () => {
   const root = await bundle();
   const bytes = Buffer.from(
     build({
@@ -340,6 +340,8 @@ it("keeps an archive readable when a non-finite real is an explicit unknown", as
   expect(result.objects).toContainEqual(
     expect.objectContaining({
       id: 1,
+      kind: "scalar",
+      status: "observed",
       value: { $plist_type: "real", value: "nan" },
     }),
   );

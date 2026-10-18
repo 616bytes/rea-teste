@@ -122,7 +122,11 @@ export const registerFridaCommands = (
         );
         return result.ok
           ? {
-              devices: result.value.devices,
+              devices: result.value.devices.map((device) => ({
+                device_id: device.deviceId,
+                name: device.name,
+                type: device.type,
+              })),
               cleanup_error: result.value.cleanupError,
             }
           : projectAnalysisError(result.error);

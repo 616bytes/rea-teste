@@ -1121,3 +1121,38 @@ it.each(["+value", "~value", "(value+1,1+2)"])(
     ).toEqual([]);
   },
 );
+
+it.each([
+  "Reflect.set(holder,'child',{},{});",
+  "Reflect.set.call(null,holder,'child',{},{});",
+  "Reflect.set.apply(null,[holder,'child',{},{}]);",
+  "const set=Reflect.set.bind(null,holder,'child',{});set({});",
+  "Object.defineProperty(holder,'child',{writable:false});holder.child={};",
+  "Object.freeze(holder);holder.child={};",
+  "Object.defineProperty(holder,'child',{writable:false});Reflect.set(holder,'child',{});",
+  "Object.defineProperty(holder,'child',{writable:false,configurable:false});Reflect.defineProperty(holder,'child',{value:{}});",
+])(
+  "does not use possible or failed writes as completed allocation replacements: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "const other={}; const alias=flag?holder:other;alias.child={};",
+  "let alias=holder;if(flag)alias={};alias.child={};",
+  "const other={}; const alias=flag?holder:other;Object.defineProperty(alias,'child',{value:{}});",
+])(
+  "does not promote a possible write target to definite allocation identity: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);

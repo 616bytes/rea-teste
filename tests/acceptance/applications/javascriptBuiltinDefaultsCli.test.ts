@@ -14,6 +14,8 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const holder={child:{}},box={};box.owner=holder.child;Reflect.set(holder,'child',{},{});holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-possible-replacement');",
+    "const holder={child:{}},box={};box.owner=holder.child;Object.freeze(holder);holder.child={};holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-frozen-replacement');",
     "const bound=Reflect.set.bind(null,module);Reflect.set(Reflect,'set',bound,(0,Reflect));Reflect.set('require',replacement);require('fs').readFileSync('wrong-sequence-bound');",
     "Reflect.set(module,'require',replacement,1+2);require('fs').readFileSync('receiver-expression.json');",
     "import fs from 'node:fs';Reflect.set(fs,'readFileSync',custom);fs.readFileSync('wrong-default-set');",

@@ -34,6 +34,7 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 
 export interface JavaScriptRequireOrigin {
@@ -516,14 +517,48 @@ const writesModuleRequire = (
   };
   // Resolve only ordered, exact literal allocations. Unknown aliases, getters,
   // conditional replacements and computed slots cannot prove distinct owners.
+  const nativeDataDefinition = (node: t.Node | undefined): boolean => {
+    if (!t.isCallExpression(node)) return false;
+    const invocation = interop.intrinsicInvocation(node);
+    if (
+      invocation?.kind !== "known" ||
+      invocation.path.join(".") !== "intrinsic.Object.defineProperty"
+    )
+      return false;
+    const descriptor = plainObject(invocation.arguments?.[2]);
+    return (
+      descriptor !== undefined &&
+      descriptor.properties.some(
+        (property) =>
+          t.isObjectProperty(property) &&
+          semanticStaticPropertyKey(property.key, property.computed) ===
+            "value",
+      ) &&
+      descriptor.properties.every((property) => {
+        if (!t.isObjectProperty(property)) return false;
+        const key = semanticStaticPropertyKey(property.key, property.computed);
+        return (
+          key !== null &&
+          key !== "get" &&
+          key !== "set" &&
+          (key !== "writable" ||
+            t.isBooleanLiteral(property.value, { value: true }))
+        );
+      })
+    );
+  };
   const definiteReplacements = new WeakMap<t.Node, boolean>();
   const isDefiniteReplacement = (node: t.Node | undefined): boolean => {
     if (node === undefined) return false;
     const cached = definiteReplacements.get(node);
     if (cached !== undefined) return cached;
+    // The member-effect index records possible writes, including a native
+    // mutator's target when a different receiver is written, and descriptor
+    // changes that can make a subsequent ordinary assignment fail. Such calls
+    // cannot establish a completed replacement of the indexed slot.
     let definite =
-      t.isCallExpression(node) ||
-      t.isAssignmentExpression(node, { operator: "=" });
+      t.isAssignmentExpression(node, { operator: "=" }) ||
+      nativeDataDefinition(node);
     let child = node;
     for (
       let parent = state.parentsByNode.get(child);
@@ -550,6 +585,48 @@ const writesModuleRequire = (
       unknown: JavaScriptSemanticMemberEffect[];
     }
   >();
+  const definitelyWritesPath = (
+    effect: JavaScriptSemanticMemberEffect,
+    owner: JavaScriptSemanticBindingState,
+  ): boolean => {
+    const mutation = effect.node;
+    let source: t.Node | undefined;
+    let path: readonly (string | number | null)[] = [];
+    if (t.isAssignmentExpression(mutation)) source = mutation.left;
+    else if (t.isCallExpression(mutation)) {
+      const invocation = interop.intrinsicInvocation(mutation);
+      source = invocation?.arguments?.[0];
+      path = [interop.staticPropertyKey(invocation?.arguments?.[1]) ?? null];
+    }
+    const visited = new Set<string>();
+    while (source !== undefined) {
+      const { root, members } = electronMemberPath(source);
+      path = [...members, ...path];
+      if (!t.isIdentifier(root) || path.includes(null)) return false;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (binding === owner)
+        return (
+          (visited.size === 0 ||
+            semanticStableInitializer(owner, state) !== undefined) &&
+          path.length === effect.path.length &&
+          path.every((key, index) => key === effect.path[index])
+        );
+      if (binding === undefined || visited.has(binding.bindingId)) return false;
+      visited.add(binding.bindingId);
+      const read = semanticBindingAtRead(binding, root, state.parentsByNode);
+      if (
+        read.status !== "ordered" ||
+        !read.hasDefiniteInitializer ||
+        read.binding.initializers.length !== 1 ||
+        read.binding.referenceInitializers.length !== 0
+      )
+        return false;
+      const initializer = read.binding.initializers[0]!;
+      source = initializer.node;
+      path = [...initializer.projection, ...path];
+    }
+    return false;
+  };
   const allocationWritesAtPath = (
     binding: JavaScriptSemanticBindingState,
     path: JavaScriptSemanticPropertyPath,
@@ -602,6 +679,19 @@ const writesModuleRequire = (
       if (t.isIdentifier(value)) {
         const binding = resolveSemanticBindingState(state, value, value.name);
         if (binding === undefined) return undefined;
+        if (
+          path.length > 0 &&
+          binding.escapedPaths.some(
+            (effect) =>
+              effect.path.length < path.length &&
+              effect.path.every((key, index) =>
+                semanticPropertyPathKeyMatches(key, String(path[index])),
+              ) &&
+              semanticEffectTiming(at, effect.node, state) !== "after" &&
+              !nativeDataDefinition(effect.node),
+          )
+        )
+          return undefined;
         let latest: JavaScriptSemanticMemberEffect | undefined;
         if (path.length > 0)
           for (const effect of allocationWritesAtPath(binding, path)) {
@@ -617,6 +707,7 @@ const writesModuleRequire = (
             if (
               timing !== "before" ||
               !isDefiniteReplacement(effect.node) ||
+              !definitelyWritesPath(effect, binding) ||
               effect.path.some((key) => typeof key !== "string")
             )
               return undefined;

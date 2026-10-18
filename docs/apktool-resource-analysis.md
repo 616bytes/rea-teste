@@ -8,7 +8,7 @@ installs Apktool or a Java runtime.
 
 ## Supply tools
 
-Use Apktool 2.7.0 or newer (verified with 2.7.0) and a Java runtime the
+Use Apktool 2.7.0 or newer (verified with 2.7.0 and 3.0.3 on Linux) and a Java runtime the
 launcher can find. Select the launcher through the environment:
 
 ```sh
@@ -154,3 +154,11 @@ locales — launcher version, on-disk digest agreement, apktool.yml metadata
 (1.2.3, SDK 24–34), manifest package agreement, default and `de` string
 tables projected. Parser goldens in the test suite come from the same
 decode. See `docs/testing.md` for the lane summary.
+
+Multi-locale and table-only projection were also verified through real CLI and
+stdio MCP workflows on Linux with Apktool 3.0.3/JDK 21 against NewPipe 0.29.1,
+ApiDemos 6.0.18 and Appium Settings 8.2.1. Independent XML projection checks,
+exact facts/Evidence parity and bounded task costs are recorded in the
+[shared-decode and table-only checkpoint](../experiments/analysis-efficiency/apktool-string-tables.md).
+This qualifies selected resource facts, not application execution or independent
+binary resource-decoder completeness.

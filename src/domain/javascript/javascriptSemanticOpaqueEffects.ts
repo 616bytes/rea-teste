@@ -26,12 +26,7 @@ export interface JavaScriptOpaqueScopeEffects {
   readonly sloppySites: WeakSet<t.Node>;
   readonly byScope: Map<string, t.CallExpression[]>;
   readonly children: Map<string, Set<string>>;
-  readonly globalSites: (
-    | t.CallExpression
-    | t.OptionalCallExpression
-    | t.NewExpression
-    | t.TaggedTemplateExpression
-  )[];
+  readonly globalSites: t.Node[];
 }
 
 export const indexSemanticOpaqueEffects = (
@@ -118,6 +113,20 @@ export const createSemanticOpaqueGlobalObserver = (
       return candidates.length === 1 ? candidates[0] : undefined;
     },
   });
+  const strictInterop = createSemanticModuleInterop(state);
+  const isFunctionFactory = (node: t.Node | undefined): boolean => {
+    if (!t.isExpression(node)) return false;
+    const path = strictInterop.intrinsicPath(node);
+    if (path !== undefined)
+      return (
+        path.join(".") === "intrinsic.Function" &&
+        !strictInterop.intrinsicReadChanged(node, path)
+      );
+    const bound = strictInterop.boundIntrinsic(node);
+    return (
+      bound?.kind === "known" && bound.path.join(".") === "intrinsic.Function"
+    );
+  };
   const identities = (
     node: t.Node,
   ): readonly JavaScriptIntrinsicInvocation[] => [
@@ -145,6 +154,17 @@ export const createSemanticOpaqueGlobalObserver = (
     const callee = t.isTaggedTemplateExpression(node) ? node.tag : node.callee;
     return identities(callee);
   };
+  // Reflect.construct executes only its first target; newTarget selects the
+  // resulting prototype without executing that constructor's body.
+  const constructedTargets = (
+    invocation: JavaScriptIntrinsicInvocation,
+  ): readonly JavaScriptIntrinsicInvocation[] => {
+    const target = invocation.arguments?.[0];
+    return invocation.path.join(".") === "intrinsic.Reflect.construct" &&
+      t.isExpression(target)
+      ? identities(target)
+      : [];
+  };
   const retainBound = (
     value: JavaScriptIntrinsicInvocation,
   ): readonly string[] => {
@@ -162,6 +182,49 @@ export const createSemanticOpaqueGlobalObserver = (
     }
     return ["bound-global-callable", String(id)];
   };
+  const isIntrinsicBind = (
+    invocation: JavaScriptIntrinsicInvocation,
+  ): boolean => {
+    const path = invocation.path;
+    return (
+      invocation.kind === "known" &&
+      path.at(-1) === "bind" &&
+      [
+        "intrinsic.global.eval",
+        "intrinsic.global.Function",
+        "intrinsic.generated.function",
+        "intrinsic.Function.prototype",
+      ].includes(path.slice(0, 3).join(".")) &&
+      path
+        .slice(3)
+        .every((method) => ["call", "apply", "bind"].includes(method))
+    );
+  };
+  const escapedCode = (path: readonly (string | null)[]): boolean => {
+    if (path[0] === "generated-function") return true;
+    const bound =
+      path[0] === "bound-global-callable"
+        ? boundValues[Number(path[1])]
+        : undefined;
+    return (
+      bound !== undefined &&
+      (bound.kind === "opaque" ||
+        bound.path.join(".") === "intrinsic.generated.function")
+    );
+  };
+  const argumentsEscapeCode = (
+    arguments_: readonly t.Node[] | undefined,
+    site: t.Node,
+  ): boolean =>
+    arguments_?.some(
+      (argument) =>
+        t.isNode(argument) &&
+        ambientPaths(
+          t.isSpreadElement(argument) ? argument.argument : argument,
+          site,
+          true,
+        ).some(escapedCode),
+    ) ?? false;
   return {
     callableResult: (node, resolve) => {
       if (resolvingResults.has(node)) return [];
@@ -180,22 +243,15 @@ export const createSemanticOpaqueGlobalObserver = (
           }
           if (path === "intrinsic.global.Function")
             results.push(["generated-function"]);
-          if (path === "intrinsic.Reflect.construct") {
-            const constructor = invocation.arguments?.[0];
-            if (
-              constructor !== undefined &&
-              identities(constructor).some(
-                (value) =>
-                  value.kind === "opaque" ||
-                  value.path.join(".") === "intrinsic.global.Function",
-              )
-            )
-              results.push(["generated-function"]);
-          }
           if (
-            invocation.path.at(-1) !== "bind" ||
-            invocation.receiver === undefined
+            constructedTargets(invocation).some(
+              (value) =>
+                value.kind === "opaque" ||
+                value.path.join(".") === "intrinsic.global.Function",
+            )
           )
+            results.push(["generated-function"]);
+          if (!isIntrinsicBind(invocation) || invocation.receiver === undefined)
             continue;
           for (const target of identities(invocation.receiver)) {
             const args = invocation.arguments;
@@ -231,24 +287,68 @@ export const createSemanticOpaqueGlobalObserver = (
         !t.isNewExpression(node) &&
         !t.isTaggedTemplateExpression(node)
       )
-        return;
+        return undefined;
       ambientPaths = resolve;
       invocationSite = node;
-      if (
-        invocations(node).some((invocation) => {
-          const path = invocation.path.join(".");
+      const outcomes = invocations(node);
+      const directExecution = outcomes.some((invocation) => {
+        const path = invocation.path.join(".");
+        return (
+          invocation.kind === "opaque" ||
+          path === "intrinsic.generated.function" ||
+          constructedTargets(invocation).some(
+            (target) =>
+              target.kind === "opaque" ||
+              target.path.join(".") === "intrinsic.generated.function",
+          ) ||
+          (path === "intrinsic.global.eval" &&
+            (t.isCallExpression(node) ||
+              t.isOptionalCallExpression(node) ||
+              (t.isTaggedTemplateExpression(node) &&
+                (invocation.arguments?.length ?? 0) > 0)))
+        );
+      });
+
+      const handedOff = outcomes.some((invocation) => {
+        const path = invocation.path.join(".");
+        if (
+          invocation.kind === "known" &&
+          (path === "intrinsic.global.Function" || isIntrinsicBind(invocation))
+        )
+          return false;
+        if (path === "intrinsic.Reflect.construct") {
+          // A possible identity union can omit an unresolved alternative;
+          // only the strict intrinsic owner can prove factory-only handoff.
+          if (isFunctionFactory(invocation.arguments?.[0])) return false;
+          const argumentsList = invocation.arguments?.[1];
           return (
-            invocation.kind === "opaque" ||
-            path === "intrinsic.generated.function" ||
-            (path === "intrinsic.global.eval" &&
-              (t.isCallExpression(node) ||
-                t.isOptionalCallExpression(node) ||
-                (t.isTaggedTemplateExpression(node) &&
-                  (invocation.arguments?.length ?? 0) > 0)))
+            t.isExpression(argumentsList) &&
+            argumentsEscapeCode([argumentsList], node)
           );
-        })
-      )
+        }
+        return argumentsEscapeCode(invocation.arguments, node);
+      });
+      if (directExecution || handedOff)
         state.opaqueEffects.globalSites.push(node);
+      // Factory/bind roles do not invoke their receiver or argument values.
+      // Other normalized arguments leave the existing receiver escape intact.
+      if (
+        outcomes.length > 0 &&
+        outcomes.every(
+          (value) =>
+            value.kind === "known" &&
+            (value.path.join(".") === "intrinsic.global.Function" ||
+              isIntrinsicBind(value)),
+        )
+      )
+        return "all";
+      return outcomes.length > 0 &&
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+        ? "arguments"
+        : undefined;
+    },
+    observeEscape: (node, identity) => {
+      if (escapedCode(identity)) state.opaqueEffects.globalSites.push(node);
     },
   };
 };

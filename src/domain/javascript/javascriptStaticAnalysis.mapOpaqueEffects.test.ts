@@ -5,6 +5,28 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 
 it.each([
+  'const run = Function("Map.prototype.get=fetch"); Unknown.bind(run); new Map().get("/accounts");',
+  'Function.prototype.constructor("Map.prototype.get=fetch")(); new Map().get("/accounts");',
+
+  'function expose(Unknown) { const run = Function("Map.prototype.get=fetch"); const Target = condition ? Function : Unknown; Reflect.construct(Target, [run]); new Map().get("/accounts"); }',
+
+  'const holder = { callback: Function("Map.prototype.get=fetch"), consume: external }; holder.consume(); new Map().get("/accounts");',
+  'const holder = { callback: Function("Map.prototype.get=fetch") }; external.call(holder); new Map().get("/accounts");',
+  'const run = Function("Map.prototype.get=fetch"); Reflect.construct(Unknown, [run]); new Map().get("/accounts");',
+  'const run = Function("Map.prototype.get=fetch"); const Target = condition ? Function : Unknown; Reflect.construct(Target, [run]); new Map().get("/accounts");',
+
+  'const run = Function("Map.prototype.get=fetch"); consume(run); new Map().get("/accounts");',
+  'const box = { run: Function("Map.prototype.get=fetch") }; consume(box); new Map().get("/accounts");',
+  'const run = Function("Map.prototype.get=fetch").bind(null); consume(run); new Map().get("/accounts");',
+  'external.run = Function("Map.prototype.get=fetch"); patch(external); new Map().get("/accounts");',
+
+  'const Run = Function("Map.prototype.get=fetch"); Reflect.construct(Run, []); new Map().get("/accounts");',
+  'const Run = Function("Map.prototype.get=fetch").bind(null); Reflect.construct(Run, []); new Map().get("/accounts");',
+  'const Run = condition ? Function : Function("Map.prototype.get=fetch"); Reflect.construct(Run, []); new Map().get("/accounts");',
+  'const Run = condition ? Function("Map.prototype.get=fetch") : Function; Reflect.construct(Run, []); new Map().get("/accounts");',
+  'const Run = Function("Map.prototype.get=fetch"); const construct = Reflect.construct; construct(Run, []); new Map().get("/accounts");',
+  'const Run = Function("Map.prototype.get=fetch"); Reflect.construct.call(null, Run, []); new Map().get("/accounts");',
+
   'const run = condition ? Function : eval.bind(null); run("Map.prototype.get=fetch"); new Map().get("/accounts");',
   'const target = condition ? eval : Function; const run = Function.prototype.bind.call(target, null, "Map.prototype.get=fetch"); run(); new Map().get("/accounts");',
   'const target = condition ? Function : eval; const run = Function.prototype.bind.call(target, null, "Map.prototype.get=fetch"); run()(); new Map().get("/accounts");',
@@ -89,6 +111,17 @@ it.each([
 );
 
 it.each([
+  'Function.prototype.constructor("Map.prototype.get=fetch"); new Map().get("/accounts");',
+
+  'const run = Function("Map.prototype.get=fetch"); Reflect.construct(Function, [run]); new Map().get("/accounts");',
+
+  'const box = {}; box.run = Function("Map.prototype.get=fetch"); new Map().get("/accounts");',
+  'const run = Function("Map.prototype.get=fetch"); new Map().get("/accounts"); consume(run);',
+
+  'Reflect.construct(Function, ["Map.prototype.get=fetch"]); new Map().get("/accounts");',
+  'const Run = Function("Map.prototype.get=fetch"); Reflect.construct(function Safe() {}, [], Run); new Map().get("/accounts");',
+  'const Run = Function("Map.prototype.get=fetch"); new Map().get("/accounts"); Reflect.construct(Run, []);',
+
   'void Function; let run = () => run; run = run.bind(null); run(); new Map().get("/accounts");',
   'void Function; let first = () => second; let second = () => first; first = first.bind(null); second = second.bind(null); first()(); new Map().get("/accounts");',
 
@@ -143,5 +176,14 @@ it("preserves recovered bound argument positions in opaque callable identities",
   );
   expect(ir.coverage.status).toBe("partial");
   expect(ir.callSites[0]?.arguments.map(({ index }) => index)).toEqual([0, 2]);
+  expect(ir.limitations.join(" ")).toMatch(/parser recovered/iu);
+});
+
+it("keeps recovered Reflect.construct target holes partial without inventing a callable", () => {
+  const ir = analyzeJavaScriptSemantics(
+    "void Function; Reflect.construct(, []);",
+  );
+  expect(ir.coverage.status).toBe("partial");
+  expect(ir.callSites[0]?.arguments.map(({ index }) => index)).toEqual([1]);
   expect(ir.limitations.join(" ")).toMatch(/parser recovered/iu);
 });

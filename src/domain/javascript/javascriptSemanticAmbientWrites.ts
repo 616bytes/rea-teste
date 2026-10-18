@@ -386,6 +386,24 @@ export const createAmbientPathResolver = (
           for (const identity of facts?.callableResult?.(root) ?? [])
             retain([...identity, ...(suffix ?? [])]);
         }
+        if (escapedContents && t.isClass(root) && suffix?.length === 0) {
+          for (const member of root.body.body) {
+            if (
+              t.isClassMethod(member) &&
+              member.static &&
+              member.kind !== "set"
+            )
+              continueReturned(member, []);
+            else if (
+              t.isClassProperty(member) &&
+              member.static &&
+              t.isExpression(member.value)
+            )
+              continueWith(member.value, []);
+          }
+          if (root.superClass !== null && root.superClass !== undefined)
+            continueWith(root.superClass, []);
+        }
         continueReturned(
           t.isFunction(root) || t.isClass(root)
             ? root
@@ -394,6 +412,11 @@ export const createAmbientPathResolver = (
               : root.callee,
           suffix,
         );
+        continue;
+      }
+      if (possibleWrites && t.isAwaitExpression(root)) {
+        // Await may preserve the value; this does not prove its identity for reads.
+        continueWith(root.argument);
         continue;
       }
       if (possibleWrites && t.isConditionalExpression(root)) {
@@ -527,7 +550,8 @@ export interface AmbientInvocationObserver {
   readonly observeInvocation: (
     node: t.Node,
     resolve: AmbientPathResolver,
-  ) => void;
+  ) => "all" | "arguments" | undefined;
+  readonly observeEscape?: (node: t.Node, identity: AmbientPath) => void;
   readonly callableResult?: (
     node:
       | t.CallExpression
@@ -558,6 +582,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   type EscapeTarget = {
     target: t.Node;
     browserReceiver: boolean;
+    receiver?: true;
     projection?: AmbientProjection;
   };
   const escapes: {
@@ -644,8 +669,16 @@ export function* indexJavaScriptAmbientWritesSteps(
     (node, invocation) => {
       const targets: EscapeTarget[] = [];
       // Escaping objects can change contents without replacing their identity.
-      const retainEscape = (target: t.Node, browserReceiver = false) => {
-        targets.push({ target, browserReceiver });
+      const retainEscape = (
+        target: t.Node,
+        browserReceiver = false,
+        receiver = false,
+      ) => {
+        targets.push({
+          target,
+          browserReceiver,
+          ...(receiver && { receiver: true as const }),
+        });
       };
       for (const argument of t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
@@ -674,7 +707,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       ) {
         if (browserMethod !== undefined)
           browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        retainEscape(callee.object, browserMethod !== undefined, true);
       }
       if (targets.length > 0 || opaqueObserver !== undefined)
         escapes.push({ node, invocation: true, targets });
@@ -765,12 +798,19 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
   }
   for (const { node, invocation, targets } of escapes) {
-    if (invocation) opaqueObserver?.observeInvocation(node, ambientWrites);
-    for (const { target, browserReceiver, projection } of targets)
-      for (const path of ambientWrites(target, node, true, projection))
+    const handledHandoffs =
+      invocation && opaqueObserver?.observeInvocation(node, ambientWrites);
+    for (const { target, browserReceiver, projection, receiver } of targets)
+      for (const path of ambientWrites(target, node, true, projection)) {
+        if (
+          handledHandoffs !== "all" &&
+          (handledHandoffs !== "arguments" || receiver)
+        )
+          opaqueObserver?.observeEscape?.(node, path);
         // Only proven browser APIs keep their global receiver from user code.
         if (!(browserReceiver && path.length === 1 && path[0] === "global"))
           state.ambientEscapes.retain([...path, null]);
+      }
   }
   // A function may call a browser method replaced later in source order.
   if (

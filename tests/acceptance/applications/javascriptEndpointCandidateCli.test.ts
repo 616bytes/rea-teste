@@ -42,6 +42,16 @@ const candidateSources = {
     'const box = {}; box.run = eval; box.run("Map.prototype.get = fetch"); new Map().get("/stored-eval");',
   "generated.mjs":
     'Function("Map.prototype.get = fetch")(); new Map().get("/generated");',
+  "generated-constructor.mjs":
+    'const Run = Function("Map.prototype.get = fetch"); Reflect.construct(Run, []); new Map().get("/generated-constructor");',
+  "generated-constructor-unused.mjs":
+    'Reflect.construct(Function, ["Map.prototype.get = fetch"]); new Map().get("/generated-constructor-unused");',
+  "awaited-generated.mjs":
+    'const run = await Function("Map.prototype.get = fetch"); run(); new Map().get("/awaited-generated");',
+  "escaped-class.mjs":
+    'patch(class { static expose() { return Map.prototype; } }); new Map().get("/escaped-class");',
+  "escaped-generated.mjs":
+    'consume(Function("Map.prototype.get = fetch")); new Map().get("/escaped-generated");',
   "mixed-destination.mjs":
     'function expose(external) { const box = condition ? {} : external; box.p = Map.prototype; } expose(holder); patch(holder); new Map().get("/mixed-destination");',
 };
@@ -97,9 +107,13 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     .toEqual([
       "/api/items",
       "/assignment",
+      "/awaited-generated",
       "/constructor",
       "/escaped",
+      "/escaped-class",
+      "/escaped-generated",
       "/generated",
+      "/generated-constructor",
       "/getter",
       "/indirect",
       "/late-link",
@@ -117,9 +131,13 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
   for (const value of [
     "/api/items",
     "/assignment",
+    "/awaited-generated",
     "/constructor",
     "/escaped",
+    "/escaped-class",
+    "/escaped-generated",
     "/generated",
+    "/generated-constructor",
     "/getter",
     "/indirect",
     "/late-link",

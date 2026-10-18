@@ -17,6 +17,7 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   isPrimitiveJavaScriptExpression,
+  javaScriptExpressionValue,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -522,7 +523,10 @@ const writesModuleRequire = (
     const invocation = interop.intrinsicInvocation(node);
     if (
       invocation?.kind !== "known" ||
-      invocation.path.join(".") !== "intrinsic.Object.defineProperty"
+      ![
+        "intrinsic.Object.defineProperty",
+        "intrinsic.Reflect.defineProperty",
+      ].includes(invocation.path.join("."))
     )
       return false;
     const descriptor = plainObject(invocation.arguments?.[2]);
@@ -547,6 +551,55 @@ const writesModuleRequire = (
       })
     );
   };
+  const nativeReplacements = new WeakMap<t.Node, boolean>();
+  const nativeReplacement = (node: t.Node | undefined): boolean => {
+    if (!t.isCallExpression(node)) return false;
+    const cached = nativeReplacements.get(node);
+    if (cached !== undefined) return cached;
+    nativeReplacements.set(node, false);
+    const invocation = interop.intrinsicInvocation(node);
+    const args = invocation?.arguments;
+    if (
+      invocation?.kind !== "known" ||
+      args === undefined ||
+      args.length < 3 ||
+      args.some(t.isSpreadElement)
+    )
+      return false;
+    const operation = invocation.path.join(".");
+    if (operation === "intrinsic.Object.defineProperty") {
+      const definite = nativeDataDefinition(node);
+      nativeReplacements.set(node, definite);
+      return definite;
+    }
+    if (
+      operation !== "intrinsic.Reflect.set" &&
+      (operation !== "intrinsic.Reflect.defineProperty" ||
+        !nativeDataDefinition(node))
+    )
+      return false;
+    const key = interop.staticPropertyKey(args[1]);
+    if (key === undefined || key === "__proto__") return false;
+    const target = literalAllocation(args[0]!, [], node);
+    // A literal's own data slot starts writable. The allocation proof checks
+    // prior escapes and every intervening write, rejecting descriptor changes
+    // that could remove writability. Reflect can then complete this replacement.
+    const ownData =
+      t.isObjectExpression(target) &&
+      target.properties.some(
+        (property) =>
+          t.isObjectProperty(property) &&
+          semanticStaticPropertyKey(property.key, property.computed) === key,
+      ) &&
+      literalAllocation(args[0]!, [key], node) !== undefined;
+    const sameReceiver =
+      operation !== "intrinsic.Reflect.set" ||
+      args[3] === undefined ||
+      literalAllocation(args[3], [], node) === target;
+    const definite = ownData && sameReceiver;
+    nativeReplacements.set(node, definite);
+    return definite;
+  };
   const definiteReplacements = new WeakMap<t.Node, boolean>();
   const isDefiniteReplacement = (node: t.Node | undefined): boolean => {
     if (node === undefined) return false;
@@ -558,7 +611,7 @@ const writesModuleRequire = (
     // cannot establish a completed replacement of the indexed slot.
     let definite =
       t.isAssignmentExpression(node, { operator: "=" }) ||
-      nativeDataDefinition(node);
+      nativeReplacement(node);
     let child = node;
     for (
       let parent = state.parentsByNode.get(child);
@@ -600,17 +653,45 @@ const writesModuleRequire = (
     }
     const visited = new Set<string>();
     while (source !== undefined) {
-      const { root, members } = electronMemberPath(source);
+      const { root, members } = electronMemberPath(
+        javaScriptExpressionValue(source),
+      );
       path = [...members, ...path];
       if (!t.isIdentifier(root) || path.includes(null)) return false;
       const binding = resolveSemanticBindingState(state, root, root.name);
-      if (binding === owner)
+      if (binding === owner) {
+        const captured = semanticBindingAtRead(
+          owner,
+          root,
+          state.parentsByNode,
+        );
+        const applied = semanticBindingAtRead(
+          owner,
+          mutation!,
+          state.parentsByNode,
+        );
+        // A normalized bound argument keeps its original read location. A
+        // later reassignment cannot make that captured target the current one.
+        if (
+          captured.status !== "ordered" ||
+          applied.status !== "ordered" ||
+          !captured.hasDefiniteInitializer ||
+          !applied.hasDefiniteInitializer ||
+          captured.binding.initializers.length !== 1 ||
+          applied.binding.initializers.length !== 1 ||
+          captured.binding.referenceInitializers.length !== 0 ||
+          applied.binding.referenceInitializers.length !== 0 ||
+          captured.binding.initializers[0]!.node !==
+            applied.binding.initializers[0]!.node
+        )
+          return false;
         return (
           (visited.size === 0 ||
             semanticStableInitializer(owner, state) !== undefined) &&
           path.length === effect.path.length &&
           path.every((key, index) => key === effect.path[index])
         );
+      }
       if (binding === undefined || visited.has(binding.bindingId)) return false;
       visited.add(binding.bindingId);
       const read = semanticBindingAtRead(binding, root, state.parentsByNode);
@@ -662,7 +743,7 @@ const writesModuleRequire = (
   ): t.Node | undefined => {
     const seen = new Set<t.Node>();
     while (true) {
-      const value = unwrapJavaScriptExpression(source).node;
+      const value = javaScriptExpressionValue(source);
       if (
         seen.has(value) ||
         path.some((key) => key === null || typeof key === "object")
@@ -683,18 +764,22 @@ const writesModuleRequire = (
           path.length > 0 &&
           binding.escapedPaths.some(
             (effect) =>
+              effect.node !== at &&
               effect.path.length < path.length &&
               effect.path.every((key, index) =>
                 semanticPropertyPathKeyMatches(key, String(path[index])),
               ) &&
               semanticEffectTiming(at, effect.node, state) !== "after" &&
-              !nativeDataDefinition(effect.node),
+              !nativeReplacement(effect.node),
           )
         )
           return undefined;
         let latest: JavaScriptSemanticMemberEffect | undefined;
         if (path.length > 0)
           for (const effect of allocationWritesAtPath(binding, path)) {
+            // Allocation inputs are read before this invocation performs its
+            // own write. This also bounds recursive native replacement proof.
+            if (effect.node === at) continue;
             if (
               effect.path.length > path.length ||
               !effect.path.every((key, index) =>

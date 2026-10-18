@@ -1144,6 +1144,36 @@ it.each(["+value", "~value", "(value+1,1+2)"])(
 );
 
 it.each([
+  "Reflect.defineProperty(holder,'child',{value:{}});",
+  "Reflect.defineProperty.call(null,holder,'child',{value:{}});",
+  "Reflect.defineProperty.apply(null,[holder,'child',{value:{}}]);",
+  "const define=Reflect.defineProperty.bind(null,holder,'child');define({value:{}});",
+  "const define=Reflect.defineProperty;define(holder,'child',{value:{}});",
+  "const alias=holder;Reflect.defineProperty(alias,'child',{value:{}});",
+  "Reflect.set(holder,'child',{});",
+  "Reflect.set.call(null,holder,'child',{});",
+  "Reflect.set.apply(null,[holder,'child',{}]);",
+  "const set=Reflect.set.bind(null,holder,'child');set({});",
+  "const set=Reflect.set;set(holder,'child',{});",
+  "const alias=holder;Reflect.set(alias,'child',{});",
+  "Reflect.set(holder,'child',{},holder);",
+  "const receiver=holder;Reflect.set(holder,'child',{},receiver);",
+  "Reflect.set(holder,'child',{},(0,holder));",
+  "Reflect.set((0,holder),'child',{});",
+  "holder.other={};Reflect.set(holder,'child',{});",
+  "holder.child={};Reflect.set(holder,'child',{});",
+  "Reflect.set(holder,'child',{});Reflect.defineProperty(holder,'child',{value:{}});",
+  "Reflect.defineProperty(holder,'child',{value:{}});Reflect.set(holder,'child',{});",
+  "Object.defineProperty(holder,'child',{value:{},configurable:false});Reflect.defineProperty(holder,'child',{value:{}});",
+])("preserves a completed native allocation replacement: %s", (write) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('kept');`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+});
+
+it.each([
   "Reflect.set(holder,'child',{},{});",
   "Reflect.set.call(null,holder,'child',{},{});",
   "Reflect.set.apply(null,[holder,'child',{},{}]);",
@@ -1152,6 +1182,10 @@ it.each([
   "Object.freeze(holder);holder.child={};",
   "Object.defineProperty(holder,'child',{writable:false});Reflect.set(holder,'child',{});",
   "Object.defineProperty(holder,'child',{writable:false,configurable:false});Reflect.defineProperty(holder,'child',{value:{}});",
+  "Object.freeze(holder);Reflect.set(holder,'child',{},holder);",
+  "Object.freeze(holder);Reflect.defineProperty(holder,'child',{value:{}});",
+  "delete holder.child;Object.defineProperty(holder,'child',{value:{}});box.owner=holder.child;Reflect.set(holder,'child',{});",
+  "Object.prototype.writable=false;Object.defineProperty(holder,'child',{value:{}});box.owner=holder.child;Reflect.set(holder,'child',{});",
 ])(
   "does not use possible or failed writes as completed allocation replacements: %s",
   (write) => {
@@ -1173,6 +1207,21 @@ it.each([
     expect(
       analyzeJavaScriptSemantics(
         `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "const set=Reflect.set.bind(null,holder,'child',{});holder={child:{}};box.owner=holder.child;set();",
+  "const define=Reflect.defineProperty.bind(null,holder,'child',{value:{}});holder={child:{}};box.owner=holder.child;define();",
+  "const define=Object.defineProperty.bind(null,holder,'child',{value:{}});holder={child:{}};box.owner=holder.child;define();",
+])(
+  "retains the target captured before a binding is reassigned: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `let holder={child:{}};const box={};${setup}holder.child.owner=module;Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
       ).configurationOperations,
     ).toEqual([]);
   },

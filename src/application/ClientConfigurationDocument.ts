@@ -104,12 +104,50 @@ export const clientConfigurationServersKey = (
 const isEmptyClientConfigurationText = (text: string): boolean =>
   text.replace(/^\uFEFF/, "").trim() === "";
 
+/** TOML 1.0 integers are signed 64-bit values, the range clients accept. */
+const TOML_INTEGER_MINIMUM = -(2n ** 63n);
+const TOML_INTEGER_MAXIMUM = 2n ** 63n - 1n;
+
+/**
+ * Reject integers outside TOML 1.0's signed 64-bit range. The lossless reader
+ * reports every magnitude a JavaScript number cannot hold as `bigint` without
+ * bounding it, so the format's own contract is enforced here instead of
+ * accepting a value the client rejects with a range error.
+ */
+const rejectOutOfRangeInteger = (value: unknown): void => {
+  if (typeof value === "bigint") {
+    if (value < TOML_INTEGER_MINIMUM || value > TOML_INTEGER_MAXIMUM)
+      throw new RangeError(
+        "integer value is outside the signed 64-bit TOML range",
+      );
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) rejectOutOfRangeInteger(item);
+    return;
+  }
+  if (typeof value === "object" && value !== null && !(value instanceof Date))
+    for (const nested of Object.values(value)) rejectOutOfRangeInteger(nested);
+};
+
+/**
+ * Parse TOML with TOML 1.0's lossless signed 64-bit integers. Magnitudes a
+ * JavaScript number represents exactly stay numbers, which keeps unrelated
+ * settings unchanged; larger ones stay exact as `bigint` so reading, editing
+ * and writing back a client's own document preserves the value it wrote.
+ */
+const parseLosslessToml = (text: string): Record<string, unknown> => {
+  const document = parseToml(text, { integersAsBigInt: "asNeeded" });
+  rejectOutOfRangeInteger(document);
+  return document;
+};
+
 const parseDocument = (
   text: string,
   format: ClientConfigurationFormat,
 ): Record<string, unknown> => {
   if (format === "toml" || format === "grok")
-    return requireObject(parseToml(text), "The configuration root");
+    return requireObject(parseLosslessToml(text), "The configuration root");
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
@@ -645,6 +683,7 @@ const tomlInlineKey = (key: string): string =>
 const tomlInlineValue = (value: unknown): string => {
   if (typeof value === "string") return tomlBasicString(value);
   if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "bigint") return String(value);
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (Array.isArray(value))
     return `[${value.map((item) => tomlInlineValue(item)).join(", ")}]`;
@@ -817,7 +856,7 @@ const rebuildDelimitedEntries = (
  */
 const tomlStringValue = (text: string): string | undefined => {
   try {
-    const value = parseToml(`value = ${text}`)["value"];
+    const value = parseLosslessToml(`value = ${text}`)["value"];
     return typeof value === "string" ? value : undefined;
   } catch (cause: unknown) {
     void cause;
@@ -1251,7 +1290,7 @@ const tomlTextHolds = (
 ): boolean => {
   try {
     return clientConfigurationValuesEqual(
-      withoutEmptyServerTable(objectSchema.parse(parseToml(text))),
+      withoutEmptyServerTable(objectSchema.parse(parseLosslessToml(text))),
       withoutEmptyServerTable(document),
     );
   } catch (cause: unknown) {

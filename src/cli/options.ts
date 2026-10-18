@@ -8,6 +8,7 @@ import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
+  rawBinaryBaseAddressSchema,
 } from "../domain/rawBinary.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
@@ -42,7 +43,13 @@ export const architectureSelectionOption = binaryArchitectureSchema
 export const entryPointSelectionOption = rawBinaryEntryPointSchema
   .optional()
   .describe(
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary",
+    "Caller-supplied code entry address (0xhex); also the load base when --base-address is omitted",
+  );
+
+export const baseAddressSelectionOption = rawBinaryBaseAddressSchema
+  .optional()
+  .describe(
+    "Load address of raw file offset 0 (0xhex); defaults to --entry-point",
   );
 
 /** Shared CLI flags that bind a native target interpretation. */
@@ -50,6 +57,7 @@ export const nativeOpenOptionFields = {
   "target-format": formatSelectionOption,
   architecture: architectureSelectionOption,
   "entry-point": entryPointSelectionOption,
+  "base-address": baseAddressSelectionOption,
   provider: providerSelectionOption,
 };
 
@@ -60,6 +68,7 @@ export interface NativeOpenCliFlags {
   readonly "target-format"?: ExecutableFormatHint | undefined;
   readonly architecture?: BinaryArchitecture | undefined;
   readonly "entry-point"?: string | undefined;
+  readonly "base-address"?: string | undefined;
 }
 
 export const directAnalysisOptions = (
@@ -69,12 +78,14 @@ export const directAnalysisOptions = (
   formatHint?: ExecutableFormatHint,
   architecture?: BinaryArchitecture,
   entryPoint?: string,
+  baseAddress?: string,
 ) => ({
   logger,
   snapshotPath,
   ...(formatHint === undefined ? {} : { formatHint }),
   ...(architecture === undefined ? {} : { architecture }),
   ...(entryPoint === undefined ? {} : { entryPoint }),
+  ...(baseAddress === undefined ? {} : { baseAddress }),
   ...(providerId === undefined ? {} : { providerId }),
 });
 
@@ -90,4 +101,5 @@ export const directAnalysisOptionsFromCli = (
     options["target-format"],
     options.architecture,
     options["entry-point"],
+    options["base-address"],
   );

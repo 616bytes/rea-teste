@@ -47,4 +47,27 @@ describe("open_binary raw-binary input contract", () => {
       }).success,
     ).toBe(false);
   });
+  it("accepts an explicit base only for a raw load", () => {
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/ecu.bin",
+        format: "raw-binary",
+        architecture: "arm",
+        entry_point: "0x1004",
+        base_address: "0x1000",
+      }).success,
+    ).toBe(true);
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/ecu.bin",
+        base_address: "0x1000",
+      }).success,
+    ).toBe(false);
+    const rejected = openBinaryInputSchema.safeParse({
+      path: "/tmp/ecu.bin",
+      base_address: "0x1000",
+    });
+    if (rejected.success) throw new Error("Expected base selection rejection");
+    expect(rejected.error.issues[0]?.path).toEqual(["base_address"]);
+  });
 });

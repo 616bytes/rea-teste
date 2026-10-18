@@ -110,6 +110,21 @@ describe("analysis snapshot target identity", () => {
       entryPointSource: "0x08000000",
     };
     const snapshot = snapshotTarget(target);
+    const shiftedBase = { ...target, baseAddress: "0x7fffffc" };
+    expect(snapshotMatchesTarget(snapshot, shiftedBase)).toBe(false);
+    expect(snapshotTarget(shiftedBase)).toHaveProperty(
+      "base_address",
+      "0x7fffffc",
+    );
+    expect(
+      snapshotMatchesTarget(snapshot, {
+        ...target,
+        baseAddress: target.entryPoint,
+      }),
+    ).toBe(true);
+    expect(
+      snapshotTarget({ ...target, baseAddress: target.entryPoint }),
+    ).toEqual(snapshot);
     const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
     const changed = {
       ...target,

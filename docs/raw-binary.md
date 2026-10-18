@@ -1,7 +1,7 @@
 # Headerless raw-binary analysis with Ghidra
 
 REA admits a headerless executable when the caller supplies the CPU family and
-the address where file offset 0 should be mapped. That interpretation is not
+code entry address, with an optional independent load base. That interpretation is not
 inferred from a `.bin` suffix or from unrecognized bytes.
 
 ## Open and inspect
@@ -26,8 +26,17 @@ rea inspect-native-load-image /absolute/path/to/ecu.bin --target-format raw-bina
 ```
 
 `architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, or `m68k`. `entry_point` is a
-hexadecimal address of the form `0x…`. The complete file is mapped starting at
-that address, and Ghidra seeds an `entry` function there before auto-analysis.
+hexadecimal code address of the form `0x…`. By default, the complete file is
+mapped starting at that address. To load an image whose leading bytes are data,
+supply `base_address` (CLI: `--base-address`) separately. File offset 0 maps to
+the load base; Ghidra seeds an `entry` function at `entry_point` before analysis.
+The entry must lie within the mapped image. Its source offset is reported by
+`inspect_native_load_image`, independently of the base.
+
+For example, a caller-selected ARM image with a data word before its code can
+use `base_address: "0x8000000"` and `entry_point: "0x8000004"`. Existing calls
+that omit the base retain their entry-based mapping. The base need not have the
+code entry's alignment; overflow checks apply to the complete mapped file.
 ARM and AArch64 entries must be 4-byte aligned; m68k entries must be 2-byte
 aligned; x86 and 6502 entries may be byte-aligned.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
@@ -55,10 +64,15 @@ Compiler specifications select analysis conventions; they do not identify the
 original compiler or ABI of a headerless target. Ghidra's x86 languages do not
 provide a compiler specification named `default`.
 
-Those settings, the caller-supplied entry, and `language_selection:
-caller-supplied-v1` are committed in the analysis profile. A different entry
+Those settings, the caller-supplied base and entry, and `language_selection:
+caller-supplied-v1` are committed in the analysis profile. A different base, entry
 or architecture is a different profile; snapshots from header-detected targets
 do not replay.
+
+Raw snapshot targets retain a distinct base, and session reuse compares it as
+well as the entry. An explicit base equal to the entry is equivalent to omitting
+it. This import revision updates the Ghidra analysis profile, so older raw
+snapshots must be regenerated rather than replayed under the new preparer.
 
 The mapped start is independent of Ghidra's program image base, which remains
 `0x0` for BinaryLoader. Ghidra may report additional language-defined entry

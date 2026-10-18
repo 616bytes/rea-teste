@@ -4,6 +4,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
+  rawBinaryBaseAddressSchema,
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
 import { z } from "zod";
@@ -46,7 +47,12 @@ export const openBinaryInputSchema = z
     entry_point: rawBinaryEntryPointSchema
       .optional()
       .describe(
-        "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise.",
+        "Caller-supplied code entry address (0xhex). Also the load base when base_address is omitted. Required with format=raw-binary; rejected otherwise.",
+      ),
+    base_address: rawBinaryBaseAddressSchema
+      .optional()
+      .describe(
+        "Load address of file offset 0 (0xhex), independent of entry_point. Defaults to entry_point; applies only with format=raw-binary.",
       ),
     provider_id: analysisProviderSelectorSchema.optional(),
     snapshot_path: snapshotPathSchema.optional(),
@@ -60,18 +66,23 @@ export const openBinaryInputSchema = z
       ...(value.entry_point === undefined
         ? {}
         : { entryPoint: value.entry_point }),
+      ...(value.base_address === undefined
+        ? {}
+        : { baseAddress: value.base_address }),
     });
     if (pairing === undefined) return;
     context.addIssue({
       code: "custom",
       path:
-        value.format === "raw-binary"
-          ? value.architecture === undefined
-            ? ["architecture"]
-            : ["entry_point"]
-          : value.architecture === undefined
-            ? ["entry_point"]
-            : ["architecture"],
+        value.format !== "raw-binary" && value.base_address !== undefined
+          ? ["base_address"]
+          : value.format === "raw-binary"
+            ? value.architecture === undefined
+              ? ["architecture"]
+              : ["entry_point"]
+            : value.architecture === undefined
+              ? ["entry_point"]
+              : ["architecture"],
       message: pairing,
     });
   });

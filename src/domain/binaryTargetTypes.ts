@@ -207,6 +207,8 @@ export type BinaryTarget =
       )[];
       readonly entryPoint: string;
       readonly entryPointSource: string;
+      readonly baseAddress?: string;
+      readonly baseAddressSource?: string;
       readonly executableRole?: never;
       readonly managed?: never;
     })

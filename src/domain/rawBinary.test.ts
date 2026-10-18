@@ -225,7 +225,103 @@ describe("m68k raw-binary admission", () => {
   );
 });
 
+describe("raw-binary independent load base", () => {
+  it("preserves both canonical addresses and their source spelling", () => {
+    expect(
+      admitRawBinary({
+        architecture: "arm",
+        entryPoint: "0x00001004",
+        baseAddress: "0x00001000",
+        fileBytes: 8,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        architecture: "arm",
+        entryPoint: "0x1004",
+        entryPointSource: "0x00001004",
+        baseAddress: "0x1000",
+        baseAddressSource: "0x00001000",
+      },
+    });
+  });
+  it.each(["0xffc", "0x1008"])(
+    "rejects code entry %s outside the load",
+    (entryPoint) => {
+      expect(
+        admitRawBinary({
+          architecture: "arm",
+          entryPoint,
+          baseAddress: "0x1000",
+          fileBytes: 8,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          constraint: "load_selection_rejected",
+          reason: expect.stringContaining("inside the mapped image"),
+        },
+      });
+    },
+  );
+  it.each([null, 4096, "1000", "0xwrong"])(
+    "rejects malformed base %s",
+    (baseAddress) => {
+      expect(
+        admitRawBinary({
+          architecture: "arm",
+          entryPoint: "0x1000",
+          baseAddress,
+          fileBytes: 8,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { reason: expect.stringContaining("base_address") },
+      });
+    },
+  );
+  it("checks address overflow from the load base", () => {
+    expect(
+      admitRawBinary({
+        architecture: "6502",
+        entryPoint: "0xffff",
+        baseAddress: "0xfffe",
+        fileBytes: 3,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("6502 address width") },
+    });
+  });
+  it("allows an unaligned data base while requiring an aligned ARM code entry", () => {
+    expect(
+      admitRawBinary({
+        architecture: "arm",
+        entryPoint: "0x1004",
+        baseAddress: "0x1001",
+        fileBytes: 7,
+      }).ok,
+    ).toBe(true);
+    expect(
+      admitRawBinary({
+        architecture: "arm",
+        entryPoint: "0x1002",
+        baseAddress: "0x1000",
+        fileBytes: 8,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("4-byte aligned") },
+    });
+  });
+});
+
 describe("raw-binary selection pairing", () => {
+  it("rejects a load base for a header-detected target", () => {
+    expect(rawBinarySelectionError({ baseAddress: "0x1000" })).toBe(
+      "base_address applies only with format=raw-binary",
+    );
+  });
   it("requires architecture and entry with format=raw-binary", () => {
     expect(rawBinarySelectionError({ format: "raw-binary" })).toBe(
       "format=raw-binary requires architecture and entry_point",

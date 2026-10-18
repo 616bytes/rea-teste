@@ -45,6 +45,8 @@ import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
+  rawBinaryBaseAddressSchema,
+  rawBinaryBaseAddress,
 } from "./rawBinary.js";
 import {
   relationshipCoverageSchema,
@@ -117,12 +119,23 @@ const targetSchema = z.discriminatedUnion("format", [
       .exclude([...RAW_ONLY_ARCHITECTURES])
       .nullable(),
   }),
-  targetIdentitySchema.extend({
-    format: z.literal("raw-binary"),
-    kind: z.literal("executable"),
-    architecture: binaryArchitectureSchema,
-    entry_point: rawBinaryEntryPointSchema,
-  }),
+  targetIdentitySchema
+    .extend({
+      format: z.literal("raw-binary"),
+      kind: z.literal("executable"),
+      architecture: binaryArchitectureSchema,
+      entry_point: rawBinaryEntryPointSchema,
+      base_address: rawBinaryBaseAddressSchema.optional(),
+    })
+    .transform(
+      ({
+        base_address,
+        ...target
+      }): typeof target & { base_address?: string } => ({
+        ...target,
+        ...(base_address === undefined ? {} : { base_address }),
+      }),
+    ),
 ]);
 const bindingSchema = z
   .object({
@@ -359,6 +372,9 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
         architecture: target.architecture,
         format: target.format,
         entry_point: target.entryPoint,
+        ...(rawBinaryBaseAddress(target) === target.entryPoint
+          ? {}
+          : { base_address: rawBinaryBaseAddress(target) }),
       }
     : {
         sha256: target.sha256,
@@ -387,7 +403,9 @@ export const snapshotMatchesTarget = (
   snapshot.architecture === (target.architecture ?? null) &&
   (snapshot.format !== "raw-binary" ||
     (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint));
+      snapshot.entry_point === target.entryPoint &&
+      (snapshot.base_address ?? snapshot.entry_point) ===
+        rawBinaryBaseAddress(target)));
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (

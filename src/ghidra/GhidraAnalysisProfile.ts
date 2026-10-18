@@ -28,6 +28,7 @@ import {
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { rawBinaryBaseAddress } from "../domain/rawBinary.js";
 
 import {
   ghidraProcessorUnsupportedReason,
@@ -153,7 +154,7 @@ export const resolveGhidraAnalysisProfile = async (
             installation.platform === "win32"
               ? "official-headless-script-v1"
               : "inspected-jvm-launch-support-v1",
-          load_image_evidence: "independent-raw-mapping-context-v4",
+          load_image_evidence: "independent-raw-mapping-context-v5",
           jump_table_evidence: "typed-case-default-blocks-v1",
           decompiler_jump_loads: true,
           loader: "BinaryLoader",
@@ -161,7 +162,8 @@ export const resolveGhidraAnalysisProfile = async (
           compiler_spec_id: language.compilerSpecId,
           language_selection: "caller-supplied-v1",
           entry_point: target.entryPoint,
-          entry_seed: "external-entry-and-function-before-analysis-v1",
+          base_address: rawBinaryBaseAddress(target),
+          entry_seed: "separate-load-base-and-entry-before-analysis-v2",
           ...analyzerParameters,
         }),
       }),

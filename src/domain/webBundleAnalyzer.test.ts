@@ -8,6 +8,20 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
+it("retains standalone GraphQL Source operations in captured scripts", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+    const source = {
+      body: "query GetUser { user { id } }",
+      locationOffset: { line: 1, column: 1 },
+    };
+  `),
+  );
+  expect(result.observations.endpoints).toEqual([
+    expect.objectContaining({ value: "GetUser", mechanism: "graphql:query" }),
+  ]);
+});
+
 it.each([
   {
     kind: "recovered",
@@ -46,6 +60,55 @@ it.each([
     });
     expect(result.observations.endpoints.map(({ value }) => value)).toEqual(
       endpoints,
+    );
+  },
+);
+
+it.each([
+  [
+    "const records = new Map(); const alias = records; alias.get('/accounts');",
+    false,
+  ],
+  ["new Map().delete('/accounts');", false],
+  [
+    "const records = new Map(); records.get('/accounts'); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); records.get = fetch; records.get('/accounts');",
+    true,
+  ],
+  [
+    "Object.getPrototypeOf = () => Map.prototype; Object.getPrototypeOf({}).get = fetch; new Map().get('/accounts');",
+    true,
+  ],
+  ["client.get('/accounts');", true],
+  ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
+] as const)(
+  "shares Map receiver certainty with application analysis: %s",
+  (source, candidate) => {
+    const input = source + " fetch('/network');";
+    const result = analyzeCapturedWebBundle(inspection(input));
+    expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+      "/network",
+    ]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value),
+    ).toEqual(candidate ? ["/accounts"] : []);
+    const staticResult = analyzeJavaScriptStaticSource(input);
+    expect(
+      staticResult.endpoints
+        .map(({ value, interpretation }) => [value, interpretation ?? null])
+        .sort(),
+    ).toEqual(
+      candidate
+        ? [
+            ["/accounts", "candidate"],
+            ["/network", null],
+          ]
+        : [["/network", null]],
     );
   },
 );
@@ -161,7 +224,9 @@ describe("web bundle analyzer", () => {
       trust: "page-declared-untrusted",
     });
   });
+});
 
+describe("web bundle source-map coverage", () => {
   it("reports unavailable source maps as partial without dropping requested maps", () => {
     const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
       status: "unavailable",
@@ -189,6 +254,18 @@ describe("web bundle analyzer", () => {
         "One or more requested source maps were unavailable or incomplete",
       affected_script_keys: [`scr_${"1".repeat(64)}`],
     });
+  });
+
+  it("keeps map-less captured source complete when no maps were requested", () => {
+    const analysis = analyzeCapturedWebBundle(inspection("export {};"), {
+      status: "not_requested",
+      requested: 0,
+      processed: 0,
+      items: [],
+    });
+
+    expect(analysis.completeness.status).toBe("complete");
+    expect(analysis.unknowns).toEqual([]);
   });
 
   it("rejects inconsistent source-map coverage counts", () => {
@@ -357,20 +434,20 @@ describe("web bundle API classification parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual([
-      "../search",
-      "/search",
-      "/users",
-      "/v1/headers",
-      "https://api.example.test/headers",
-      "https://api.example.test/users",
-    ]);
+    ).toEqual(["/search", "/v1/headers"]);
     expect(
       result.inferences
         .filter(({ kind }) => kind === "endpoint_candidate")
         .map(({ value }) => value)
         .sort(),
-    ).toEqual(["cache-key", "users"]);
+    ).toEqual([
+      "../search",
+      "/users",
+      "cache-key",
+      "https://api.example.test/headers",
+      "https://api.example.test/users",
+      "users",
+    ]);
   });
 
   it("keeps undici header-store reads out of endpoint observations", () => {
@@ -382,15 +459,12 @@ describe("web bundle API classification parity", () => {
         api.get("/api/users");
       `),
     );
-    expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
-      "/header-list",
-      "/api/users",
-    ]);
+    expect(result.observations.endpoints).toEqual([]);
     expect(
       result.inferences
         .filter(({ kind }) => kind === "endpoint_candidate")
         .map(({ value }) => value),
-    ).toEqual([]);
+    ).toEqual(["/header-list", "/api/users"]);
   });
 });
 
@@ -467,13 +541,17 @@ describe("web bundle explicit request reference forms", () => {
       fs.open(path, "r");
     `;
     const expected = [
-      ...references,
       "?view=1",
       "#view=1",
       "#literal=1",
       "https:api.example.test/xhr",
     ].sort();
-    const expectedCandidates = [...ambiguous, "POST", "X"].sort();
+    const expectedCandidates = [
+      ...references,
+      ...ambiguous,
+      "POST",
+      "X",
+    ].sort();
     const web = analyzeCapturedWebBundle(inspection(source));
     expect(web.observations.endpoints.map(({ value }) => value).sort()).toEqual(
       expected,
@@ -517,11 +595,12 @@ describe("web bundle endpoint candidate classification", () => {
     const result = analyzeCapturedWebBundle(inspection(source));
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["/api/users", "login", "ping"]);
+    ).toEqual(["login", "ping"]);
     const candidates = result.inferences.filter(
       ({ kind }) => kind === "endpoint_candidate",
     );
     expect(candidates.map(({ value }) => value).sort()).toEqual([
+      "/api/users",
       "ADDRESS_ADDED",
       "POST",
       "X",
@@ -656,15 +735,13 @@ describe("web bundle configuration and navigation parity", () => {
       "users",
     ];
     const web = analyzeCapturedWebBundle(inspection(source));
-    expect(web.observations.endpoints.map(({ value }) => value)).toEqual([
-      "/v1/settings",
-    ]);
+    expect(web.observations.endpoints).toEqual([]);
     expect(
       web.inferences
         .filter(({ kind }) => kind === "endpoint_candidate")
         .map(({ value }) => value)
         .sort(),
-    ).toEqual(expected.slice(1));
+    ).toEqual(expected);
     expect(
       analyzeJavaScriptStaticSource(source)
         .endpoints.map(({ value }) => value)
@@ -707,8 +784,8 @@ describe("web bundle configuration and navigation parity", () => {
       };
     };
     const proven = {
-      endpoints: ["/v1/state"],
-      candidates: ["token", "users"],
+      endpoints: [],
+      candidates: ["/v1/state", "token", "users"],
     };
     expect(analyze(`const vscode = require("vscode");${reads}`)).toEqual({
       web: proven,
@@ -719,8 +796,9 @@ describe("web bundle configuration and navigation parity", () => {
       application: proven,
     });
     const unproven = {
-      endpoints: ["/v1/state"],
+      endpoints: [],
       candidates: [
+        "/v1/state",
         "closedRepositories",
         "lastVersion",
         "onboarded",
@@ -1006,6 +1084,47 @@ describe("web metadata key semantics", () => {
       expect.objectContaining({ name: "valid" }),
     ]);
   });
+
+  it("projects only exact input schema property names", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection(`
+      document.modelContext.registerTool({
+        name: "literal",
+        inputSchema: {
+          type: "object",
+          properties: { type: {}, properties: {}, "": {}, [dynamicKey]: {}, ...dynamicProperties }
+        }
+      });
+      document.modelContext.registerTool({ name: "missing properties", inputSchema: { type: "object" } });
+      document.modelContext.registerTool({ name: "dynamic properties", inputSchema: { properties: dynamicProperties } });
+      document.modelContext.registerTool({ name: "null properties", inputSchema: { properties: null } });
+      document.modelContext.registerTool({ name: "missing schema" });
+      document.modelContext.registerTool({ name: "dynamic schema", inputSchema: schema });
+      document.modelContext.registerTool({ name: "null schema", inputSchema: null });
+      document.modelContext.registerTool({ name: "spread schema", inputSchema: { ...schema } });
+      document.modelContext.registerTool({
+        name: "computed literal keys",
+        ["inputSchema"]: { ["properties"]: { [""]: {}, ["literal"]: {}, [dynamicKey]: {} } }
+      });
+    `),
+    );
+
+    expect(
+      result.observations.webmcp_declarations.map(
+        ({ name, schema_property_names }) => ({ name, schema_property_names }),
+      ),
+    ).toEqual([
+      { name: "literal", schema_property_names: ["", "properties", "type"] },
+      { name: "missing properties", schema_property_names: [] },
+      { name: "dynamic properties", schema_property_names: [] },
+      { name: "null properties", schema_property_names: [] },
+      { name: "missing schema", schema_property_names: [] },
+      { name: "dynamic schema", schema_property_names: [] },
+      { name: "null schema", schema_property_names: [] },
+      { name: "spread schema", schema_property_names: [] },
+      { name: "computed literal keys", schema_property_names: ["", "literal"] },
+    ]);
+  });
 });
 
 it("retains WebMCP declarations through optional member and call chaining", () => {
@@ -1089,6 +1208,27 @@ it("retains direct and literal computed call names", () => {
   ).toEqual(["./direct.js", "./literal.js"]);
   expect(result.observations.webmcp_declarations).toEqual([
     expect.objectContaining({ name: "literal-tool" }),
+  ]);
+});
+
+it("requires WebMCP receiver and method names to occupy exact member segments", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+      navigator.modelContext.registerTool({ name: "navigator" });
+      local.modelContext.registerTool({ name: "exact nested" });
+      const appmodelContext = { registerTool() {} };
+      appmodelContext.registerTool({ name: "receiver suffix" });
+      const app = { analyticsmodelContext: { registerTool() {} } };
+      app.analyticsmodelContext.registerTool({ name: "nested suffix" });
+      window["modelContext.registerTool"]({ name: "dotted property" });
+      window["modelContext"].registerTool({ name: "computed receiver" });
+    `),
+  );
+
+  expect(result.observations.webmcp_declarations).toEqual([
+    expect.objectContaining({ name: "navigator" }),
+    expect.objectContaining({ name: "exact nested" }),
+    expect.objectContaining({ name: "computed receiver" }),
   ]);
 });
 

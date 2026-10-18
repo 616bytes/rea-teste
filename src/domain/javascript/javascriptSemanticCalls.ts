@@ -50,7 +50,10 @@ interface CallCollectionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
   readonly output: MutableCallAnalysis;
-  readonly bindingResolutionCache: Map<string, LocalCallableResolution>;
+  readonly bindingResolutionCache: WeakMap<
+    t.Identifier,
+    LocalCallableResolution
+  >;
   readonly parameterBindingCache: Map<
     string,
     readonly JavaScriptSemanticBindingState[]
@@ -79,7 +82,7 @@ export const collectJavaScriptSemanticCalls = (
     state,
     callableById,
     output,
-    bindingResolutionCache: new Map(),
+    bindingResolutionCache: new WeakMap(),
     parameterBindingCache: new Map(),
     ancestors: [],
   };
@@ -127,7 +130,7 @@ const collectCallSite = (
     node: node.callee,
     state,
     callableById,
-    seenBindings: new Set(),
+    seenInitializers: new Set(),
     bindingCache: context.bindingResolutionCache,
   });
   const callSiteId = semanticCallSiteId(node);
@@ -372,8 +375,8 @@ const collectDynamicScope = (
 ): void => {
   const reason = t.isWithStatement(node)
     ? "`with` introduces a runtime binding environment; names inside are not statically resolvable."
-    : t.isCallExpression(node) && isUnshadowedGlobal(node.callee, state, "eval")
-      ? "`eval` can declare bindings at runtime; names inside the evaluated source are not statically resolvable."
+    : state.opaqueEffects.sites.has(node)
+      ? "`eval` can change bindings and reachable objects at runtime; its effects are not statically resolvable."
       : null;
   if (reason === null) return;
   addFrontier(

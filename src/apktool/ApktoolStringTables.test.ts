@@ -43,6 +43,33 @@ describe("physical Apktool string facts", () => {
     expect(result.tables.map((table) => table.total_count)).toEqual([1, 1]);
   });
 
+  it("reads a three-digit region from the b+ table Apktool writes for it", async () => {
+    const paths: string[] = [];
+    const outcome = await projectApktoolStringTables(
+      {
+        async readText(path) {
+          paths.push(path);
+          return textRead(xml(1));
+        },
+      },
+      "decoded",
+      { include_strings: true, locale: "es-419", locales: ["b+es+419"] },
+    );
+    if (!outcome.ok) throw outcome.error.cause;
+    const result = outcome.value;
+    expect(paths).toEqual([
+      join("decoded", "res", "values-b+es+419", "strings.xml"),
+    ]);
+    expect(result.tables.map((table) => table.locale)).toEqual([
+      "es-419",
+      "b+es+419",
+    ]);
+    expect(result.tables.map((table) => table.status)).toEqual([
+      "present",
+      "present",
+    ]);
+  });
+
   it("counts complete source entries beyond the retained table prefix", async () => {
     const outcome = await projectApktoolStringTables(
       {

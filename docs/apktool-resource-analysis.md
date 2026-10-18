@@ -71,8 +71,9 @@ Equivalent MCP methods are `inspect_apktool_client` and
 primary `locale` (project `res/values-<locale>/strings.xml` instead of the default
 table), `locales` (repeatable array of additional localized string tables to project
 from the same single decode pass), and `include_strings` (default true). Regional locales such as `pt-BR`
-select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
-`b+zh+Hans+CN` may also be supplied directly.
+select Android's `values-pt-rBR`; a three-digit region such as `es-419`
+selects `values-b+es+419`, the only spelling Apktool writes for it; Android
+qualifiers such as `pt-rBR` and `b+zh+Hans+CN` may also be supplied directly.
 
 ## Interpret the result
 

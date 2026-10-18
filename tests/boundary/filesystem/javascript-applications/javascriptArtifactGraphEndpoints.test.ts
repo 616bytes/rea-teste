@@ -682,6 +682,59 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "indexing-frozen-capture.js",
+    source:
+      "'use strict';const box={};Object.freeze(box);const Socket=(box.x=globalThis.WebSocket);new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
+    file: "indexing-plain-capture.js",
+    source:
+      'const box={};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "getter-empty-completion.js",
+    source:
+      '(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){}};yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "optional-bigint-failure.js",
+    source:
+      '(async()=>{(+1n)?.[await 0];new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "false-loop-catch.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{while(false){throw 0}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "bitwise-prefix.js",
+    source: 'new(~1,globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "inline-member-capture.js",
+    source:
+      'new((({__proto__:null}).x=globalThis.WebSocket))("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "rest-throw-before-setter.js",
+    source:
+      '(async()=>{let x;({a:x=await 0,...({set run(v){new Socket("wss://example.test/review-latest")}}).run}={a:undefined,get b(){throw 0}})})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "rest-complete-before-setter.js",
+    source:
+      '(async()=>{let x;({a:x=await 0,...({set run(v){new Socket("wss://example.test/review-latest")}}).run}={a:undefined,get b(){}})})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "completion-member-write.js",
     source:
       'const box={};(async()=>{let y;[box.x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',

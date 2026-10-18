@@ -5,6 +5,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
   javaScriptClassField,
+  javaScriptUnaryAlwaysThrows,
 } from "./javascriptAstValues.js";
 
 const preserveGrouping = { stopAtParentheses: true } as const;
@@ -157,6 +158,7 @@ const optionalOperationMaySkip = (
   const receiver = unwrapJavaScriptExpression(
     t.isOptionalCallExpression(node) ? node.callee : node.object,
   ).node;
+  if (javaScriptUnaryAlwaysThrows(receiver)) return true;
   const literal = readExactJavaScriptLiteral(receiver);
   return (
     !(literal.found && literal.value !== null) &&

@@ -4367,6 +4367,121 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "literal false empty loop cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{while(false){}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "empty rest copy reaches setter write",
+    "(async()=>{let x;({a:x=await 0,...({set run(v){new Socket(URL)}}).run}={a:undefined})})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "overwritten getter is not copied by rest",
+    "(async()=>{let x;({a:x=await 0,...({set run(v){new Socket(URL)}}).run}={a:undefined,get b(){throw 0},b:1})})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "frozen constructor capture fails without unrelated indexing",
+    "'use strict';const box={};Object.freeze(box);const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    false,
+  ],
+  [
+    "plain constructor capture requests its own effects",
+    "const box={};const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    true,
+  ],
+  [
+    "nonextensible constructor capture fails",
+    "'use strict';const box={};Object.preventExtensions(box);const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    false,
+  ],
+  [
+    "empty getter permits later pattern wait",
+    "(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){}};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bare return getter permits later pattern wait",
+    "(async()=>{const[{x},y=await 0]=(function*(){try{yield {get x(){return}};yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing bigint optional receiver skips unreachable key",
+    "(async()=>{(+1n)?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing negative bigint optional receiver",
+    "(async()=>{(+(-1n))?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "literal false loop cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{while(false){throw 0}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "literal false for cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for(let i=0;false;null.value){throw 0}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing for initializer still enters catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for(let i=null.value;false;){}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "do false still executes throwing body",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{do{throw 0}while(false)}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bitwise numeric prefix completes",
+    "new(~1,globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "bitwise bigint prefix completes",
+    "new(~1n,globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "inline null prototype assignment result",
+    "new((({__proto__:null}).x=globalThis.WebSocket))(URL);",
+    true,
+  ],
+  [
+    "inline own data assignment result",
+    "new((({x:0}).x=globalThis.WebSocket))(URL);",
+    true,
+  ],
+  [
+    "inline setter assignment result stays unproven",
+    "'use strict';new((({set x(v){throw 0}}).x=globalThis.WebSocket))(URL);",
+    false,
+  ],
+  [
+    "throwing rest copy prevents setter write",
+    "(async()=>{let x;({a:x=await 0,...({set run(v){new Socket(URL)}}).run}={a:undefined,get b(){throw 0}})})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "data rest copy reaches setter write",
+    "(async()=>{let x;({a:x=await 0,...({set run(v){new Socket(URL)}}).run}={a:undefined,b:0})})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "empty rest getter reaches setter write",
+    "(async()=>{let x;({a:x=await 0,...({set run(v){new Socket(URL)}}).run}={a:undefined,get b(){}})})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nonthrowing rest getter reaches setter write",
+    "(async()=>{let x,y;({a:x=await 0,b:y,...({set run(v){new Socket(URL)}}).run}={a:undefined,b:0,get c(){return 1}})})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "frozen member target blocks later wait",
     "'use strict';const box={};Object.freeze(box);(async()=>{let y;[box.x,y=await 0]=(function*(){try{yield 0;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
     false,

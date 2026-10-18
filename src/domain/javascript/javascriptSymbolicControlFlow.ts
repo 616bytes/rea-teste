@@ -3,6 +3,7 @@ import {
   javaScriptExactResultOperand,
   readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
+  javaScriptUnaryAlwaysThrows,
 } from "./javascriptAstValues.js";
 import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import {
@@ -215,18 +216,26 @@ const syntaxLabeledCompletion = (
 const syntaxLoopCompletion = (
   node: t.Loop,
   complete: CompleteSyntax,
-): SyntaxCompletion => ({
-  // Loop termination is deliberately not proven from syntax alone.
-  normal: true,
-  abrupt: [
-    { kind: "throw" },
-    ...complete(node.body).abrupt.filter(
-      (exit) =>
-        (exit.kind !== "break" && exit.kind !== "continue") ||
-        exit.label !== null,
-    ),
-  ],
-});
+): SyntaxCompletion => {
+  if (t.isWhileStatement(node) || t.isForStatement(node)) {
+    const test =
+      node.test == null ? undefined : readExactJavaScriptLiteral(node.test);
+    if (test?.found && !test.value)
+      return t.isForStatement(node) ? complete(node.init) : normalCompletion;
+  }
+  return {
+    // Loop termination is deliberately not proven from syntax alone.
+    normal: true,
+    abrupt: [
+      { kind: "throw" },
+      ...complete(node.body).abrupt.filter(
+        (exit) =>
+          (exit.kind !== "break" && exit.kind !== "continue") ||
+          exit.label !== null,
+      ),
+    ],
+  };
+};
 
 const syntaxIfCompletion = (
   node: t.IfStatement,
@@ -458,10 +467,11 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
         ? unwrapJavaScriptExpression(node.object).node
         : undefined;
     if (
-      (t.isNullLiteral(object) ||
+      javaScriptUnaryAlwaysThrows(node) ||
+      ((t.isNullLiteral(object) ||
         t.isUnaryExpression(object, { operator: "void" })) &&
-      (t.isMemberExpression(node) ||
-        (t.isOptionalMemberExpression(node) && !node.optional))
+        (t.isMemberExpression(node) ||
+          (t.isOptionalMemberExpression(node) && !node.optional)))
     ) {
       throwingEvaluations.set(node, true);
       continue;
@@ -555,10 +565,10 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
             member.value == null ||
             syntaxEvaluationCannotThrow(member.value)),
       )) ||
-    (t.isUnaryExpression(node, { operator: "+" }) &&
-      t.isNumericLiteral(node.argument)) ||
-    (t.isUnaryExpression(node, { operator: "-" }) &&
-      (t.isNumericLiteral(node.argument) || t.isBigIntLiteral(node.argument)));
+    (t.isUnaryExpression(node) &&
+      ["+", "-", "~"].includes(node.operator) &&
+      (t.isNumericLiteral(node.argument) ||
+        (node.operator !== "+" && t.isBigIntLiteral(node.argument))));
   if (t.isObjectExpression(node))
     result = node.properties.every(
       (property) =>

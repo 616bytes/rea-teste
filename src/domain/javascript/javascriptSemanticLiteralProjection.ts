@@ -5,6 +5,7 @@ import {
   semanticLiteralContainer,
   semanticLiteralProperty,
   semanticFinalObjectMember,
+  semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
@@ -95,6 +96,43 @@ export const semanticLiteralProjectionSlot = (
   )
     return { kind: "undefined" };
   return { kind: "unknown" };
+};
+
+/** Own enumerable literal slots copied by rest, excluding keys already consumed. */
+export const semanticLiteralRestSlots = (
+  node: t.Node,
+  excluded: ReadonlySet<string>,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  ownedResultEscape?: t.Node,
+): readonly LiteralProjectionSlot[] | undefined => {
+  const container = semanticLiteralContainer(node, (expression) =>
+    semanticExactResultOperand(expression, state),
+  );
+  if (!t.isObjectExpression(container)) return undefined;
+  const keys = new Set<string>();
+  for (const property of container.properties) {
+    if (t.isSpreadElement(property)) return undefined;
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    if (key === null) return undefined;
+    if (
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand &&
+      key === "__proto__"
+    )
+      continue;
+    if (!excluded.has(key)) keys.add(key);
+  }
+  return [...keys].map((key) =>
+    semanticLiteralProjectionSlot(
+      node,
+      key,
+      capture,
+      state,
+      ownedResultEscape === undefined ? undefined : { ownedResultEscape },
+    ),
+  );
 };
 
 /** Resolve fresh-literal slots once, preserving capture order and iteration facts. */

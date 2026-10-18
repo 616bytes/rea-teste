@@ -132,6 +132,8 @@ export interface JavaScriptSemanticAnalysisState {
     t.ObjectExpression | t.ArrayExpression,
     JavaScriptSemanticLiteralMemberEffect[]
   >;
+  /** Demand and readiness belong to the shared member-effects index, not its consumers. */
+  memberMutationFactsPhase?: "requested" | "indexing" | "indexed";
   /** Visible Array prototype effects make numeric pattern iteration unknown. */
   arrayIterationUnknown?: boolean;
   /** Source evidence that Object.prototype may supply a `require` property. */

@@ -167,8 +167,6 @@ export const analyzeParsedJavaScriptReferences = (
 
 const indexedAmbientWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
-const indexedMemberMutationStates =
-  new WeakSet<JavaScriptSemanticAnalysisState>();
 
 function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
@@ -188,15 +186,25 @@ function* indexSemanticAmbientWritesSteps(
 function* indexSemanticMemberMutationFactsSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
-  if (indexedMemberMutationStates.has(state)) return;
-  yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
-    state.program,
-    state,
-    (site, reference, path) =>
-      referenceEffectsMayHaveChanged(state, site, reference, path),
-  );
-  indexedMemberMutationStates.add(state);
+  if (
+    state.memberMutationFactsPhase === "indexed" ||
+    state.memberMutationFactsPhase === "indexing"
+  )
+    return;
+  state.memberMutationFactsPhase = "indexing";
+  try {
+    yield* indexSemanticAmbientWritesSteps(state);
+    yield* collectSemanticMemberMutationsSteps(
+      state.program,
+      state,
+      (site, reference, path) =>
+        referenceEffectsMayHaveChanged(state, site, reference, path),
+    );
+    state.memberMutationFactsPhase = "indexed";
+  } finally {
+    if (state.memberMutationFactsPhase === "indexing")
+      state.memberMutationFactsPhase = "requested";
+  }
 }
 
 /** One owner projects source-site effects for complete reports or early exit. */
@@ -210,7 +218,7 @@ const visitSemanticReferenceEffectsAtSite = (
   requestedPath?: JavaScriptSemanticPropertyPath,
 ): Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> => {
   const { root, path: inferredPath } = semanticReferenceRoot(referenceNode);
-  const memberEffectsIndexed = indexedMemberMutationStates.has(state);
+  const memberEffectsIndexed = state.memberMutationFactsPhase === "indexed";
   if (!t.isIdentifier(root))
     return {
       bindingId: null,
@@ -517,7 +525,7 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
       );
     },
     referenceMayHaveChangedAt(site, referenceNode, propertyPath) {
-      if (!indexedMemberMutationStates.has(state)) return true;
+      if (state.memberMutationFactsPhase !== "indexed") return true;
       return referenceEffectsMayHaveChanged(
         state,
         site,
@@ -672,6 +680,7 @@ function* classifyDefinitionReceiversSteps(
     hasWebSocketEndpointCandidate,
     requiresWebSocketValueEffects:
       requiresWebSocketValueEffects ||
+      state.memberMutationFactsPhase === "requested" ||
       (hasWebSocketEndpointCandidate && hasPatternConsumer),
   };
 }

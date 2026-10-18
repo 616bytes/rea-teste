@@ -108,24 +108,26 @@ const memberAssignmentCanComplete = (
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
   const key = semanticStaticPropertyKey(target.property, target.computed);
-  if (key === null || key === "__proto__" || !t.isIdentifier(target.object))
-    return false;
-  const binding = resolveSemanticBindingState(
-    state,
-    target.object,
-    target.object.name,
-  );
-  const initializer = semanticStableInitializer(binding, state);
-  if (
-    binding === undefined ||
-    initializer === undefined ||
-    initializer.projection.length !== 0 ||
-    !binding.declarationKinds.has("const") ||
-    binding.escapedPaths.length !== 0 ||
-    !bindingInitializedBeforeRead(binding, read, state, executionFrames)
-  )
-    return false;
-  const object = unwrapJavaScriptExpression(initializer.node).node;
+  if (key === null || key === "__proto__") return false;
+  const receiver = unwrapJavaScriptExpression(target.object).node;
+  let object = receiver;
+  if (t.isIdentifier(receiver)) {
+    // Request once even when this proof is queried while classifying a pattern.
+    state.memberMutationFactsPhase ??= "requested";
+    if (state.memberMutationFactsPhase !== "indexed") return false;
+    const binding = resolveSemanticBindingState(state, receiver, receiver.name);
+    const initializer = semanticStableInitializer(binding, state);
+    if (
+      binding === undefined ||
+      initializer === undefined ||
+      initializer.projection.length !== 0 ||
+      !binding.declarationKinds.has("const") ||
+      binding.escapedPaths.length !== 0 ||
+      !bindingInitializedBeforeRead(binding, read, state, executionFrames)
+    )
+      return false;
+    object = unwrapJavaScriptExpression(initializer.node).node;
+  }
   if (
     !t.isObjectExpression(object) ||
     !syntaxEvaluationCannotThrow(object) ||

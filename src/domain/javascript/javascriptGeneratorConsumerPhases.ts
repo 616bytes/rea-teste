@@ -5,7 +5,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
   javaScriptExactResultOperand,
-  semanticDirectFunctionReturn,
+  semanticDirectFunctionResult,
 } from "./javascriptAstValues.js";
 import {
   syntaxEvaluationCannotThrow,
@@ -16,7 +16,10 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { semanticLiteralProjectionSlot } from "./javascriptSemanticLiteralProjection.js";
+import {
+  semanticLiteralProjectionSlot,
+  semanticLiteralRestSlots,
+} from "./javascriptSemanticLiteralProjection.js";
 import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
 
@@ -239,12 +242,18 @@ const patternPropertyValue = (
     };
   if (selected.kind === "undefined") return { known: true };
   if (selected.kind === "accessor") {
-    const returned = semanticDirectFunctionReturn(selected.node);
-    return returned !== undefined && syntaxEvaluationCannotThrow(returned)
-      ? { known: true, node: returned }
-      : { known: false, completionUnknown: true };
+    return patternAccessorValue(selected.node);
   }
   return { known: false };
+};
+
+/** A completed undefined getter result is not an unsupported accessor body. */
+const patternAccessorValue = (node: t.ObjectMethod): PatternValue => {
+  const result = semanticDirectFunctionResult(node);
+  if (result.kind === "undefined") return { known: true };
+  return result.kind === "value" && syntaxEvaluationCannotThrow(result.node)
+    ? { known: true, node: result.node }
+    : { known: false, completionUnknown: true };
 };
 
 /** A rest copy owns a fresh suffix array; retain indices without synthesizing AST. */
@@ -345,8 +354,54 @@ const patternCompletedSuspension = (
     // RequireObjectCoercible precedes property keys and rest operations.
     // A definite failure also blocks waits in later consumed slots.
     if (nullishPatternValue(value, state)) return "blocked";
+    const excluded = new Set<string>();
+    let unknownExclusion = false;
     for (const property of pattern.properties) {
-      if (t.isRestElement(property)) continue;
+      if (t.isRestElement(property)) {
+        // Rest evaluates its target reference, then copies remaining own values,
+        // and only afterwards performs PutValue (which may invoke a setter).
+        phase = combinePatternCompletion(
+          phase,
+          patternExpressionCompletion(property.argument, suspended),
+        );
+        if (patternStopped(phase)) return phase;
+        const slots =
+          value.known && value.node !== undefined && !unknownExclusion
+            ? semanticLiteralRestSlots(
+                patternValueNode(value.node),
+                excluded,
+                pattern,
+                state,
+                value.ownedResultEscape,
+              )
+            : undefined;
+        if (
+          slots === undefined ||
+          slots.some(
+            (slot) =>
+              slot.kind === "unknown" ||
+              slot.kind === "invalid" ||
+              (slot.kind === "accessor" &&
+                patternAccessorValue(slot.node).completionUnknown),
+          )
+        )
+          return combinePatternCompletion(phase, "unproven");
+        phase = combinePatternCompletion(
+          phase,
+          patternCompletedSuspension(
+            property.argument,
+            { known: false },
+            state,
+            suspended,
+            depth + 1,
+            target,
+            targetPath,
+            executionFrames,
+          ),
+        );
+        if (patternStopped(phase) || targetPath?.has(property)) return phase;
+        continue;
+      }
       if (property.computed)
         phase = combinePatternCompletion(
           phase,
@@ -354,6 +409,8 @@ const patternCompletedSuspension = (
         );
       if (patternStopped(phase)) return phase;
       const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) unknownExclusion = true;
+      else excluded.add(String(key));
       const completion = patternCompletedSuspension(
         property.value,
         key === null

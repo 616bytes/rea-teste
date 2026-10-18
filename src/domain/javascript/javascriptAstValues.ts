@@ -111,6 +111,18 @@ export const readExactJavaScriptLiteral = (
   return { found: false };
 };
 
+/** Unary plus cannot convert a syntactically proven BigInt operand. */
+export const javaScriptUnaryAlwaysThrows = (node: t.Node): boolean => {
+  if (!t.isUnaryExpression(node, { operator: "+" })) return false;
+  const argument = unwrapJavaScriptExpression(node.argument).node;
+  return (
+    t.isBigIntLiteral(argument) ||
+    (t.isUnaryExpression(argument) &&
+      ["-", "~"].includes(argument.operator) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(argument.argument).node))
+  );
+};
+
 /** Read an identifier or literal property name without evaluating syntax. */
 export const propertyName = (node: t.Node): string => {
   if (t.isIdentifier(node)) return node.name;
@@ -125,11 +137,13 @@ export const semanticStaticPropertyName = (
   computed: boolean,
 ): string => semanticStaticPropertyKey(property, computed) ?? "";
 
-/** One parameter-free returned expression; async settlement consumers opt in explicitly. */
-export const semanticDirectFunctionReturn = (
+/** A simple return or empty body; async settlement consumers opt in explicitly. */
+export const semanticDirectFunctionResult = (
   node: t.Node,
   options?: { readonly allowAsync: boolean },
-): t.Node | undefined => {
+):
+  | { readonly kind: "value"; readonly node: t.Node }
+  | { readonly kind: "undefined" | "unknown" } => {
   if (
     !t.isFunction(node) ||
     (node.async && options?.allowAsync !== true) ||
@@ -138,13 +152,25 @@ export const semanticDirectFunctionReturn = (
       t.isIdentifier(parameter),
     )
   )
-    return undefined;
-  if (!t.isBlockStatement(node.body)) return node.body;
+    return { kind: "unknown" };
+  if (!t.isBlockStatement(node.body)) return { kind: "value", node: node.body };
   const statements = node.body.body.filter((item) => !t.isEmptyStatement(item));
   const statement = statements[0];
+  if (statements.length === 0) return { kind: "undefined" };
   return statements.length === 1 && t.isReturnStatement(statement)
-    ? (statement.argument ?? undefined)
-    : undefined;
+    ? statement.argument == null
+      ? { kind: "undefined" }
+      : { kind: "value", node: statement.argument }
+    : { kind: "unknown" };
+};
+
+/** Value-only consumers deliberately do not substitute an implicit undefined result. */
+export const semanticDirectFunctionReturn = (
+  node: t.Node,
+  options?: { readonly allowAsync: boolean },
+): t.Node | undefined => {
+  const result = semanticDirectFunctionResult(node, options);
+  return result.kind === "value" ? result.node : undefined;
 };
 
 /** Read an exact property key, preserving the legal empty-string key. */

@@ -1,3 +1,7 @@
+import { createEvidence } from "../domain/evidence.js";
+import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
+import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import { ok as javaProbeOk } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { describe, expect, it } from "vitest";
@@ -201,6 +205,11 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "runtime_recovery_limitations",
+      current: "cleanup-qualified-reimport-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "function_boundary_observations",
       current: "ghidra-function-boundary-limitations-v4",
       legacy: "ghidra-function-boundary-limitations-v3",
@@ -399,4 +408,76 @@ describe("Ghidra snapshot cache", () => {
     expect(session.exportAnalysisSnapshot().ok).toBe(false);
     await session.close();
   });
+});
+
+it("refuses populated legacy recovery snapshots before replaying superseded limitations", async () => {
+  const live = fixture();
+  await open(live.session);
+  try {
+    const parameters = { procedure: "0x1000", document: "fixture" };
+    const fresh = await live.session.execute(
+      "procedure_pseudo_code",
+      parameters,
+    );
+    if (!fresh.ok) throw fresh.error;
+    const profile = fresh.value.analysisProfile;
+    if (profile === undefined)
+      throw new Error("Expected a committed Ghidra profile");
+    const legacyProfile = createAnalysisProfile(
+      profile.provider,
+      Object.fromEntries(
+        Object.entries(profile.parameters).filter(
+          ([key]) => key !== "runtime_recovery_limitations",
+        ),
+      ),
+    );
+    const stale =
+      "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.";
+    const legacyCache = new AnalysisSnapshotCache();
+    legacyCache.record({
+      target: TARGET,
+      profile: legacyProfile,
+      operation: "procedure_pseudo_code",
+      parameters,
+      execution: createAnalysisExecution(fresh.value.result, profile.provider, {
+        subject: TARGET,
+        analysisProfile: legacyProfile,
+        limitations: [stale],
+      }),
+    });
+    const legacy = legacyCache.export(
+      TARGET,
+      legacyProfile,
+      createEvidenceBundle([
+        createEvidence(TARGET, profile.provider, {
+          operation: "procedure_pseudo_code",
+          parameters,
+          result: fresh.value.result,
+          analysisProfile: legacyProfile,
+          limitations: [stale],
+        }),
+      ]),
+    );
+    if (!legacy.ok) throw legacy.error;
+    expect(legacy.value.entries).toHaveLength(1);
+    expect(legacy.value.entries[0]?.execution.limitations).toEqual([stale]);
+    expect(live.session.importAnalysisSnapshot(legacy.value)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        message: expect.stringContaining("profile_mismatch"),
+      },
+    });
+    const replay = await live.session.execute(
+      "procedure_pseudo_code",
+      parameters,
+    );
+    if (!replay.ok) throw replay.error;
+    expect(replay.value.limitations).not.toContain(stale);
+    expect(replay.value.limitations).toContainEqual(
+      expect.stringContaining("blocks fresh import until cleanup succeeds"),
+    );
+  } finally {
+    await live.session.close();
+  }
 });

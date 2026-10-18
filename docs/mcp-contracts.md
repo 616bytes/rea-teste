@@ -643,7 +643,11 @@ fails. After addressing `cleanup_incomplete`, retry plain `close_binary` without
 `snapshot_path` on the same connection, preserving any already written snapshot.
 Check cleanup success before reopening the target; do not reuse the cleared IDs after close. Preserved
 complete dossier Evidence can instead be supplied through the view's inline
-source. New uncached queries can require another import. Do not repeat completed work to
+source. The Ghidra profile commits `runtime_recovery_limitations: "cleanup-qualified-reimport-v1"`.
+Snapshots from earlier profiles cannot be replayed under this recovery contract;
+reanalyze with the current profile rather than importing superseded limitations.
+Preserved historical Evidence remains historical and is not silently rewritten.
+New uncached queries can require another import. Do not repeat completed work to
 recover a smaller reply, or treat a client timeout as an empty successful result.
 The [deadline guide](#ghidra-first-query-deadlines-and-recovery) explains which
 settings belong to the client and how to recover after interrupted startup.

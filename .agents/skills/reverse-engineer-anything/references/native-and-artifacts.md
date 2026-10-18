@@ -143,7 +143,11 @@ fails. After addressing `cleanup_incomplete`, retry plain `close_binary` without
 `snapshot_path` on the same connection, preserving any already written snapshot.
 Check cleanup success before reopening the target; do not reuse cleared IDs after close. Preserved
 complete dossier Evidence can instead be supplied through the view's inline
-source. A new uncached query can still incur cold import. Increasing the
+source. The Ghidra profile commits `runtime_recovery_limitations: "cleanup-qualified-reimport-v1"`.
+Snapshots from earlier profiles cannot be replayed under this recovery contract;
+reanalyze with the current profile rather than importing superseded limitations.
+Preserved historical Evidence remains historical and is not silently rewritten.
+A new uncached query can still incur cold import. Increasing the
 startup allowance does not extend a client's tool-call deadline. See the
 [deadline and recovery guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
 

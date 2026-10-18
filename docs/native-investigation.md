@@ -80,6 +80,9 @@ the selected target again. Incomplete cleanup retains owned process/runtime
 resources and blocks fresh import until cleanup succeeds. The selected target
 remains open, and retained successful Evidence or matching snapshots can still
 be reused. Check the reported cleanup outcome before retrying analysis.
+The Ghidra profile commits `runtime_recovery_limitations: "cleanup-qualified-reimport-v1"`;
+earlier-profile snapshots cannot replay superseded cleanup guidance. Reanalyze
+under the current profile; historical Evidence is not rewritten.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.

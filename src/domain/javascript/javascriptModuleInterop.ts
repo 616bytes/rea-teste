@@ -79,7 +79,9 @@ interface InteropHelper {
 export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
-    readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+    readonly intrinsicPath?: (node: t.Node) => readonly string[] | undefined;
+    readonly callableResult?: (node: t.Node) => readonly string[] | undefined;
+    readonly additionalGlobals?: readonly string[];
   },
 ) => {
   const helpers = new Map<string, InteropHelper | null>();
@@ -126,7 +128,14 @@ export const createSemanticModuleInterop = (
         const { root, members } = electronMemberPath(current);
         if (members.some((member) => member === null)) return finish(undefined);
         suffix = [...(members as readonly string[]), ...suffix];
-        for (const global of ["Object", "Function", "Reflect"])
+        const resultPath = options?.callableResult?.(root);
+        if (resultPath !== undefined) return finish([...resultPath, ...suffix]);
+        for (const global of [
+          "Object",
+          "Function",
+          "Reflect",
+          ...(options?.additionalGlobals ?? []),
+        ])
           if (isUnshadowedGlobal(root, state, global))
             return finish(["intrinsic", global, ...suffix]);
         for (const global of ["globalThis", "global", "window", "self"])
@@ -630,12 +639,16 @@ export const createSemanticModuleInterop = (
     staticString,
     isFreshObject,
     opaqueMutationPath,
-    retainWrite: (node: t.Node, path: readonly (string | null)[]) => {
+    retainWrite: (
+      node: t.Node | undefined,
+      path: readonly (string | null)[],
+    ) => {
       const coverage = new SemanticPropertyPathCoverage();
       coverage.retain(path[0] === "opaque-intrinsic" ? ["intrinsic"] : path);
       writes.push({
-        scope: opaqueMutationPath(node).join("."),
-        offset: node.start ?? Infinity,
+        scope:
+          node === undefined ? "intrinsic" : opaqueMutationPath(node).join("."),
+        offset: node === undefined ? -Infinity : (node.start ?? Infinity),
         coverage,
       });
     },

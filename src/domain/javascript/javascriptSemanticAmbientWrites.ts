@@ -95,12 +95,14 @@ interface AmbientReferenceFacts {
   >;
   readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
   readonly freshObject: (node: t.Node) => boolean;
+  readonly superConstructors: WeakSet<t.Class>;
   readonly callableResult?: (
     node:
       | t.CallExpression
       | t.OptionalCallExpression
       | t.NewExpression
       | t.TaggedTemplateExpression,
+    constructionTarget: boolean,
   ) => readonly AmbientPath[];
 }
 
@@ -123,6 +125,7 @@ export const createAmbientPathResolver = (
     projection: AmbientProjection = [],
     localIdentity?: (node: t.Node, path: AmbientProjection) => void,
     observePrivateDestination?: (privateDestination: boolean) => void,
+    constructionTarget = false,
   ): readonly AmbientPath[] => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
@@ -371,6 +374,27 @@ export const createAmbientPathResolver = (
       }
       if (
         possibleWrites &&
+        constructionTarget &&
+        t.isClass(root) &&
+        suffix !== undefined &&
+        suffix.every(
+          (member) =>
+            member !== null && ["bind", "call", "apply"].includes(member),
+        )
+      ) {
+        const constructor = root.body.body.find(
+          (member) => t.isClassMethod(member) && member.kind === "constructor",
+        );
+        if (
+          root.superClass !== null &&
+          root.superClass !== undefined &&
+          (constructor === undefined || facts?.superConstructors.has(root))
+        )
+          continueWith(root.superClass, suffix);
+        continue;
+      }
+      if (
+        possibleWrites &&
         (t.isCallExpression(root) ||
           t.isOptionalCallExpression(root) ||
           t.isNewExpression(root) ||
@@ -383,7 +407,10 @@ export const createAmbientPathResolver = (
           t.isNewExpression(root) ||
           t.isTaggedTemplateExpression(root)
         ) {
-          for (const identity of facts?.callableResult?.(root) ?? [])
+          for (const identity of facts?.callableResult?.(
+            root,
+            constructionTarget,
+          ) ?? [])
             retain([...identity, ...(suffix ?? [])]);
         }
         if (escapedContents && t.isClass(root) && suffix?.length === 0) {
@@ -560,6 +587,7 @@ export interface AmbientInvocationObserver {
       | t.NewExpression
       | t.TaggedTemplateExpression,
     resolve: AmbientPathResolver,
+    constructionTarget?: boolean,
   ) => readonly AmbientPath[];
 }
 
@@ -595,6 +623,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
   >();
+  const superConstructors = new WeakSet<t.Class>();
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const [path] = ambientReads(node);
@@ -608,6 +637,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     true,
     {
       stores,
+      superConstructors,
       freshObject: interop.isFreshObject,
       ...(opaqueObserver?.callableResult === undefined
         ? {}
@@ -618,7 +648,13 @@ export function* indexJavaScriptAmbientWritesSteps(
                 | t.OptionalCallExpression
                 | t.NewExpression
                 | t.TaggedTemplateExpression,
-            ) => opaqueObserver.callableResult?.(node, ambientWrites) ?? [],
+              constructionTarget: boolean,
+            ) =>
+              opaqueObserver.callableResult?.(
+                node,
+                ambientWrites,
+                constructionTarget,
+              ) ?? [],
           }),
       prototypeTarget: (node) => {
         if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
@@ -668,6 +704,25 @@ export function* indexJavaScriptAmbientWritesSteps(
       writes.push({ node, path });
     },
     (node, invocation) => {
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        t.isSuper(node.callee)
+      ) {
+        for (
+          let parent = state.parentsByNode.get(node);
+          parent !== undefined;
+          parent = state.parentsByNode.get(parent)
+        ) {
+          if (t.isFunction(parent) && !t.isClassMethod(parent)) break;
+          if (!t.isClassMethod(parent)) continue;
+          const body = state.parentsByNode.get(parent);
+          const owner =
+            body === undefined ? undefined : state.parentsByNode.get(body);
+          if (parent.kind === "constructor" && t.isClass(owner))
+            superConstructors.add(owner);
+          break;
+        }
+      }
       const targets: EscapeTarget[] = [];
       // Escaping objects can change contents without replacing their identity.
       const retainEscape = (

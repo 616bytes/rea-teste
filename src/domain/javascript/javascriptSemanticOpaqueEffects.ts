@@ -1,5 +1,8 @@
 import * as t from "@babel/types";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import type {
   AmbientInvocationObserver,
   AmbientPathResolver,
@@ -65,6 +68,7 @@ export const createSemanticOpaqueGlobalObserver = (
   if (!state.opaqueEffects.mayReferenceGlobalCode) return undefined;
   let ambientPaths: AmbientPathResolver;
   let invocationSite: t.Node | undefined;
+  let constructionTarget = false;
   const resolvingResults = new WeakSet<t.Node>();
   const boundValues: JavaScriptIntrinsicInvocation[] = [];
   const boundKeys = new Map<string, number>();
@@ -78,10 +82,48 @@ export const createSemanticOpaqueGlobalObserver = (
     if (id === undefined) nodeIds.set(node, (id = nextNodeId++));
     return id;
   };
+  const inheritedFunctionConstructor = (
+    path: readonly string[],
+    node: t.Node,
+  ): readonly string[] => {
+    const inherited =
+      (path[0] === "global" &&
+        ["Function", "eval"].includes(path[1] ?? "") &&
+        path[2] === "constructor") ||
+      (path[0] === "generated-function" && path[1] === "constructor");
+    if (!inherited) return path;
+    synchronizeIntrinsicWrites();
+    const original =
+      path[0] === "global"
+        ? ["intrinsic", ...path.slice(1, 3)]
+        : ["intrinsic", "Function", "prototype", "constructor"];
+    const changed =
+      strictInterop.intrinsicReadChanged(node, original) ||
+      strictInterop.intrinsicReadChanged(node, [
+        "intrinsic",
+        "Function",
+        "prototype",
+        "constructor",
+      ]);
+    return changed
+      ? path
+      : ["global", "Function", ...path.slice(path[0] === "global" ? 3 : 2)];
+  };
   const paths = (node: t.Node): readonly (readonly string[])[] =>
-    ambientPaths(node, invocationSite).flatMap((path) => {
+    ambientPaths(
+      node,
+      invocationSite,
+      false,
+      [],
+      undefined,
+      undefined,
+      constructionTarget,
+    ).flatMap((path) => {
       if (path.includes(null)) return [];
-      const complete = path as readonly string[];
+      const complete = inheritedFunctionConstructor(
+        path as readonly string[],
+        node,
+      );
       if (complete[0] === "bound-global-callable") {
         const bound = boundValues[Number(complete[1])];
         return bound === undefined || complete.length === 2
@@ -99,7 +141,15 @@ export const createSemanticOpaqueGlobalObserver = (
       ];
     });
   const bounds = (node: t.Node): readonly JavaScriptIntrinsicInvocation[] =>
-    ambientPaths(node, invocationSite).flatMap((path) => {
+    ambientPaths(
+      node,
+      invocationSite,
+      false,
+      [],
+      undefined,
+      undefined,
+      constructionTarget,
+    ).flatMap((path) => {
       const bound =
         path[0] === "bound-global-callable" && path.length === 2
           ? boundValues[Number(path[1])]
@@ -113,10 +163,67 @@ export const createSemanticOpaqueGlobalObserver = (
       return candidates.length === 1 ? candidates[0] : undefined;
     },
   });
-  const strictInterop = createSemanticModuleInterop(state);
+  const strictResults = new WeakSet<t.Node>();
+  let retainedWrites = 0;
+  const synchronizeIntrinsicWrites = (): void => {
+    while (retainedWrites < state.ambientWriteEffects.length) {
+      const effect = state.ambientWriteEffects[retainedWrites++];
+      if (effect?.path[0] === "global")
+        strictInterop.retainWrite(effect.node, [
+          "intrinsic",
+          ...effect.path.slice(1),
+        ]);
+    }
+  };
+  const strictInterop: ReturnType<typeof createSemanticModuleInterop> =
+    createSemanticModuleInterop(state, {
+      additionalGlobals: ["eval"],
+      callableResult: (node): readonly string[] | undefined => {
+        if (
+          (!t.isClass(node) &&
+            !t.isCallExpression(node) &&
+            !t.isOptionalCallExpression(node) &&
+            !t.isNewExpression(node) &&
+            !t.isTaggedTemplateExpression(node)) ||
+          strictResults.has(node)
+        )
+          return undefined;
+        strictResults.add(node);
+        try {
+          if (t.isClass(node)) {
+            const overridden = node.body.body.some(
+              (member) =>
+                (t.isClassMethod(member) || t.isClassProperty(member)) &&
+                member.static &&
+                [null, "bind", "call", "apply"].includes(
+                  semanticStaticPropertyKey(member.key, member.computed),
+                ),
+            );
+            if (overridden) return undefined;
+            if (
+              node.superClass !== null &&
+              node.superClass !== undefined &&
+              strictInterop.intrinsicPath(node.superClass) === undefined
+            )
+              return undefined;
+            return ["intrinsic", "class", "constructor"];
+          }
+          const invocation = strictInvocation(node);
+          const path =
+            invocation?.kind === "known" ? invocation.path : undefined;
+          return path?.join(".") === "intrinsic.Function"
+            ? ["intrinsic", "generated", "function"]
+            : undefined;
+        } finally {
+          strictResults.delete(node);
+        }
+      },
+    });
   const isFunctionFactory = (node: t.Node | undefined): boolean => {
     if (!t.isExpression(node)) return false;
-    const path = strictInterop.intrinsicPath(node);
+    const rawPath = strictInterop.intrinsicPath(node);
+    const path =
+      rawPath === undefined ? undefined : strictConstructorPath(rawPath, node);
     if (path !== undefined)
       return (
         path.join(".") === "intrinsic.Function" &&
@@ -124,19 +231,29 @@ export const createSemanticOpaqueGlobalObserver = (
       );
     const bound = strictInterop.boundIntrinsic(node);
     return (
-      bound?.kind === "known" && bound.path.join(".") === "intrinsic.Function"
+      bound?.kind === "known" &&
+      strictConstructorPath(bound.path, node).join(".") === "intrinsic.Function"
     );
   };
   const identities = (
     node: t.Node,
-  ): readonly JavaScriptIntrinsicInvocation[] => [
-    ...paths(node).map((path): JavaScriptIntrinsicInvocation => ({
-      kind: interop.intrinsicReadChanged(node, path) ? "opaque" : "known",
-      path,
-      arguments: [],
-    })),
-    ...bounds(node),
-  ];
+    constructing = false,
+  ): readonly JavaScriptIntrinsicInvocation[] => {
+    const previous = constructionTarget;
+    constructionTarget = constructing;
+    try {
+      return [
+        ...paths(node).map((path): JavaScriptIntrinsicInvocation => ({
+          kind: interop.intrinsicReadChanged(node, path) ? "opaque" : "known",
+          path,
+          arguments: [],
+        })),
+        ...bounds(node),
+      ];
+    } finally {
+      constructionTarget = previous;
+    }
+  };
   const invocations = (
     node:
       | t.CallExpression
@@ -152,7 +269,7 @@ export const createSemanticOpaqueGlobalObserver = (
         interop.intrinsicReadChanged,
       );
     const callee = t.isTaggedTemplateExpression(node) ? node.tag : node.callee;
-    return identities(callee);
+    return identities(callee, t.isNewExpression(node));
   };
   // Reflect.construct executes only its first target; newTarget selects the
   // resulting prototype without executing that constructor's body.
@@ -162,7 +279,7 @@ export const createSemanticOpaqueGlobalObserver = (
     const target = invocation.arguments?.[0];
     return invocation.path.join(".") === "intrinsic.Reflect.construct" &&
       t.isExpression(target)
-      ? identities(target)
+      ? identities(target, true)
       : [];
   };
   const retainBound = (
@@ -185,7 +302,12 @@ export const createSemanticOpaqueGlobalObserver = (
   const isIntrinsicBind = (
     invocation: JavaScriptIntrinsicInvocation,
   ): boolean => {
-    const path = invocation.path;
+    const original = invocation.path;
+    const path =
+      original[1] === "eval" ||
+      (original[1] === "Function" && original[2] !== "prototype")
+        ? ["intrinsic", "global", ...original.slice(1)]
+        : original;
     return (
       invocation.kind === "known" &&
       path.at(-1) === "bind" &&
@@ -194,14 +316,73 @@ export const createSemanticOpaqueGlobalObserver = (
         "intrinsic.global.Function",
         "intrinsic.generated.function",
         "intrinsic.Function.prototype",
+        "intrinsic.class.constructor",
       ].includes(path.slice(0, 3).join(".")) &&
       path
         .slice(3)
         .every((method) => ["call", "apply", "bind"].includes(method))
     );
   };
+  const nonCallingIntrinsic = (
+    invocation: JavaScriptIntrinsicInvocation | undefined,
+  ): boolean =>
+    invocation?.kind === "known" &&
+    ([
+      "intrinsic.Function",
+      "intrinsic.global.Function",
+      "intrinsic.Object.freeze",
+    ].includes(invocation.path.join(".")) ||
+      isIntrinsicBind(invocation));
+  const strictConstructorPath = (
+    path: readonly string[],
+    node: t.Node,
+  ): readonly string[] => {
+    const ambient =
+      path[0] === "intrinsic" &&
+      path[1] === "generated" &&
+      path[2] === "function"
+        ? ["generated-function", ...path.slice(3)]
+        : path[0] === "intrinsic"
+          ? ["global", ...path.slice(1)]
+          : path;
+    const canonical = inheritedFunctionConstructor(ambient, node);
+    return canonical === ambient ? path : ["intrinsic", ...canonical.slice(1)];
+  };
+  const strictInvocation = (
+    node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression
+      | t.TaggedTemplateExpression,
+  ): JavaScriptIntrinsicInvocation | undefined => {
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+      const invocation = strictInterop.intrinsicInvocation(node);
+      return invocation === undefined
+        ? undefined
+        : {
+            ...invocation,
+            path: strictConstructorPath(invocation.path, node.callee),
+          };
+    }
+    const callee = t.isTaggedTemplateExpression(node) ? node.tag : node.callee;
+    const rawPath = strictInterop.intrinsicPath(callee);
+    const path =
+      rawPath === undefined
+        ? undefined
+        : strictConstructorPath(rawPath, callee);
+    return path === undefined ||
+      strictInterop.intrinsicReadChanged(callee, path)
+      ? undefined
+      : { kind: "known", path, arguments: [] };
+  };
   const escapedCode = (path: readonly (string | null)[]): boolean => {
-    if (path[0] === "generated-function") return true;
+    if (
+      path[0] === "generated-function" ||
+      (path[0] === "global" &&
+        path.length === 2 &&
+        ["eval", "Function"].includes(path[1] ?? ""))
+    )
+      return true;
     const bound =
       path[0] === "bound-global-callable"
         ? boundValues[Number(path[1])]
@@ -209,7 +390,11 @@ export const createSemanticOpaqueGlobalObserver = (
     return (
       bound !== undefined &&
       (bound.kind === "opaque" ||
-        bound.path.join(".") === "intrinsic.generated.function")
+        [
+          "intrinsic.generated.function",
+          "intrinsic.global.eval",
+          "intrinsic.global.Function",
+        ].includes(bound.path.join(".")))
     );
   };
   const argumentsEscapeCode = (
@@ -226,10 +411,12 @@ export const createSemanticOpaqueGlobalObserver = (
         ).some(escapedCode),
     ) ?? false;
   return {
-    callableResult: (node, resolve) => {
+    callableResult: (node, resolve, constructing = false) => {
       if (resolvingResults.has(node)) return [];
       resolvingResults.add(node);
       const previousSite = invocationSite;
+      const previousConstruction = constructionTarget;
+      constructionTarget = constructing;
       ambientPaths = resolve;
       invocationSite = node;
       try {
@@ -253,7 +440,7 @@ export const createSemanticOpaqueGlobalObserver = (
             results.push(["generated-function"]);
           if (!isIntrinsicBind(invocation) || invocation.receiver === undefined)
             continue;
-          for (const target of identities(invocation.receiver)) {
+          for (const target of identities(invocation.receiver, constructing)) {
             const args = invocation.arguments;
             const receiver = target.receiver ?? args?.[0] ?? undefined;
             results.push(
@@ -277,6 +464,7 @@ export const createSemanticOpaqueGlobalObserver = (
         return results;
       } finally {
         invocationSite = previousSite;
+        constructionTarget = previousConstruction;
         resolvingResults.delete(node);
       }
     },
@@ -291,6 +479,13 @@ export const createSemanticOpaqueGlobalObserver = (
       ambientPaths = resolve;
       invocationSite = node;
       const outcomes = invocations(node);
+      synchronizeIntrinsicWrites();
+      const strict = strictInvocation(node);
+      const provenNonCalling =
+        nonCallingIntrinsic(strict) ||
+        ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+          strict?.kind === "known" &&
+          strict.path.join(".") === "intrinsic.class.constructor");
       const directExecution = outcomes.some((invocation) => {
         const path = invocation.path.join(".");
         return (
@@ -311,11 +506,7 @@ export const createSemanticOpaqueGlobalObserver = (
 
       const handedOff = outcomes.some((invocation) => {
         const path = invocation.path.join(".");
-        if (
-          invocation.kind === "known" &&
-          (path === "intrinsic.global.Function" || isIntrinsicBind(invocation))
-        )
-          return false;
+        if (provenNonCalling) return false;
         if (path === "intrinsic.Reflect.construct") {
           // A possible identity union can omit an unresolved alternative;
           // only the strict intrinsic owner can prove factory-only handoff.
@@ -330,18 +521,9 @@ export const createSemanticOpaqueGlobalObserver = (
       });
       if (directExecution || handedOff)
         state.opaqueEffects.globalSites.push(node);
-      // Factory/bind roles do not invoke their receiver or argument values.
-      // Other normalized arguments leave the existing receiver escape intact.
-      if (
-        outcomes.length > 0 &&
-        outcomes.every(
-          (value) =>
-            value.kind === "known" &&
-            (value.path.join(".") === "intrinsic.global.Function" ||
-              isIntrinsicBind(value)),
-        )
-      )
-        return "all";
+      // Possible identities may omit unresolved alternatives; only the strict
+      // owner can exempt all argument and receiver handoffs.
+      if (provenNonCalling) return "all";
       return outcomes.length > 0 &&
         (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         ? "arguments"

@@ -155,3 +155,22 @@ it("preserves the singular invocation contract for a direct bind", () => {
     arguments: node.arguments,
   });
 });
+
+it("retains an intrinsic write with an unknown site before every capture", () => {
+  const parsed = parseJavaScriptSource("Object.freeze(value);");
+  if (parsed === null) throw new Error("intrinsic write fixture did not parse");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const interop = createSemanticModuleInterop(state);
+  const statement = parsed.program.body[0];
+  if (
+    !t.isExpressionStatement(statement) ||
+    !t.isCallExpression(statement.expression)
+  )
+    throw new Error("intrinsic write fixture has no call");
+  const call = statement.expression;
+  expect(interop.intrinsicInvocation(call)?.kind).toBe("known");
+  interop.retainWrite(undefined, ["intrinsic", "Object", "freeze"]);
+  expect(interop.intrinsicInvocation(call)?.kind).toBe("opaque");
+});

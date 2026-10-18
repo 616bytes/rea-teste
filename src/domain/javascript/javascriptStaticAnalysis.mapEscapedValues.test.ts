@@ -3,6 +3,43 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  'class Run extends Function("Map.prototype.get=fetch") {} new Run();',
+  'const Base = Function("Map.prototype.get=fetch"); class Run extends Base {} const Alias = Run; new Alias();',
+  'class Base extends Function("Map.prototype.get=fetch") {} class Run extends Base {} new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") {} Reflect.construct(Run, []);',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { super(); } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") {} const Bound = Run.bind(null); new Bound();',
+])(
+  "retains generated superclass execution during construction: %s",
+  (prefix) => {
+    expect(
+      analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+        .endpoints,
+    ).toContainEqual(
+      expect.objectContaining({
+        value: "/accounts",
+        interpretation: "candidate",
+      }),
+    );
+  },
+);
+
+it.each([
+  'class Run extends Function("Map.prototype.get=fetch") {}',
+  'class Run extends Function("Map.prototype.get=fetch") {} try { Run(); } catch {}',
+  'class Run extends Function("Map.prototype.get=fetch") {} const Bound = Run.bind(null); try { Bound(); } catch {}',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { const unused = () => super(); return {}; } } new Run();',
+  'class Run extends Function("Map.prototype.get=fetch") { constructor() { super(); } }',
+  'class Run extends Function {} new Run("Map.prototype.get=fetch");',
+])("keeps inert or nonexecuting class constructors separate: %s", (prefix) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+      .endpoints,
+  ).toEqual([]);
+});
+
+it.each([
   'const run = await Function("Map.prototype.get=fetch"); run();',
   'const factory = Function; const run = await factory("Map.prototype.get=fetch"); run();',
   'const run = await (condition ? Function("Map.prototype.get=fetch") : safe); run();',

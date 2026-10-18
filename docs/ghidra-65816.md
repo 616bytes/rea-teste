@@ -39,9 +39,9 @@ Or via MCP `open_binary` with:
 }
 ```
 
-Common starting load addresses (for a headerless image):
-- LoROM: `0x8000` (or bank-aware equivalents)
-- HiROM: `0x8000` or `0xC00000` depending on mapping
+Common starting load addresses (for a headerless image whose entry is at file offset 0):
+- LoROM: `0x8000` (first bank only; later banks require a real banked map)
+- HiROM: do **not** treat `0x8000` as a general load base for a full HiROM dump. A contiguous raw load cannot reproduce HiROM's bank layout. Prefer a pre-mapped or single-bank extract, or supply a base that matches the region you actually want to analyse.
 
 REA does not auto-detect LoROM vs HiROM or interleave multi-file ROM sets in this version. Supply the correct load address yourself.
 
@@ -58,6 +58,7 @@ If you load a headered `.smc` at `0x8000` without removing the first 512 bytes, 
 ## Limitations
 
 - No automatic memory map / LoROM-HiROM detection. A simple contiguous raw load does not implement SNES banked addressing; addresses beyond the first bank may not match a real cartridge mapping.
+- `0x8000` is not a correct general load base for a full HiROM image.
 - No multi-file or interleaved ROM support.
 - No automatic SMC header stripping.
 - Single `entry_point` serves as both load base and entry; no separate base/entry values.

@@ -255,7 +255,7 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
     (tool) => tool.name === "inspect_analysis_view",
   );
   expect(advertised?.description).toContain(
-    'Native function Evidence requires kind native: view: {kind: "native", facet: "procedure"}',
+    "Native function views project completed function-dossier Evidence.",
   );
   const provider = { id: "ghidra", name: "Ghidra", version: "12.1.4" };
   const profile = createAnalysisProfile(provider, { language: "fixture" });

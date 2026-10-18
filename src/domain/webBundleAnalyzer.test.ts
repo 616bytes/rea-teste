@@ -4367,6 +4367,101 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "prototype setter blocks member capture",
+    "const box={};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    false,
+  ],
+  [
+    "different prototype setter permits member capture",
+    "const box={};box.__proto__={set y(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    true,
+  ],
+  [
+    "object rest copies array own slots",
+    "(async()=>{const[{...rest},y=await 0]=(function*(){try{yield [0];yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "object rest copies array holes without inherited reads",
+    "(async()=>{const[{...rest},y=await 0]=(function*(){try{yield [,0];yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "object rest copies primitive string slots",
+    "(async()=>{const[{...rest},y=await 0]=(function*(){try{yield 'text';yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "object rest boxes numeric primitive",
+    "(async()=>{const[{...rest},y=await 0]=(function*(){try{yield 1;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "object rest boxes bigint primitive",
+    "(async()=>{const[{...rest},y=await 0]=(function*(){try{yield 1n;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing unary receiver cannot evaluate optional key",
+    "(async()=>{(-null.value)?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing nested receiver cannot evaluate optional key",
+    "(async()=>{(-(null.value,1))?.[await 0];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "definite sequence failure discards carried wait",
+    "(async()=>{(await 0,null.x,new Socket(URL))})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "nonthrowing sequence retains carried wait",
+    "(async()=>{(await 0,1,new Socket(URL))})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "definite statement failure discards carried wait",
+    "(async()=>{await 0;null.x;new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "empty do false cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{do{}while(false)}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "inert do false cannot enter catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{do{1}while(false)}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing yield argument cannot invent default wait",
+    "(async()=>{const[x=await 0,next]=(function*(){yield(null.x,undefined);new Socket(URL)})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "completed yield argument permits default wait",
+    "(async()=>{const[x=await 0,next]=(function*(){yield(1,undefined);new Socket(URL)})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "empty static block is safe sequence prefix",
+    "new(class{static{}},globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "inert static block is safe sequence prefix",
+    "new(class{static{const x=1}},globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "throwing static block is not safe sequence prefix",
+    "new(class{static{null.x}},globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
     "literal false empty loop cannot enter catch",
     "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{while(false){}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
     false,

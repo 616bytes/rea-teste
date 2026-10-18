@@ -37,6 +37,7 @@ import {
   syntaxMayReachNextIteration,
   syntaxMayContinue,
   syntaxSwitchCaseTests,
+  syntaxEvaluationAlwaysThrows,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -353,7 +354,10 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   }
   const operands =
     syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node);
-  if (operands !== undefined) return operands;
+  if (operands !== undefined) {
+    const failed = operands.findIndex(syntaxEvaluationAlwaysThrows);
+    return failed < 0 ? operands : operands.slice(0, failed + 1);
+  }
   if (t.isLabeledStatement(node)) {
     const prefix: t.Node[] = [];
     for (const statement of t.isBlockStatement(node.body)
@@ -574,6 +578,7 @@ const webSocketPrecedingSuspension = (
         : webSocketOrderedEvaluation(parent);
     for (const node of operands) {
       if (awaited !== undefined) indexed.set(node, awaited);
+      if (syntaxEvaluationAlwaysThrows(node)) break;
       awaited = webSocketCompletedSuspension(node, state) ?? awaited;
     }
     byParent.set(parent, indexed);

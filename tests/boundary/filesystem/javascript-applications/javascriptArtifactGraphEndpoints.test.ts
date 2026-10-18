@@ -682,6 +682,60 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "prototype-setter-failure.js",
+    source:
+      'const box={};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "prototype-other-setter.js",
+    source:
+      'const box={};box.__proto__={set y(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "rest-array-copy.js",
+    source:
+      '(async()=>{const[{...rest},y=await 0]=(function*(){try{yield [0];yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "receiver-failure.js",
+    source:
+      '(async()=>{(-null.value)?.[await 0];new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "prefix-failure.js",
+    source:
+      '(async()=>{(await 0,null.x,new Socket("wss://example.test/review-latest"))})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "prefix-completed.js",
+    source:
+      '(async()=>{(await 0,1,new Socket("wss://example.test/review-latest"))})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "do-false-catch.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{do{}while(false)}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "yield-argument-failure.js",
+    source:
+      '(async()=>{const[x=await 0,next]=(function*(){yield(null.x,undefined);new Socket("wss://example.test/review-latest")})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "static-block-prefix.js",
+    source:
+      'new(class{static{}},globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
     file: "indexing-frozen-capture.js",
     source:
       "'use strict';const box={};Object.freeze(box);const Socket=(box.x=globalThis.WebSocket);new Socket(\"wss://example.test/review-latest\");",

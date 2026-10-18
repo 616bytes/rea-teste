@@ -87,7 +87,7 @@ export const syntaxUnconditionalOperands = (
 export const syntaxEvaluationOperands = (
   node: t.Node,
 ): readonly t.Node[] | undefined => {
-  if (t.isBlockStatement(node)) return node.body;
+  if (t.isBlockStatement(node) || t.isStaticBlock(node)) return node.body;
   if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
   // Abrupt statements evaluate their argument before completing. Their block
@@ -217,6 +217,19 @@ const syntaxLoopCompletion = (
   node: t.Loop,
   complete: CompleteSyntax,
 ): SyntaxCompletion => {
+  if (t.isDoWhileStatement(node)) {
+    const test = readExactJavaScriptLiteral(node.test);
+    if (test.found && !test.value) {
+      const body = complete(node.body);
+      const owned = (exit: SyntaxAbruptCompletion) =>
+        (exit.kind === "break" || exit.kind === "continue") &&
+        exit.label === null;
+      return {
+        normal: body.normal || body.abrupt.some(owned),
+        abrupt: body.abrupt.filter((exit) => !owned(exit)),
+      };
+    }
+  }
   if (t.isWhileStatement(node) || t.isForStatement(node)) {
     const test =
       node.test == null ? undefined : readExactJavaScriptLiteral(node.test);
@@ -552,18 +565,19 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     (t.isClassExpression(node) &&
       node.superClass == null &&
       (node.decorators?.length ?? 0) === 0 &&
-      node.body.body.every(
-        (member) =>
-          (t.isClassMethod(member) ||
-            t.isClassPrivateMethod(member) ||
-            t.isClassProperty(member) ||
-            t.isClassPrivateProperty(member)) &&
-          (!("computed" in member) || !member.computed) &&
-          (member.decorators?.length ?? 0) === 0 &&
-          (!(t.isClassProperty(member) || t.isClassPrivateProperty(member)) ||
-            !member.static ||
-            member.value == null ||
-            syntaxEvaluationCannotThrow(member.value)),
+      node.body.body.every((member) =>
+        t.isStaticBlock(member)
+          ? syntaxEvaluationCannotThrow(member)
+          : (t.isClassMethod(member) ||
+              t.isClassPrivateMethod(member) ||
+              t.isClassProperty(member) ||
+              t.isClassPrivateProperty(member)) &&
+            (!("computed" in member) || !member.computed) &&
+            (member.decorators?.length ?? 0) === 0 &&
+            (!(t.isClassProperty(member) || t.isClassPrivateProperty(member)) ||
+              !member.static ||
+              member.value == null ||
+              syntaxEvaluationCannotThrow(member.value)),
       )) ||
     (t.isUnaryExpression(node) &&
       ["+", "-", "~"].includes(node.operator) &&
@@ -588,6 +602,7 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     !result &&
     (t.isExpressionStatement(node) ||
       t.isBlockStatement(node) ||
+      t.isStaticBlock(node) ||
       t.isSequenceExpression(node) ||
       t.isArrayExpression(node) ||
       (t.isVariableDeclaration(node) &&

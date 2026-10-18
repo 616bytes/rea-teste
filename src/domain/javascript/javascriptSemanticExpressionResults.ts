@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import { syntaxEvaluationCannotThrow } from "./javascriptSymbolicControlFlow.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 import {
   javaScriptExactResultOperand,
@@ -100,34 +101,15 @@ const bindingInitializedBeforeRead = (
   });
 };
 
-/** Fresh unescaped literal data slots are writable; arbitrary setters stay unproven. */
-const memberAssignmentCanComplete = (
-  target: t.MemberExpression,
-  read: t.Node,
+/** Both initial and replaced prototypes use the same fresh data-slot proof. */
+const literalMemberWriteCanComplete = (
+  object: t.Node,
+  key: string,
   state: JavaScriptSemanticAnalysisState,
-  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+  depth = 0,
 ): boolean => {
-  const key = semanticStaticPropertyKey(target.property, target.computed);
-  if (key === null || key === "__proto__") return false;
-  const receiver = unwrapJavaScriptExpression(target.object).node;
-  let object = receiver;
-  if (t.isIdentifier(receiver)) {
-    // Request once even when this proof is queried while classifying a pattern.
-    state.memberMutationFactsPhase ??= "requested";
-    if (state.memberMutationFactsPhase !== "indexed") return false;
-    const binding = resolveSemanticBindingState(state, receiver, receiver.name);
-    const initializer = semanticStableInitializer(binding, state);
-    if (
-      binding === undefined ||
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      !binding.declarationKinds.has("const") ||
-      binding.escapedPaths.length !== 0 ||
-      !bindingInitializedBeforeRead(binding, read, state, executionFrames)
-    )
-      return false;
-    object = unwrapJavaScriptExpression(initializer.node).node;
-  }
+  object = unwrapJavaScriptExpression(object).node;
+  if (depth >= 128) return false;
   if (
     !t.isObjectExpression(object) ||
     !syntaxEvaluationCannotThrow(object) ||
@@ -159,7 +141,58 @@ const memberAssignmentCanComplete = (
   return prototype === undefined
     ? !state.ambientWrites.covers(["global", "Object", "prototype", key]) &&
         !state.ambientEscapes.covers(["global", "Object", "prototype", key])
-    : t.isObjectProperty(prototype) && t.isNullLiteral(prototype.value);
+    : t.isObjectProperty(prototype) &&
+        (t.isNullLiteral(prototype.value) ||
+          literalMemberWriteCanComplete(
+            prototype.value,
+            key,
+            state,
+            depth + 1,
+          ));
+};
+
+/** Completed collected effects, not just original literal syntax, own write validity. */
+const memberAssignmentCanComplete = (
+  target: t.MemberExpression,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): boolean => {
+  const key = semanticStaticPropertyKey(target.property, target.computed);
+  if (key === null || key === "__proto__") return false;
+  const receiver = unwrapJavaScriptExpression(target.object).node;
+  if (!t.isIdentifier(receiver))
+    return literalMemberWriteCanComplete(receiver, key, state);
+  state.memberMutationFactsPhase ??= "requested";
+  if (state.memberMutationFactsPhase !== "indexed") return false;
+  const binding = resolveSemanticBindingState(state, receiver, receiver.name);
+  const initializer = semanticStableInitializer(binding, state);
+  if (
+    binding === undefined ||
+    initializer === undefined ||
+    initializer.projection.length !== 0 ||
+    !binding.declarationKinds.has("const") ||
+    binding.escapedPaths.length !== 0 ||
+    !bindingInitializedBeforeRead(binding, read, state, executionFrames)
+  )
+    return false;
+  if (!literalMemberWriteCanComplete(initializer.node, key, state))
+    return false;
+  return binding.memberWrites.every((effect) => {
+    if (semanticEffectTiming(read, effect.node, state) === "after") return true;
+    if (effect.path.length === 0 || effect.path[0] === null) return false;
+    if (effect.path[0] !== "__proto__") return true;
+    const mutation = effect.node;
+    if (
+      effect.path.length !== 1 ||
+      !t.isAssignmentExpression(mutation, { operator: "=" })
+    )
+      return false;
+    return (
+      t.isNullLiteral(mutation.right) ||
+      literalMemberWriteCanComplete(mutation.right, key, state)
+    );
+  });
 };
 
 /** Assignment result and pattern progress use the same completed target proof. */

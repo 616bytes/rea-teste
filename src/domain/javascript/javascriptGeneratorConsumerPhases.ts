@@ -62,7 +62,11 @@ const generatorPrefixes = (
     if (entry.cleanup) cleanup.add(node);
     if (entry.exit === true) {
       if (t.isYieldExpression(node)) {
-        if (node.delegate) completed = -1;
+        if (
+          node.delegate ||
+          (node.argument != null && syntaxEvaluationAlwaysThrows(node.argument))
+        )
+          completed = -1;
         else if (completed >= 0) {
           yielded.push(node);
           completed += 1;

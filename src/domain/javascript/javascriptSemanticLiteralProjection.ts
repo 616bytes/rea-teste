@@ -6,6 +6,8 @@ import {
   semanticLiteralProperty,
   semanticFinalObjectMember,
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
@@ -109,6 +111,35 @@ export const semanticLiteralRestSlots = (
   const container = semanticLiteralContainer(node, (expression) =>
     semanticExactResultOperand(expression, state),
   );
+  if (t.isArrayExpression(container)) {
+    if (container.elements.some((element) => t.isSpreadElement(element)))
+      return undefined;
+    return container.elements.flatMap((element, index) =>
+      element === null || excluded.has(String(index))
+        ? []
+        : [
+            semanticLiteralProjectionSlot(
+              node,
+              String(index),
+              capture,
+              state,
+              ownedResultEscape === undefined
+                ? undefined
+                : { ownedResultEscape },
+            ),
+          ],
+    );
+  }
+  const value = unwrapJavaScriptExpression(node).node;
+  const literal = readExactJavaScriptLiteral(value);
+  // Primitive own slots are inert data (string indices); boxing reads no getters.
+  if (
+    (literal.found && literal.value !== null) ||
+    t.isBigIntLiteral(value) ||
+    (t.isUnaryExpression(value, { operator: "-" }) &&
+      t.isBigIntLiteral(value.argument))
+  )
+    return [];
   if (!t.isObjectExpression(container)) return undefined;
   const keys = new Set<string>();
   for (const property of container.properties) {

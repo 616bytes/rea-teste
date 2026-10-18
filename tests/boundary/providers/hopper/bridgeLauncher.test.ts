@@ -407,3 +407,122 @@ it.skipIf(process.platform !== "linux")(
     expect(projected.details).not.toHaveProperty("launcher");
   },
 );
+
+it.skipIf(process.platform !== "linux")(
+  "asks the demo helper to shut down orderly so its X lock is removed",
+  async () => {
+    const directory = await createTestTempDirectory("rea-hopper-orderly-");
+    const lockPath = join(directory, ".X199-lock");
+    const markerPath = join(directory, "orderly-shutdown");
+    const launcher = new HopperApplicationLauncher(
+      {
+        ...options(process.execPath),
+        launchMode: "verified_linux_demo",
+        environment: { REA_FIXTURE_LOCK_DIR: directory },
+        demoHelperPath: fileURLToPath(
+          new URL(
+            "../../../fixtures/hopperOrderlyShutdown.py",
+            import.meta.url,
+          ),
+        ),
+      },
+      {
+        verifyLinuxLauncher: async () =>
+          ok({
+            sha256: verifiedSha256,
+            version: "fixture",
+            primaryFingerprint: "0".repeat(40),
+            signingFingerprint: "1".repeat(40),
+            source: "signed_package_cache",
+          }),
+        selectPrivateDisplay: readyDirectDisplay,
+      },
+    );
+    const launched = await launcher.launch({
+      directory,
+      socketPath: join(directory, "bridge.sock"),
+      token: "fixture-token",
+      runId: randomUUID(),
+    });
+    if (!launched.ok) throw launched.error;
+    const supervisor = new ProviderProcessSupervisor(launched.value);
+    try {
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        try {
+          await access(lockPath);
+          break;
+        } catch {
+          if (Date.now() >= deadline)
+            throw new Error("lock file never appeared");
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      expect(await supervisor.stop()).toMatchObject({
+        status: "verified-cleanup",
+      });
+      // The helper shut down orderly: it removed its own lock before exiting.
+      await expect(access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(markerPath)).resolves.toBeUndefined();
+    } finally {
+      await supervisor.stop();
+      await launched.value.releaseLease?.();
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "still cleans up when the demo helper ignores the orderly shutdown request",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-hopper-orderly-ignored-",
+    );
+    const launcher = new HopperApplicationLauncher(
+      {
+        ...options(process.execPath),
+        launchMode: "verified_linux_demo",
+        environment: {
+          REA_FIXTURE_LOCK_DIR: directory,
+          REA_FIXTURE_IGNORE_SHUTDOWN: "1",
+        },
+        demoHelperPath: fileURLToPath(
+          new URL(
+            "../../../fixtures/hopperOrderlyShutdown.py",
+            import.meta.url,
+          ),
+        ),
+      },
+      {
+        verifyLinuxLauncher: async () =>
+          ok({
+            sha256: verifiedSha256,
+            version: "fixture",
+            primaryFingerprint: "0".repeat(40),
+            signingFingerprint: "1".repeat(40),
+            source: "signed_package_cache",
+          }),
+        selectPrivateDisplay: readyDirectDisplay,
+        demoOrderlyShutdownGraceMs: 500,
+      },
+    );
+    const launched = await launcher.launch({
+      directory,
+      socketPath: join(directory, "bridge.sock"),
+      token: "fixture-token",
+      runId: randomUUID(),
+    });
+    if (!launched.ok) throw launched.error;
+    const supervisor = new ProviderProcessSupervisor(launched.value);
+    try {
+      const started = Date.now();
+      expect(await supervisor.stop()).toMatchObject({
+        status: "verified-cleanup",
+      });
+      // Bounded: the group kill must follow the ignored shutdown request.
+      expect(Date.now() - started).toBeLessThan(30_000);
+    } finally {
+      await supervisor.stop();
+      await launched.value.releaseLease?.();
+    }
+  },
+);

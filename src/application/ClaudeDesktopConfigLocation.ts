@@ -189,18 +189,33 @@ const processView = (
       void cause;
       continue;
     }
-    try {
-      if (fileSystem.realpath(join(appDataRoaming, probe)) === privateTarget)
-        return "redirected";
-    } catch (cause: unknown) {
-      if (!isMissing(cause)) return "unknown";
-    }
-    // A private file deleted meanwhile no longer shadows its AppData path, so a
-    // redirected view would also miss it or reach an ordinary copy there.
+    const appDataPath = join(appDataRoaming, probe);
+    const first = resolveAppData(fileSystem, appDataPath);
+    if (first === undefined) return "unknown";
+    if (first === privateTarget) return "redirected";
+    // A private file deleted or replaced meanwhile no longer shadows its AppData
+    // path, so a redirected view would also miss it or reach an ordinary copy
+    // there. Count the probe only while the file is in place and a second
+    // lookup agrees; a probe that changed between lookups decides nothing.
     if (!isPrivateFile(fileSystem, privateRoaming, probe)) continue;
-    view = "direct";
+    const second = resolveAppData(fileSystem, appDataPath);
+    if (second === undefined) return "unknown";
+    if (second === privateTarget) return "redirected";
+    if (second === first) view = "direct";
   }
   return view;
+};
+
+/** Where an AppData path resolves: its target, `null` when it is missing, or `undefined` when it cannot be read. */
+const resolveAppData = (
+  fileSystem: ClaudeDesktopLocationFileSystem,
+  path: string,
+): string | null | undefined => {
+  try {
+    return fileSystem.realpath(path);
+  } catch (cause: unknown) {
+    return isMissing(cause) ? null : undefined;
+  }
 };
 
 /** Private files in Claude Desktop's own roaming folder, as paths under the roaming root. */

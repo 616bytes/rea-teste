@@ -248,45 +248,6 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     expect(viewOf(fileSystem)).toBe("direct");
   });
 
-  it("does not count a private file deleted during the comparison as a direct view", () => {
-    const fileSystem = roamingFileSystem([telemetry], (path) => path);
-    let deleted = false;
-    const view = viewOf({
-      ...fileSystem,
-      realpath: (path) => {
-        if (path !== join(env.APPDATA, telemetry)) return path;
-        // A redirected view loses the file between the two comparisons.
-        deleted = true;
-        throw failure("ENOENT");
-      },
-      lstat: (path) => {
-        if (deleted && path === join(privateRoaming, telemetry))
-          throw failure("ENOENT");
-        return fileSystem.lstat(path);
-      },
-    });
-    expect(view).toBe("unknown");
-  });
-
-  it("does not count an ordinary copy reached after the private file was deleted as a direct view", () => {
-    const fileSystem = roamingFileSystem([telemetry], (path) => path);
-    let deleted = false;
-    const view = viewOf({
-      ...fileSystem,
-      realpath: (path) => {
-        // The redirected view falls through to the ordinary AppData copy.
-        if (path === join(env.APPDATA, telemetry)) deleted = true;
-        return path;
-      },
-      lstat: (path) => {
-        if (deleted && path === join(privateRoaming, telemetry))
-          throw failure("ENOENT");
-        return fileSystem.lstat(path);
-      },
-    });
-    expect(view).toBe("unknown");
-  });
-
   it("skips a folder that cannot be listed and decides from another", () => {
     const fileSystem = roamingFileSystem(
       [join("Microsoft", "locked", "x"), telemetry],
@@ -361,6 +322,80 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     expect(inspected).toBe(1024);
     // The listing itself stops at the budget instead of reading all 1500 names.
     expect(requested).toEqual([1024]);
+  });
+});
+
+describe("Claude Desktop MSIX process view when a probe changes during the comparison", () => {
+  const telemetry = join("turborepo", "telemetry.json");
+
+  it("does not count a private file deleted during the comparison as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let deleted = false;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        // A redirected view loses the file between the two comparisons.
+        deleted = true;
+        throw failure("ENOENT");
+      },
+      lstat: (path) => {
+        if (deleted && path === join(privateRoaming, telemetry))
+          throw failure("ENOENT");
+        return fileSystem.lstat(path);
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+
+  it("does not count an ordinary copy reached after the private file was deleted as a direct view", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let deleted = false;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        // The redirected view falls through to the ordinary AppData copy.
+        if (path === join(env.APPDATA, telemetry)) deleted = true;
+        return path;
+      },
+      lstat: (path) => {
+        if (deleted && path === join(privateRoaming, telemetry))
+          throw failure("ENOENT");
+        return fileSystem.lstat(path);
+      },
+    });
+    expect(view).toBe("unknown");
+  });
+
+  it("recognizes a redirected view through a private file recreated during the comparison", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let lookups = 0;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        lookups += 1;
+        // The first lookup lands while the file is being replaced.
+        if (lookups === 1) throw failure("ENOENT");
+        return join(privateRoaming, telemetry);
+      },
+    });
+    expect(view).toBe("redirected");
+  });
+
+  it("does not decide from a probe whose AppData lookups disagree", () => {
+    const fileSystem = roamingFileSystem([telemetry], (path) => path);
+    let lookups = 0;
+    const view = viewOf({
+      ...fileSystem,
+      realpath: (path) => {
+        if (path !== join(env.APPDATA, telemetry)) return path;
+        lookups += 1;
+        if (lookups === 1) throw failure("ENOENT");
+        return path;
+      },
+    });
+    expect(view).toBe("unknown");
   });
 });
 

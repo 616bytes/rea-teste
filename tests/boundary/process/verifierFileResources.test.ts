@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -8,6 +8,7 @@ import ts from "typescript6";
 import type { inspectVerifierGhidraInstallation } from "../../../scripts/lib/ghidra-installation-inspection.mjs";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { resolveExecutable } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
 
 it("retains and retries the exact descriptor after a verifier hash close failure", async () => {
   const directory = await createTestTempDirectory("rea-verifier-file-");
@@ -258,6 +259,11 @@ it("Ghidra verifier awaits native prerequisite rejection before creating target 
   const root = await createTestTempDirectory(
     "rea-verifier-ghidra-prerequisite-",
   );
+  if (process.platform === "linux")
+    await symlink(
+      await resolveExecutable("ps", process.cwd(), process.env.PATH ?? ""),
+      join(root, "ps"),
+    );
   const result = spawnSync(
     process.execPath,
     ["scripts/verify-real-ghidra.mjs"],

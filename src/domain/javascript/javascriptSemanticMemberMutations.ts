@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { createSemanticAmbientEffectQuery } from "./javascriptSemanticEffectQueries.js";
 import {
   semanticBuiltinDataProperty,
   semanticBuiltinSlotChanged,
@@ -195,6 +196,7 @@ export function* collectSemanticMemberMutationsSteps(
   );
   const observablePaths = observableMutationPaths(state);
   const returnedReferences = createSemanticReturnedReferences(state);
+  const ambientEffectAt = createSemanticAmbientEffectQuery(state);
   const recordedRequiredEffects = new Set<string>();
   let recordedEffectCount = 0;
   const recordRequiredEffect = (
@@ -878,6 +880,62 @@ export function* collectSemanticMemberMutationsSteps(
           mutation,
         );
   };
+  // A bound input is read outside the eventual invocation. Keep the statement
+  // clock for ordinary inputs and the original read clock for captured inputs.
+  const inputReadAt = (input: t.Node, invocation: t.Node): t.Node => {
+    for (
+      let ancestor: t.Node | undefined = input;
+      ancestor !== undefined;
+      ancestor = parents.get(ancestor)
+    )
+      if (ancestor === invocation) return invocation;
+    return input;
+  };
+  const ownDataPropertyAt = (
+    target: t.Node,
+    key: string,
+    at: t.Node,
+  ): boolean => {
+    const pending = [{ node: target, projection: [] as readonly unknown[] }];
+    const seen = new Set<t.Node>();
+    while (pending.length > 0) {
+      const candidate = pending.pop()!;
+      const value = javaScriptExpressionValue(candidate.node);
+      if (candidate.projection.length > 0 || seen.has(value)) return false;
+      seen.add(value);
+      if (!t.isIdentifier(value)) {
+        if (!ownLiteralDataProperty([{ node: value, projection: [] }], key))
+          return false;
+        continue;
+      }
+      const binding = resolveBinding(value, value.name);
+      if (
+        binding === undefined ||
+        binding.memberWrites.some(
+          ({ path, node: write }) =>
+            write !== at &&
+            (path.length === 0 ||
+              semanticPropertyPathKeyMatches(path[0]!, key)) &&
+            semanticEffectTiming(at, write, state) !== "after",
+        ) ||
+        binding.escapedPaths.some(
+          ({ path, node: escape }) =>
+            path.length === 0 &&
+            escape !== at &&
+            semanticEffectTiming(at, escape, state) !== "after",
+        )
+      )
+        return false;
+      const { initializers } = semanticMutationInitializers(
+        binding,
+        value,
+        parents,
+      );
+      if (initializers.length === 0) return false;
+      pending.push(...initializers);
+    }
+    return true;
+  };
   const targetFacts = (target: t.Node) => {
     const binding = t.isIdentifier(target)
       ? resolveBinding(target, target.name)
@@ -939,8 +997,8 @@ export function* collectSemanticMemberMutationsSteps(
         ) {
           // Native descriptor definition writes the selected own slot without
           // invoking its old setter. The descriptor/key inputs may still escape.
-          const target = unwrapJavaScriptExpression(args[0]!).node;
-          const { origin } = targetFacts(target);
+          const target = javaScriptExpressionValue(args[0]!);
+          const { origin, moduleNamespace } = targetFacts(target);
           const descriptors = args[1];
           const keys =
             invocation.path.at(-1) === "defineProperties"
@@ -955,9 +1013,13 @@ export function* collectSemanticMemberMutationsSteps(
                   )
                 : [null]
               : [interop.staticPropertyKey(descriptors) ?? null];
-          for (const key of keys)
-            markValue(target, [key], new Set(), "write", node);
-          if (origin !== undefined && semanticBuiltinNamespace(origin)) {
+          if (!moduleNamespace)
+            for (const key of keys)
+              markValue(target, [key], new Set(), "write", node);
+          if (
+            moduleNamespace ||
+            (origin !== undefined && semanticBuiltinNamespace(origin))
+          ) {
             for (const argument of args.slice(1)) markEscaped(argument, node);
             return;
           }
@@ -1005,7 +1067,14 @@ export function* collectSemanticMemberMutationsSteps(
                 args[3] !== undefined &&
                 !targetFacts(javaScriptExpressionValue(args[3])).moduleNamespace
               )
-                markValue(args[3], path, new Set(), "write", node);
+                markValue(
+                  args[3],
+                  path,
+                  new Set(),
+                  "write",
+                  node,
+                  inputReadAt(args[3], node),
+                );
               markEscaped(args[1]!, node);
               return;
             }
@@ -1021,21 +1090,12 @@ export function* collectSemanticMemberMutationsSteps(
             const targetInitializers =
               binding === undefined
                 ? [{ node: target, projection: [] }]
-                : semanticMutationInitializers(binding, node, parents)
+                : semanticMutationInitializers(binding, target, parents)
                     .initializers;
             const invokesSetter =
               localSetterReceiver(targetInitializers, path) !== undefined;
             const ownData =
-              path[0] !== null &&
-              (binding === undefined ||
-                (binding.memberWrites.every(
-                  ({ node: write }) =>
-                    write === node ||
-                    semanticEffectTiming(node, write, state) === "after",
-                ) &&
-                  !escapedObjectBindings.has(binding.bindingId) &&
-                  binding.escapedPaths.length === 0)) &&
-              ownLiteralDataProperty(targetInitializers, path[0]!);
+              path[0] !== null && ownDataPropertyAt(target, path[0]!, node);
             const nullPrototype =
               path[0] !== null && nullPrototypeWithoutSetter(target, path[0]!);
             const wrapperRequireData =
@@ -1050,27 +1110,39 @@ export function* collectSemanticMemberMutationsSteps(
                 (effect) =>
                   semanticEffectTiming(node, effect, state) !== "after",
               );
+            const dataDescriptor =
+              dataProperty || ownData || wrapperRequireData;
             if (invokesSetter || path[0] === null) {
               // A setter can mutate shared children of its `this` receiver.
               markEscaped(target, node);
               if (args[3] !== undefined) markEscaped(args[3], node);
             } else {
-              if (args[3] === undefined || !dataProperty)
-                markValue(target, path, new Set(), "write", node);
+              if (args[3] === undefined || !dataDescriptor)
+                markValue(
+                  target,
+                  path,
+                  new Set(),
+                  "write",
+                  node,
+                  inputReadAt(target, node),
+                );
               if (args[3] !== undefined)
-                markValue(args[3], path, new Set(), "write", node);
+                markValue(
+                  args[3],
+                  path,
+                  new Set(),
+                  "write",
+                  node,
+                  inputReadAt(args[3], node),
+                );
               if (
-                !dataProperty &&
+                !dataDescriptor &&
                 (!builtinUnchanged ||
-                  state.ambientWrites.covers([
-                    "global",
-                    "Object",
-                    "prototype",
-                    path[0]!,
-                  ])) &&
-                !ownData &&
-                !nullPrototype &&
-                !wrapperRequireData
+                  ambientEffectAt(
+                    ["global", "Object", "prototype", path[0]!],
+                    node,
+                  )) &&
+                !nullPrototype
               ) {
                 // Unknown and inherited descriptors may invoke a setter with
                 // the effective receiver, exposing all of its shared children.

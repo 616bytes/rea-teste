@@ -1,5 +1,125 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import * as t from "@babel/types";
+import {
+  analyzeJavaScriptSemantics,
+  indexJavaScriptBindingsWithReceiversSteps,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+
+const ordinaryTargetChanged = (write: string): boolean => {
+  const parsed = parseJavaScriptSource(
+    `const holder={fs:require('fs')};${write}consume(holder.fs);`,
+  );
+  if (parsed === null) throw new Error("Expected parsed receiver fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const last = parsed.program.body.at(-1);
+  if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+    throw new Error("Expected consumer call");
+  const reference = last.expression.arguments[0];
+  if (!t.isMemberExpression(reference))
+    throw new Error("Expected selected data slot");
+  return index.referenceMayHaveChangedAt(last.expression, reference);
+};
+
+it.each([
+  "import fs from 'node:fs';",
+  "import * as ns from 'node:fs';const fs=ns.default;",
+  "const fs=require('node:fs');",
+])("retains mutable export descriptor writes: %s", (load) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `${load}Reflect.defineProperty(fs,'readFileSync',{value:custom});fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it("keeps the descriptor of a captured setter target after rebinding", () => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs');let holder={set hook(v){this.fs.readFileSync=custom;}};const set=Reflect.set.bind(null,holder,'hook',1);holder={hook:0};set({fs});fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each([
+  "Reflect.defineProperty(fs,'readFileSync',{value:custom});",
+  "Reflect.defineProperty.call(null,fs,'readFileSync',{value:custom});",
+  "Reflect.defineProperty.apply(null,[fs,'readFileSync',{value:custom}]);",
+  "const define=Reflect.defineProperty.bind(null,fs,'readFileSync');define({value:custom});",
+  "const alias=fs;Reflect.defineProperty(alias,'readFileSync',{value:custom});",
+  "Reflect.defineProperty((0,fs),'readFileSync',{value:custom});",
+  "try{Object.defineProperty(fs,'readFileSync',{value:custom});}catch{}",
+  "try{Object.defineProperties(fs,{readFileSync:{value:custom}});}catch{}",
+])(
+  "preserves namespace exports after rejected descriptor definitions: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `import * as fs from 'node:fs';${write}fs.readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([
+  "const receiver={};Reflect.set(holder,'fs',{},receiver);",
+  "Reflect.set.call(null,holder,'fs',{},{});",
+  "Reflect.set.apply(null,[holder,'fs',{},{}]);",
+  "const set=Reflect.set.bind(null,holder,'fs',{});set({});",
+  "const alias=holder;Reflect.set(alias,'fs',{},{});",
+  "Reflect.set((0,holder),'fs',{},{});",
+  "holder.other=1;Reflect.set(holder,'fs',{},{});",
+])("preserves ordinary data targets with separate receivers: %s", (write) => {
+  expect(ordinaryTargetChanged(write)).toBe(false);
+});
+
+it.each([
+  "Reflect.set(holder,'fs',{},holder);",
+  "const receiver=holder;Reflect.set(holder,'fs',{},receiver);",
+  "Reflect.set(holder,'fs',{},flag?holder:{});",
+  "patch(holder);Reflect.set(holder,'fs',{},{});",
+])(
+  "retains ordinary data writes through possible target receivers: %s",
+  (write) => {
+    expect(ordinaryTargetChanged(write)).toBe(true);
+  },
+);
+
+it.each([
+  "Reflect.set(Reflect,'set',bound,flag?Reflect:Reflect);",
+  "Reflect.set(Reflect,'set',bound,flag?Reflect:{});",
+  "Reflect.set(Reflect,'set',bound,flag?{}:Reflect);",
+  "Reflect.set(Reflect,'set',bound,flag?globalThis.Reflect:Reflect);",
+  "const receiver=flag?Reflect:Reflect;Reflect.set(Reflect,'set',bound,receiver);",
+  "Reflect.set.call(null,Reflect,'set',bound,flag?Reflect:Reflect);",
+  "Reflect.set.apply(null,[Reflect,'set',bound,flag?Reflect:Reflect]);",
+  "const set=Reflect.set.bind(null,Reflect,'set',bound);set(flag?Reflect:Reflect);",
+  "Reflect.set(Reflect,'set',bound,choose());",
+])(
+  "retains assigned intrinsic values for possible receiver identities: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const bound=Reflect.set.bind(null,module);${write}Reflect.set('require',replacement);require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each(["flag?{}:{}", "flag?Object:Function", "flag?1:2"])(
+  "keeps proven separate conditional intrinsic receivers separate: %s",
+  (receiver) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const bound=Reflect.set.bind(null,module);Reflect.set(Reflect,'set',bound,${receiver});Reflect.set('require',replacement);require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
 
 it.each([
   "box.owner=1;",
@@ -369,7 +489,7 @@ it.each([
   "Reflect.set=custom; Reflect.set({},'x',1);",
   "Reflect.set=custom; Reflect.set.call(null,{},'x',1);",
   "Reflect.set=custom; Reflect.set.apply(null,[{},'x',1]);",
-  "Reflect.set=custom; const set=Reflect.set.bind(null,{},'x'); set(1);",
+  "const set=Reflect.set.bind(null,{},'x'); Reflect.set=custom; set(1);",
   "const r=Object.create(null); Object.create=custom; Reflect.set(module,'require',replacement,r);",
 ])(
   "keeps module-free opaque arguments and prior allocations separate: %s",
@@ -1168,7 +1288,7 @@ it.each([
 ])("preserves a completed native allocation replacement: %s", (write) => {
   expect(
     analyzeJavaScriptSemantics(
-      `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('kept');`,
+      `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=(t,v)=>{if(v.owner)v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('kept');`,
     ).configurationOperations.map(({ key }) => key),
   ).toEqual(["kept"]);
 });
@@ -1191,7 +1311,7 @@ it.each([
   (write) => {
     expect(
       analyzeJavaScriptSemantics(
-        `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
+        `const holder={child:{}},box={};box.owner=holder.child;${write}holder.child.owner=module;Object.assign=(t,v)=>{if(v.owner)v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
       ).configurationOperations,
     ).toEqual([]);
   },
@@ -1221,7 +1341,7 @@ it.each([
   (setup) => {
     expect(
       analyzeJavaScriptSemantics(
-        `let holder={child:{}};const box={};${setup}holder.child.owner=module;Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
+        `let holder={child:{}};const box={};${setup}holder.child.owner=module;Object.assign=(t,v)=>{if(v.owner)v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
       ).configurationOperations,
     ).toEqual([]);
   },
@@ -1246,3 +1366,207 @@ it.each(
     ).toEqual(retarget ? [] : ["kept"]);
   },
 );
+
+it.each([
+  "Reflect.set=(Reflect.set(fs,'readFileSync',custom,{}),other);",
+  "Object.assign(Reflect,{set:(Reflect.set(fs,'readFileSync',custom,{}),other)});",
+  "Reflect.defineProperty(Reflect,'set',{value:(Reflect.set(fs,'readFileSync',custom,{}),other)});",
+])(
+  "evaluates nested inputs before the enclosing intrinsic replacement: %s",
+  (write) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const fs=require('fs');${write}fs.readFileSync('kept');`,
+      ).configurationOperations.map((x) => x.key),
+    ).toEqual(["kept"]);
+  },
+);
+it.each([
+  "Reflect.set=other;Reflect.set(fs,'readFileSync',custom,{});",
+  "Reflect.set=(Reflect.set(fs,'readFileSync',custom),other);",
+])("retains earlier or direct native writes: %s", (write) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `const fs=require('fs');${write}fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+it.each([
+  "(0,{})",
+  "(receiver={})",
+  "(0,[])",
+  "(0,function(){})",
+  "(0,new Empty())",
+])("normalizes the returned fresh receiver: %s", (receiver) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `function Empty(){}let receiver;Reflect.set(module,'require',replacement,${receiver});require('fs').readFileSync('kept');`,
+    ).configurationOperations.map((x) => x.key),
+  ).toEqual(["kept"]);
+});
+it.each([
+  "(module.require=replacement,{})",
+  "(0,module)",
+  "(receiver=module)",
+  "(0,new Existing())",
+])("retains prefix effects and non-fresh receivers: %s", (receiver) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `function Existing(){return module}let receiver;Reflect.set(module,'require',replacement,${receiver});require('fs').readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+it.each([
+  { setup: "function get(){return module}", value: "get()" },
+  { setup: "const get=()=>module;", value: "get()" },
+  { setup: "const obj={get(){return module}};", value: "obj.get()" },
+  { setup: "function Get(){return module}", value: "new Get()" },
+  { setup: "class Get{constructor(){return module}}", value: "new Get()" },
+  { setup: "const get=flag?()=>module:()=>({});", value: "get()" },
+  { setup: "", value: "unknown()" },
+])(
+  "retains module-bearing or unresolved callable results: $value / $setup",
+  ({ setup, value }) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup}Object.assign=(t,v)=>{v.require=replacement};Object.assign({},${value});require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+it.each([
+  "function get(){return {}}",
+  "const get=()=>({});",
+  "function get(){return 1}",
+])("preserves proven module-free callable results: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `${setup}Object.assign=(t,v)=>{v.require=replacement};Object.assign({},get());require('fs').readFileSync('kept');`,
+    ).configurationOperations.map((x) => x.key),
+  ).toEqual(["kept"]);
+});
+it.each(["configurable:true", "enumerable:false", "enumerable:true"])(
+  "does not assume a failed incompatible definition replaced a saved child: %s",
+  (flags) => {
+    const enumerable = flags === "enumerable:true" ? ",enumerable:false" : "";
+    expect(
+      analyzeJavaScriptSemantics(
+        `const holder={child:{}},box={};Object.defineProperty(holder,'child',{value:{},configurable:false${enumerable}});box.owner=holder.child;Reflect.defineProperty(holder,'child',{value:{},${flags}});holder.child.owner=module;Object.assign=(t,v)=>{if(v.owner)v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);
+it.each([
+  "configurable:true",
+  "enumerable:false",
+  "enumerable:true",
+  "configurable:false",
+  "writable:true,configurable:true,enumerable:true",
+])(
+  "accepts compatible definitions of an untouched literal slot: %s",
+  (flags) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const holder={child:{}},box={};box.owner=holder.child;Reflect.defineProperty(holder,'child',{value:{},${flags}});holder.child.owner=module;Object.assign=(t,v)=>{if(v.owner)v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('kept');`,
+      ).configurationOperations.map((x) => x.key),
+    ).toEqual(["kept"]);
+  },
+);
+it.each([
+  {
+    capture: "cfg.receiver",
+    setup: "const cfg={receiver:{}};",
+    reassign: "cfg.receiver=holder;",
+    same: false,
+  },
+  {
+    capture: "receiver",
+    setup: "let receiver={};",
+    reassign: "receiver=holder;",
+    same: false,
+  },
+  {
+    capture: "cfg.receiver",
+    setup: "const cfg={receiver:holder};",
+    reassign: "cfg.receiver={};",
+    same: true,
+  },
+  {
+    capture: "receiver",
+    setup: "let receiver=holder;",
+    reassign: "receiver={};",
+    same: true,
+  },
+])(
+  "uses the captured receiver allocation: $capture / $same",
+  ({ capture, setup, reassign, same }) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const holder={child:{}},box={};box.owner=holder.child;${setup}const set=Reflect.set.bind(null,holder,'child',{},${capture});${reassign}set();holder.child.owner=module;Object.assign=(t,v)=>{if(v.owner)v.owner.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('kept');`,
+      ).configurationOperations.map((x) => x.key),
+    ).toEqual(same ? ["kept"] : []);
+  },
+);
+it.each([
+  {
+    before: "",
+    after:
+      "Object.defineProperty(Object.prototype,'reviewHook',{set(v){this.fs.readFileSync=custom}});",
+    kept: true,
+  },
+  {
+    before:
+      "Object.defineProperty(Object.prototype,'reviewHook',{set(v){this.fs.readFileSync=custom}});",
+    after: "",
+    kept: false,
+  },
+  {
+    before:
+      "function patch(){Object.defineProperty(Object.prototype,'reviewHook',{set(v){this.fs.readFileSync=custom}})}patch();",
+    after: "",
+    kept: false,
+  },
+])(
+  "orders inherited setter effects at each set site: $kept / $before",
+  ({ before, after, kept }) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `const fs=require('fs');${before}Reflect.set(fs,'reviewHook',1,{fs});fs.readFileSync('kept');${after}`,
+      ).configurationOperations.map((x) => x.key),
+    ).toEqual(kept ? ["kept"] : []);
+  },
+);
+
+it.each([
+  "Reflect.set=custom;const set=Reflect.set.bind(null,{},'x');set(1);",
+  "const nativeSet=Reflect.set;function custom(){}custom.bind=()=>nativeSet.bind(null,module,'require',replacement,module);Reflect.set=custom;const set=Reflect.set.bind(null,{},'x');set(1);",
+])(
+  "does not prove an overwritten callable bind result module-free: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(`${setup}require('fs').readFileSync('wrong');`)
+        .configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it("keeps distinct nearest bodies while reusing nested read ancestries", () => {
+  const depth = 64;
+  const source =
+    "const fs=require('fs');" +
+    Array.from(
+      { length: depth },
+      (_, i) =>
+        `{const local${i}=require('fs');fs.readFileSync('outer-${i}');local${i}.readFileSync('inner-${i}');`,
+    ).join("") +
+    "}".repeat(depth);
+  expect(
+    analyzeJavaScriptSemantics(source)
+      .configurationOperations.map((x) => x.key)
+      .sort(),
+  ).toEqual(
+    Array.from({ length: depth }, (_, i) => [`outer-${i}`, `inner-${i}`])
+      .flat()
+      .sort(),
+  );
+});

@@ -83,6 +83,10 @@ interface InitializerPositionCache {
       }
     | undefined;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
+  readonly readMatches: WeakMap<
+    readonly t.Statement[],
+    WeakMap<BindingReadPosition, StatementPosition | null>
+  >;
   readonly evaluationChildren: WeakMap<
     t.Node,
     ReadonlyMap<t.Node, number> | null
@@ -115,6 +119,7 @@ const initializerPositionCache = (
     effect: new WeakMap(),
     effectMatches: undefined,
     read: new WeakMap(),
+    readMatches: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
     initializerReads: undefined,
@@ -716,6 +721,7 @@ export const semanticMutationInitializers = (
     matchingReadPosition(
       bindingReadPosition(mutation, parents),
       sourcePosition?.body,
+      parents,
     ) ?? directPosition;
   if (
     binding.initializers.length > 1 &&
@@ -843,16 +849,37 @@ const bindingReadPosition = (
 const matchingReadPosition = (
   read: BindingReadPosition,
   body: readonly t.Statement[] | undefined,
+  parents: WeakMap<t.Node, t.Node>,
 ): StatementPosition | null => {
   if (body === undefined) return read.position;
+  const matches = initializerPositionCache(parents).readMatches;
+  let cached = matches.get(body);
+  if (cached === undefined) {
+    cached = new WeakMap();
+    matches.set(body, cached);
+  }
+  const pending: BindingReadPosition[] = [];
+  let result: StatementPosition | null = null;
   for (
     let current: BindingReadPosition | undefined = read;
     current !== undefined;
     current = current.outer
   ) {
-    if (current.position?.body === body) return current.position;
+    const known = cached.get(current);
+    if (known !== undefined) {
+      result = known;
+      break;
+    }
+    pending.push(current);
+    if (current.position?.body === body) {
+      result = current.position;
+      break;
+    }
   }
-  return read.position;
+  // Compress the shared chain for this requested body, including misses.
+  // Distinct reads reuse their common outer nodes instead of walking depth N.
+  for (const position of pending) cached.set(position, result);
+  return result ?? read.position;
 };
 
 /** Select a local alias at its read, before any later straight-line reassignment. */
@@ -1029,7 +1056,11 @@ export const semanticBindingAtRead = (
       : initializerPosition(initializer, parents);
   const readPosition = bindingReadPosition(read, parents);
   const { repeating } = readPosition;
-  const position = matchingReadPosition(readPosition, sourcePosition?.body);
+  const position = matchingReadPosition(
+    readPosition,
+    sourcePosition?.body,
+    parents,
+  );
   const projectedInitializer =
     origin !== undefined &&
     position !== null &&

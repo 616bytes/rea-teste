@@ -33,6 +33,7 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
+  isPrimitiveJavaScriptExpression,
   javaScriptExpressionValue,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -133,7 +134,9 @@ export const createSemanticModuleInterop = (
     }
     index.retain(
       path[0] === "opaque-intrinsic" ? ["intrinsic"] : path,
-      node?.start ?? -Infinity,
+      // A write takes effect after evaluating its inputs. Its source start
+      // precedes nested RHS calls even though those calls still see the old slot.
+      node?.end ?? -Infinity,
     );
     if (
       ((t.isAssignmentExpression(node) &&
@@ -334,14 +337,11 @@ export const createSemanticModuleInterop = (
             operation === "intrinsic.Reflect.set" &&
             args[2] !== undefined
           ) {
-            // With an explicit receiver, the target's data slot is not replaced.
-            const receiver =
-              args[3] === undefined ? undefined : intrinsicPath(args[3]);
+            // Omit the assigned value only for a proven separate receiver.
+            // A conditional or unknown identity can still select the target.
             if (
               args[3] === undefined ||
-              (receiver !== undefined &&
-                JSON.stringify(receiver) ===
-                  JSON.stringify(value.path.slice(0, -1)))
+              maySelectIntrinsic(args[3], value.path.slice(0, -1))
             )
               result.push({ node: args[2], path: suffix });
           }
@@ -532,7 +532,7 @@ export const createSemanticModuleInterop = (
     const visited = new Set<string>();
     let current = node;
     for (;;) {
-      current = unwrapJavaScriptExpression(current).node;
+      current = javaScriptExpressionValue(current);
       if (!t.isIdentifier(current)) return current;
       const binding = resolveSemanticBindingState(state, current, current.name);
       const initializer = unprojectedInitializer(binding, state);
@@ -619,6 +619,43 @@ export const createSemanticModuleInterop = (
         invocation?.kind === "known" &&
         invocation.path.join(".") === "intrinsic.Object.create"
       );
+    }
+    return false;
+  };
+
+  const maySelectIntrinsic = (
+    node: t.Node,
+    target: JavaScriptSemanticPropertyPath,
+  ): boolean => {
+    const pending = [node];
+    const seen = new Set<t.Node>();
+    while (pending.length > 0) {
+      const value = javaScriptExpressionValue(pending.pop()!);
+      const current = stableFreshCandidate(value) ?? value;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      if (t.isConditionalExpression(current)) {
+        pending.push(current.consequent, current.alternate);
+        continue;
+      }
+      if (t.isLogicalExpression(current)) {
+        pending.push(current.left, current.right);
+        continue;
+      }
+      const path = intrinsicPath(current);
+      if (path !== undefined) {
+        if (
+          path.length === target.length &&
+          target.every((key, index) =>
+            semanticPropertyPathKeyMatches(key, path[index]!),
+          )
+        )
+          return true;
+      } else if (
+        !isPrimitiveJavaScriptExpression(current) &&
+        !isFreshObject(current)
+      )
+        return true;
     }
     return false;
   };

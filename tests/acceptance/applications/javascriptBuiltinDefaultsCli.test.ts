@@ -14,6 +14,12 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const fs=require('fs');Reflect.set=(Reflect.set(fs,'readFileSync',custom,{}),other);fs.readFileSync('nested-write-kept.json');",
+    "Reflect.set(module,'require',replacement,(0,{}));require('fs').readFileSync('fresh-sequence-receiver.json');",
+    "const fs=require('fs');Reflect.set(fs,'reviewHook',1,{fs});fs.readFileSync('late-prototype-kept.json');Object.defineProperty(Object.prototype,'reviewHook',{set(v){this.fs.readFileSync=custom}});",
+    "function get(){return module}Object.assign=(t,v)=>{v.require=replacement};Object.assign({},get());require('fs').readFileSync('wrong-returned-module');",
+    "const holder={child:{}},box={},cfg={receiver:{}};box.owner=holder.child;const set=Reflect.set.bind(null,holder,'child',{},cfg.receiver);cfg.receiver=holder;set();holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-captured-receiver');",
+    "const holder={child:{}},box={};Object.defineProperty(holder,'child',{value:{},configurable:false});box.owner=holder.child;Reflect.defineProperty(holder,'child',{value:{},configurable:true});holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-rejected-definition');",
     "const holder={child:{}},box={};box.owner=holder.child;Reflect.set(holder,'child',{},{});holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-possible-replacement');",
     "const holder={child:{}},box={};box.owner=holder.child;Object.freeze(holder);holder.child={};holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-frozen-replacement');",
     "const bound=Reflect.set.bind(null,module);Reflect.set(Reflect,'set',bound,(0,Reflect));Reflect.set('require',replacement);require('fs').readFileSync('wrong-sequence-bound');",
@@ -24,6 +30,7 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "let holder={child:{}};const box={};const set=Reflect.set.bind(null,holder,'child',{});holder={child:{}};box.owner=holder.child;set();holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-captured-native-target');",
     "const holder={inner:{child:{}}},box={};const set=Reflect.set.bind(null,holder.inner,'child',{});holder.inner={child:{}};box.owner=holder.inner.child;set();holder.inner.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-captured-member-target');",
     "const holder={inner:{child:{}}},box={};const set=Reflect.set.bind(null,holder.inner,'child',{});box.owner=holder.inner.child;set();holder.inner.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('native-member-kept.json');",
+    "const bound=Reflect.set.bind(null,module);Reflect.set(Reflect,'set',bound,flag?Reflect:Reflect);Reflect.set('require',replacement);require('fs').readFileSync('wrong-conditional-receiver');",
     "import fs from 'node:fs';Reflect.set(fs,'readFileSync',custom);fs.readFileSync('wrong-default-set');",
     "const holder={child:{}}; const box={}; box.owner=holder.child; outer:{if(flag)break outer;holder.child={};} holder.child.owner=module; Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-labeled-allocation');",
     "const holder={child:{}}; const box={}; box.owner=holder.child; do{if(flag)continue;holder.child={};}while(false);holder.child.owner=module;Object.assign=custom;Object.assign({},box.owner);require('fs').readFileSync('wrong-loop-allocation');",
@@ -75,7 +82,9 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     `import * as fs from 'node:fs';
      Reflect.set(fs,'readFileSync',custom);fs.readFileSync('namespace-set.json');
      const set=Reflect.set.bind(null,fs);set('readFileSync',custom);
-     fs.readFileSync('namespace-bound-set.json');`,
+     fs.readFileSync('namespace-bound-set.json');
+     Reflect.defineProperty(fs,'readFileSync',{value:custom});
+     fs.readFileSync('namespace-descriptor.json');`,
   );
 };
 
@@ -213,14 +222,17 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "deferred-descriptor.json",
     "direct.json",
     "escaped.json",
+    "fresh-sequence-receiver.json",
     "glob-kept.json",
     "harmless-descriptor.json",
     "harmless-written.json",
     "immediate-descriptor.json",
+    "late-prototype-kept.json",
     "later.json",
     "loader-after.json",
     "loader-before.json",
     "namespace-bound-set.json",
+    "namespace-descriptor.json",
     "namespace-receiver.json",
     "namespace-set.json",
     "native-member-kept.json",
@@ -228,6 +240,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "native-replacement-set.json",
     "nested-kept.json",
     "nested-timeline.json",
+    "nested-write-kept.json",
     "null-prototype-kept.json",
     "omitted-key.json",
     "opaque-unrelated.json",

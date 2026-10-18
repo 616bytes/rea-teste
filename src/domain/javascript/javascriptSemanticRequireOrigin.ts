@@ -28,6 +28,8 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { semanticObjectPropertyReferences } from "./javascriptSemanticObjectReferences.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { createSemanticAmbientEffectQuery } from "./javascriptSemanticEffectQueries.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
@@ -330,10 +332,18 @@ const writesModuleRequire = (
     node: t.Node,
     visited = new Set<string>(),
   ): boolean => {
-    const value = unwrapJavaScriptExpression(node).node;
+    const expression = unwrapJavaScriptExpression(node).node;
+    if (
+      t.isSequenceExpression(expression) &&
+      expression.expressions
+        .slice(0, -1)
+        .some((prefix) => exposesModule([prefix], prefix))
+    )
+      return false;
+    const value = javaScriptExpressionValue(node);
     if (
       interop.isFreshObject(value) ||
-      isPrimitiveJavaScriptExpression(value) ||
+      isPrimitiveJavaScriptExpression(expression) ||
       (t.isUnaryExpression(value) && !exposesModule([value.argument], value)) ||
       isUnshadowedGlobal(value, state, "undefined")
     )
@@ -400,33 +410,19 @@ const writesModuleRequire = (
   // Member effects already own aliases, selected paths and ordering. Follow
   // their assigned values instead of treating every write as the wrapper.
   // Accessors and unproven descriptor/source maps remain conservative.
-  const descriptorPrototypeWrites = new Map<
-    string,
-    readonly JavaScriptSemanticMemberEffect[]
-  >();
+  const ambientEffectAt = createSemanticAmbientEffectQuery(state);
+  const returnedReferences = createSemanticReturnedReferences(state);
   const inheritedDescriptorFieldChanged = (
     field: string,
     at: t.Node,
     consumedAt: t.Node,
   ): boolean => {
-    let effects = descriptorPrototypeWrites.get(field);
-    if (effects === undefined) {
-      const selected = ["global", "Object", "prototype", field];
-      effects = state.ambientWriteEffects.filter(
-        ({ path }) =>
-          path.length <= selected.length &&
-          path.every((key, index) =>
-            semanticPropertyPathKeyMatches(key, selected[index]!),
-          ),
-      );
-      descriptorPrototypeWrites.set(field, effects);
-    }
     // A deferred descriptor may run before this consumer, but a prototype write
     // ordered after the consumer cannot supply that earlier descriptor value.
-    return effects.some(
-      ({ node }) =>
-        semanticEffectTiming(at, node, state) !== "after" &&
-        semanticEffectTiming(consumedAt, node, state) !== "after",
+    return ambientEffectAt(
+      ["global", "Object", "prototype", field],
+      at,
+      consumedAt,
     );
   };
   const writtenValues = (
@@ -609,8 +605,34 @@ const writesModuleRequire = (
     const sameReceiver =
       operation !== "intrinsic.Reflect.set" ||
       args[3] === undefined ||
-      literalAllocation(args[3], [], node) === target;
-    const definite = ownData && sameReceiver;
+      // Normalized arguments keep their original evaluation sites, including
+      // bound receivers captured before a later member/root reassignment.
+      literalAllocation(args[3], [], args[3]) === target;
+    let compatible = true;
+    if (operation === "intrinsic.Reflect.defineProperty") {
+      const descriptor = plainObject(args[2]);
+      // A writable data slot permits a value change and tightening configurable.
+      // Relaxing configurable or specifying enumerable needs the original,
+      // untouched literal descriptor (writable/enumerable/configurable=true).
+      // Allocation identity alone cannot prove those flags after a definition.
+      const untouched = () =>
+        literalAllocation(args[0]!, [key], node, true) !== undefined;
+      compatible =
+        descriptor !== undefined &&
+        descriptor.properties.every((property) => {
+          if (!t.isObjectProperty(property)) return false;
+          const field = semanticStaticPropertyKey(
+            property.key,
+            property.computed,
+          );
+          if (field !== "configurable" && field !== "enumerable") return true;
+          if (!t.isBooleanLiteral(property.value)) return false;
+          return (
+            (field === "configurable" && !property.value.value) || untouched()
+          );
+        });
+    }
+    const definite = ownData && sameReceiver && compatible;
     nativeReplacements.set(node, definite);
     return definite;
   };
@@ -728,6 +750,7 @@ const writesModuleRequire = (
     source: t.Node,
     path: JavaScriptSemanticPropertyPath,
     at: t.Node,
+    untouched = false,
   ): t.Node | undefined => {
     const seen = new Set<t.Node>();
     while (true) {
@@ -777,6 +800,7 @@ const writesModuleRequire = (
               continue;
             const timing = semanticEffectTiming(at, effect.node, state);
             if (timing === "after") continue;
+            if (untouched) return undefined;
             if (
               timing !== "before" ||
               !isDefiniteReplacement(effect.node) ||
@@ -1145,12 +1169,45 @@ const writesModuleRequire = (
           });
       } else if (
         t.isCallExpression(value) ||
-        t.isOptionalCallExpression(value)
+        t.isOptionalCallExpression(value) ||
+        t.isNewExpression(value)
       ) {
-        if (written) return true;
+        // Bound intrinsic references were expanded above at their capture sites.
+        const bound = interop.boundIntrinsic(value);
+        if (bound?.kind === "known") {
+          pending.push(
+            ...(bound.arguments ?? []).map((node) => ({
+              node,
+              path: [],
+              readAt: node,
+            })),
+          );
+          continue;
+        }
+        const results = returnedReferences(value.callee);
+        // A callable result can carry module even with no arguments. Unknown
+        // results cannot prove that an overwritten intrinsic received no module.
+        if (results.length === 0 && !interop.isFreshObject(value)) return true;
         pending.push(
           ...value.arguments.map((node) => ({ node, path: [], readAt })),
+          ...results.map((reference) => ({
+            node: reference.node,
+            path: [...reference.projection, ...path],
+            readAt,
+            written: true as const,
+          })),
         );
+      } else if (
+        t.isBinaryExpression(value) ||
+        t.isUnaryExpression(value) ||
+        t.isTemplateLiteral(value)
+      ) {
+        const operands = t.isBinaryExpression(value)
+          ? [value.left, value.right]
+          : t.isUnaryExpression(value)
+            ? [value.argument]
+            : value.expressions;
+        pending.push(...operands.map((node) => ({ node, path: [], readAt })));
       } else if (
         written &&
         !readExactJavaScriptLiteral(value).found &&

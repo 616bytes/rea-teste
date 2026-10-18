@@ -30,6 +30,36 @@ it.each([
   },
 );
 
+it("keeps document-level processing instructions outside plist members", () => {
+  const parsed = parseXmlPropertyList(
+    '<?xml version="1.0"?><?rea before?><plist><string>demo</string></plist><?rea after?>',
+  );
+  expect(parsed.value).toBe("demo");
+  expect(parsed.numberLiterals.incomplete).toBe(false);
+});
+
+it.each([
+  ["CDATA", "<![CDATA[before<?rea content?>after]]>"],
+  ["escaped text", "before&lt;?rea content?&gt;after"],
+])(
+  "preserves literal processing-instruction text from %s",
+  (_kind, content) => {
+    expect(
+      parseXmlPropertyList(`<plist><string>${content}</string></plist>`).value,
+    ).toBe("before<?rea content?>after");
+  },
+);
+
+it("keeps processing instructions inside numeric content subject to scalar rules", () => {
+  for (const markup of ["<?rea ignored?>", "<!-- ignored -->"]) {
+    const parsed = parseXmlPropertyList(
+      `<plist><integer>4${markup}2</integer></plist>`,
+    );
+    expect(parsed.value).toBe(4);
+    expect(parsed.numberLiterals.incomplete).toBe(true);
+  }
+});
+
 it("still rejects an unterminated processing instruction", () => {
   expect(() =>
     parseXmlPropertyList("<plist><?rea ignored<string>demo</string></plist>"),

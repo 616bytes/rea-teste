@@ -4,6 +4,7 @@ import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
   semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
@@ -255,6 +256,47 @@ export const semanticOpaqueBindingReadMayHaveChanged = (
   (semanticBindingCanBeRebound(binding) &&
     semanticBindingMayHaveOpaqueEffect(binding, state, read)) ||
   semanticOpaqueNameMayHaveChanged(read, state, binding);
+
+/** Global eval can rebind mutable script bindings, including lexical lets.
+ * Script vars also share storage with own global properties. Consume the
+ * ambient owner's canonical writes; CommonJS and module bindings are local. */
+export const semanticGlobalBindingReadMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !semanticBindingCanBeRebound(binding) ||
+    state.scopesById.get(binding.scopeId)?.kind !== "program" ||
+    javaScriptRuntimeContext(state.program) !== "unknown"
+  )
+    return false;
+  if (semanticOpaqueGlobalMayHaveChanged(read, state)) return true;
+  if (
+    !binding.declarationKinds.has("var") ||
+    !state.ambientWrites.covers(["global", binding.name])
+  )
+    return false;
+  const initializer =
+    binding.initializers.length === 1
+      ? binding.initializers[0]?.node
+      : undefined;
+  const bindingPath = ["global", binding.name];
+  return state.ambientWriteEffects.some(
+    ({ path, node }) =>
+      path.length <= 2 &&
+      path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, bindingPath[index]!),
+      ) &&
+      semanticEffectTiming(read, node, state) !== "after" &&
+      // Initialization replaces earlier assigned values. Reflective writes may
+      // instead change a descriptor and prevent that initialization, so keep
+      // them without trying to infer the host property's descriptor state.
+      (initializer === undefined ||
+        !t.isAssignmentExpression(node) ||
+        semanticEffectTiming(initializer, node, state) !== "before"),
+  );
+};
 
 const activation = (
   scopeId: string,

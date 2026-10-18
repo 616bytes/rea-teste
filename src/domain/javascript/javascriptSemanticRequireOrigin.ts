@@ -4,7 +4,10 @@ import {
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
-import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticCopiedReferencePath,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
@@ -24,7 +27,10 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
@@ -271,7 +277,7 @@ const globalProcessReplacements = new WeakMap<
 >();
 const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  readonly t.Node[]
+  { readonly ambientCount: number; readonly writes: readonly t.Node[] }
 >();
 
 /** Each property is read at its own capture, including shallow-copy slots. */
@@ -284,12 +290,18 @@ const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
 ): readonly t.Node[] => {
   const cached = moduleRequireWrites.get(state);
-  if (cached !== undefined) return cached;
+  const ambientCount = state.ambientWriteEffects.length;
+  if (cached?.ambientCount === ambientCount) return cached.writes;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
-  moduleRequireWrites.set(state, []);
+  moduleRequireWrites.set(state, { ambientCount, writes: [] });
   const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
+  // Ambient indexing owns container stores and intrinsic prototype aliases.
+  // Queries made during indexing must be refreshed when those facts arrive.
+  for (const { node, path } of state.ambientWriteEffects)
+    if (node !== undefined && isModuleDelegateWrite(path, node, interop))
+      writes.push(node);
   const projectionMayAliasModule = createModuleProjectionWriteQuery(
     state,
     interop,
@@ -339,6 +351,8 @@ const writesModuleRequire = (
         ],
       })),
       ...atRead.referenceInitializers.flatMap((initializer) => {
+        if (semanticReferenceSourcesInactive(initializer, state, "syntax-only"))
+          return [];
         const path = semanticCopiedReferencePath(
           initializer,
           selected.map(({ key }) => key),
@@ -442,7 +456,7 @@ const writesModuleRequire = (
       }
     },
   });
-  moduleRequireWrites.set(state, writes);
+  moduleRequireWrites.set(state, { ambientCount, writes });
   return writes;
 };
 
@@ -629,6 +643,37 @@ export const semanticHostRequireModuleWritesIntact = (
         state.parentsByNode,
       ),
   );
+
+const isModuleDelegateWrite = (
+  path: JavaScriptSemanticPropertyPath,
+  node: t.Node,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+): boolean => {
+  if (path[0] !== "commonjs-module") return false;
+  const receiver = path.slice(1, -1);
+  if (
+    !receiver.every((key) => semanticPropertyPathKeyMatches(key, "__proto__"))
+  )
+    return false;
+  const key = path.at(-1)!;
+  if (path.length === 1) return true;
+  if (!semanticPropertyPathKeyMatches(key, "require") && key !== "__proto__")
+    return false;
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const invocation = interop.intrinsicInvocation(node);
+    const method = invocation?.path?.at(-1);
+    const args = invocation?.arguments;
+    if (method === "assign")
+      return (
+        args === undefined ||
+        args.slice(1).some((source) => objectMayDefineRequire(source, true))
+      );
+    if (method === "defineProperties") return objectMayDefineRequire(args?.[1]);
+    // Defining an own __proto__ property does not invoke the legacy setter.
+    return key !== "__proto__" || method === "set";
+  }
+  return key !== "__proto__" || t.isAssignmentExpression(node);
+};
 
 /**
  * Whether no module or ambient write replaces `require` before `capture` runs.

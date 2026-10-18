@@ -17,6 +17,7 @@ import { argumentValue } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticBindingMayHaveBlockFunctionWrite,
+  semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 
@@ -76,6 +77,11 @@ export const semanticRequireShimOrigin = (
     // Unordered reads retain possible initializers for conservative alias
     // effects. They do not prove that the loader exists at this call site.
     !atRead.hasDefiniteInitializer ||
+    semanticGlobalBindingReadMayHaveChanged(
+      atRead.binding,
+      current.callee,
+      state,
+    ) ||
     !bindsRequireShim(atRead.binding, state) ||
     // The shim captured `require` at its own definition, so a later bare
     // `require = ...` does not change the saved loader and is not a reason to

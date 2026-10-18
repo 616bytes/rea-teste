@@ -1,4 +1,9 @@
-import type * as t from "@babel/types";
+import * as t from "@babel/types";
+import {
+  readExactJavaScriptLiteral,
+  staticObjectProperty,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
@@ -16,31 +21,67 @@ interface ReferenceSource {
   readonly projection: PropertyPath;
 }
 
-/** Exclude references whose source slot or destructuring fallback is absent. */
+/** Exclude references whose source slot or destructuring fallback is absent.
+ * Before member effects exist, only inline syntax can prove a fallback unused;
+ * named values must stay possible until their mutation facts are available. */
 export const semanticReferenceSourcesInactive = (
   reference: {
     readonly requiredSources?: readonly ReferenceSource[];
     readonly fallbackSources?: readonly ReferenceSource[];
   },
   state: JavaScriptSemanticAnalysisState,
+  mode: "effects" | "syntax-only" = "effects",
 ): boolean =>
-  reference.requiredSources?.some(
-    (source) =>
-      semanticSelectedReferenceSlot(source, state, source.node)?.presence ===
-      "absent",
-  ) === true ||
-  reference.fallbackSources?.some((source) => {
-    // Selection precedes effects through the chosen reference. A later escape
-    // cannot make a fallback that was excluded at destructuring reachable.
-    const slot = semanticSelectedReferenceSlot(source, state, source.node);
-    return (
-      slot?.presence === "present" &&
-      (slot.value.status === "literal" ||
-        slot.value.status === "union" ||
-        slot.value.status === "object" ||
-        slot.value.status === "array")
-    );
-  }) === true;
+  mode === "syntax-only"
+    ? reference.fallbackSources?.some(syntaxReferenceSourceDefined) === true
+    : reference.requiredSources?.some(
+        (source) =>
+          semanticSelectedReferenceSlot(source, state, source.node)
+            ?.presence === "absent",
+      ) === true ||
+      reference.fallbackSources?.some((source) => {
+        // Selection precedes effects through the chosen reference. A later escape
+        // cannot make a fallback that was excluded at destructuring reachable.
+        const slot = semanticSelectedReferenceSlot(source, state, source.node);
+        return (
+          slot?.presence === "present" &&
+          (slot.value.status === "literal" ||
+            slot.value.status === "union" ||
+            slot.value.status === "object" ||
+            slot.value.status === "array")
+        );
+      }) === true;
+
+/** Reuse explicit-slot syntax without consulting potentially stale bindings. */
+const syntaxReferenceSourceDefined = (source: ReferenceSource): boolean => {
+  let node = unwrapJavaScriptExpression(source.node).node;
+  for (const key of source.projection) {
+    if (key === null || typeof key === "object") return false;
+    if (t.isObjectExpression(node)) {
+      const selected = staticObjectProperty(node, String(key));
+      if (selected.status !== "explicit") return false;
+      if (
+        key === "__proto__" &&
+        !selected.property.computed &&
+        !selected.property.shorthand
+      )
+        return false;
+      node = selected.property.value;
+    } else if (t.isArrayExpression(node)) {
+      if (node.elements.some(t.isSpreadElement)) return false;
+      const index = semanticArrayIndex(key);
+      const element = index === null ? undefined : node.elements[index];
+      if (element == null) return false;
+      node = element;
+    } else return false;
+    node = unwrapJavaScriptExpression(node).node;
+  }
+  return (
+    readExactJavaScriptLiteral(node).found ||
+    t.isObjectExpression(node) ||
+    t.isArrayExpression(node)
+  );
+};
 
 /** Select a retained source slot at its capture, before later effects. */
 export const semanticSelectedReferenceSlot = (

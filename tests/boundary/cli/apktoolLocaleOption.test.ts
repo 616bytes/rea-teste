@@ -55,6 +55,8 @@ const OWNER_ADMITTED_LOCALES = [
   "pt-rBR",
   "zh-rCN",
   "en-419",
+  "es-419",
+  "b+es+419",
   "b+zh+Hans+CN",
   "b+sr+Latn+RS+REVISED",
   "b+fil+Latn+419+ABCDEFGH",
@@ -116,6 +118,22 @@ it("still refuses a locale the apktool input owner refuses", async () => {
   expect(result.exitCode).not.toBe(0);
   expect(result.requests).toEqual([]);
 });
+
+it.each(["--locale", "--locales"])(
+  "refuses an r-prefixed numeric region through %s",
+  async (option) => {
+    const result = await invoke([
+      "decode-android-resources",
+      "/targets/app.apk",
+      option,
+      "es-r419",
+      "--json",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.requests).toEqual([]);
+  },
+);
 
 it("forwards --no-strings with --locale preserving caller options", async () => {
   const result = await invoke([

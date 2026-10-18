@@ -12,6 +12,7 @@ export interface GhidraRawBinaryLanguage {
  * languages with a supported generic compiler specification. These are
  * analysis conventions, not evidence of the target's original compiler.
  * Big-endian, Thumb-only, and Cortex-M variants are out of scope.
+ * 65816 requires a community processor extension (not shipped with upstream Ghidra).
  */
 export const ghidraRawBinaryLanguage = (
   architecture: RawBinaryAdmission["architecture"],
@@ -20,6 +21,14 @@ export const ghidraRawBinaryLanguage = (
     case "6502":
       return {
         languageId: "6502:LE:16:default",
+        compilerSpecId: "default",
+        defaultAddressSpace: "RAM",
+      };
+    case "65816":
+      // Requires a community 65C816 extension (e.g. joshleaves/ghidra-snes).
+      // Language ID varies by extension; this is a conventional placeholder.
+      return {
+        languageId: "65816:LE:24:default",
         compilerSpecId: "default",
         defaultAddressSpace: "RAM",
       };

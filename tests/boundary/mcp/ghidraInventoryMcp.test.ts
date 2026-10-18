@@ -106,6 +106,24 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       });
       expect(invalidCoverage.structuredContent).toBeUndefined();
     }
+    for (const [address, segment] of [
+      ["0x402000", ".bss"],
+      ["overlay:0x401000", ".text"],
+      ["invalid", ".text"],
+    ]) {
+      output = jsonValueSchema.parse({
+        ...page,
+        matches: [{ ...page.matches[0], address, segment }],
+      });
+      const outsideCoverage = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 ??" },
+      });
+      expect(parseMcpToolError(outsideCoverage)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(outsideCoverage.structuredContent).toBeUndefined();
+    }
     const calls = harness.calls.length;
     for (const args of [{ pattern: "??" }, { pattern: "48", mask: "ffff" }]) {
       const invalid = await harness.mcp.callTool({
@@ -315,7 +333,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
     expect(evidence.normalized_result).toEqual([]);
     expect(evidence.analysis_profile?.parameters.pdb_observations).toBe(
-      "program-info-v1",
+      "program-info-v5",
     );
     const limitation = evidence.limitations.find((value) =>
       value.includes(pdb.file),

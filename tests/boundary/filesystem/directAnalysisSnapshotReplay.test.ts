@@ -136,6 +136,7 @@ interface SnapshotProviderOptions {
   readonly profile?: ReturnType<typeof createAnalysisProfile>;
   readonly identity?: ProviderIdentity;
   readonly supportedOperations?: readonly CapabilityDescriptor["operation"][];
+  readonly limitations?: readonly string[];
 }
 
 const makeProvider = (
@@ -179,6 +180,20 @@ const makeProvider = (
           trace.calls.push(operation);
           const results: Readonly<Record<string, unknown>> = {
             health: null,
+            read_binary_inventory_summary: {
+              document: "fixture",
+              procedure_count: 1,
+              string_count: 1,
+              segment_count: 1,
+              segments: [
+                {
+                  name: "__TEXT",
+                  start: "0x1000",
+                  end: "0x2000",
+                  length: 4096,
+                },
+              ],
+            },
             list_segments: [
               {
                 name: "__TEXT",
@@ -209,6 +224,7 @@ const makeProvider = (
             createAnalysisExecution(result, profile.provider, {
               analysisProfile: profile,
               rawResult: result,
+              limitations: options.limitations ?? [],
             }),
           );
         },
@@ -244,6 +260,9 @@ const createSnapshotReplayFixture = async (
         readConfiguration: () => parseConfig({}),
         createBinarySession: () => createTestBinarySession(provider),
         createArtifactBinarySession: () => createTestBinarySession(provider),
+        createNativeDispatchBinarySession: () =>
+          createTestBinarySession(provider),
+        createNativeBinarySession: () => createTestBinarySession(provider),
         createManagedBinarySession: () => createTestBinarySession(provider),
       };
     },
@@ -254,11 +273,11 @@ const withAlternateWorkflowProfile = (
   snapshot: AnalysisSnapshot,
   path: string,
   current: Evidence,
-): AnalysisSnapshot => {
-  const alternateProfile = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+  alternateProfile = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     workflow: "binary_overview",
     fixture: "alternate-profile",
-  });
+  }),
+): AnalysisSnapshot => {
   if (
     typeof current.normalized_result !== "object" ||
     current.normalized_result === null ||
@@ -466,6 +485,80 @@ const verifyWindowsSnapshotAdmission = async (
     fixture.calls.filter((call) => call === "search_strings"),
   ).toHaveLength(1);
 };
+
+it.each([
+  { tool: "binary_overview", arguments: {}, priorRevision: 4 },
+  {
+    tool: "inspect_native_api",
+    arguments: { procedure: "0x1000" },
+    priorRevision: 1,
+  },
+] as const)(
+  "refreshes unattributed $tool Evidence and replays the current revision",
+  async (scenario) => {
+    const fixture = await createSnapshotReplayFixture("rea-prior-coverage-");
+    const limitation = "Original PDB names may be missing.";
+    const provider = fixture.createProvider({
+      supportedOperations: workflowProviderOperations,
+      limitations: [limitation],
+    });
+    const dependencies = fixture.dependencies(provider);
+    const options = { snapshotPath: fixture.snapshotPath };
+    const first = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        scenario.tool,
+        scenario.arguments,
+        options,
+      ),
+    );
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    const priorProfile = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+      upstream_analysis_profile: saved.value.binding.analysis_profile,
+      ...(scenario.priorRevision === undefined
+        ? {}
+        : { workflow_revision: scenario.priorRevision }),
+    });
+    const prior = withAlternateWorkflowProfile(
+      saved.value,
+      fixture.path,
+      { ...first, limitations: ["Derived by an REA composed workflow."] },
+      priorProfile,
+    );
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(prior, fixture.snapshotPath, true, resources),
+    );
+    if (!written.ok) throw written.error;
+    const refreshed = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        scenario.tool,
+        scenario.arguments,
+        options,
+      ),
+    );
+    expect(refreshed.limitations).toEqual(
+      expect.arrayContaining(first.limitations),
+    );
+    expect(refreshed.analysis_profile?.digest).not.toBe(priorProfile.digest);
+    expect(refreshed.normalized_result).toEqual(first.normalized_result);
+    const starts = [...fixture.starts];
+    const calls = [...fixture.calls];
+    const replayed = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      scenario.tool,
+      scenario.arguments,
+      options,
+    );
+    expect(replayed).toEqual(refreshed);
+    expect(fixture.starts).toEqual(starts);
+    expect(fixture.calls).toEqual(calls);
+  },
+);
 
 describe("direct analysis composed snapshot replay", () => {
   it.skipIf(process.platform !== "win32")(
@@ -926,6 +1019,8 @@ describe("workflow snapshot profile and cancellation binding", () => {
       readConfiguration: () => parseConfig({}),
       createBinarySession: () => session,
       createArtifactBinarySession: () => session,
+      createNativeDispatchBinarySession: () => session,
+      createNativeBinarySession: () => session,
       createManagedBinarySession: () => session,
     };
     const result = await runDirectAnalysis(

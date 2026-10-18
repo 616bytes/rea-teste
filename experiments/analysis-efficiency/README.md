@@ -1,5 +1,37 @@
 # Analysis efficiency measurements
 
+For Hopper literal string queries, see the [decoded-record checkpoint](hopper-string-records.md).
+It measures record reuse through real Linux CLI/MCP workflows, preserving
+native recognition gaps, guard-stopped attempts and negative whole-task costs.
+
+For JEB on Linux, see the [CE native audit](jeb-linux-native.md). It qualifies
+the direct headless launch route and measures selected function reads through
+real CLI and production stdio MCP, preserving timeout attempts and the limits
+of wrapper-cache and token claims.
+
+For Apktool locale queries, see the
+[shared-decode and table-only checkpoint](apktool-string-tables.md). It separates
+the existing decode reuse from duplicate string delivery, with three real APKs,
+CLI/MCP parity, whole-task estimates and negative timing results.
+
+For immutable imported native/JavaScript parents, see the
+[validation-reuse checkpoint](immutable-parent-validation.md). It measures the
+owning format change with the existing retained-query driver, including first
+view costs, small cases, unchanged token estimates, and noisy whole-task results.
+
+For authentic old Evidence and mixed investigations, see the
+[retained-query checkpoint](retained-investigation-workflows.md).
+`retained-investigation.mjs` compares existing complete delivery with selected
+pages, including capacity-refusal recovery and original-record round trips.
+It records negative model results and separates imported-format validation work
+from the query contract.
+
+For genuine Fiddler captures, see the [SAZ selection checkpoint](saz-selection-workflows.md).
+`measure.mjs --saz-selection baseline|focused|retained` compares default complete
+delivery (including retained-reference recovery), caller-selected ordinals, and
+summary/preview/complete/repeated pages. Each failed RPC remains in task costs.
+The body question uses stored bytes, not decoded HTTP application payloads.
+
 Tracks the experiments for [#2016](https://github.com/morluto/rea/issues/2016).
 The production CLI/MCP contracts and defaults remain the compatibility baseline.
 Downloaded artifacts, runtime copies, exported Evidence, transcripts and detailed
@@ -77,6 +109,12 @@ same-question SDK and actual Codex comparisons using existing input limits,
 field/filter selection, discovery and output windows. Lower delivered JSON did
 not establish stable total-token or speed gains; failed plans and negative
 controls remain visible.
+
+The [sigrok selection checkpoint](signal-selection-workflows.md) records two
+real hardware recordings, independently verified bytes, repeated decoder/pages,
+and an eight-task Codex cohort with mixed token/time results. Existing annotation
+controls reduce replies; these measurements introduce no production cache,
+default or API changes.
 
 Agent token consumption and end-to-end task time are the primary objectives.
 Memory and CPU consumption are also measured and controlled. Correctness,

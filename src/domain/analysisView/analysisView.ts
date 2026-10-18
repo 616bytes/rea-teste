@@ -1,10 +1,16 @@
 import { z } from "zod";
+import {
+  javascriptModuleReferencesRequestSchema,
+  javascriptModuleReferenceSchema,
+} from "./javascriptModuleReferences.js";
+import { javascriptApplicationSourceCoverageSchema } from "./javascriptApplicationCoverage.js";
+import {
+  javascriptFactsViewRequestSchema,
+  javascriptFactRowSchema,
+} from "./javascriptFactsView.js";
 import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
 
-import {
-  AnalysisInputError,
-  AnalysisUnsupportedTargetError,
-} from "../analysisErrorCore.js";
+import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import {
   INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
@@ -15,7 +21,7 @@ import { evidenceSchema, type Evidence } from "../evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { binaryLayoutSchema } from "../native/binaryLayout.js";
+import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
 import { functionDossierSchema } from "../hopperValues.js";
 import {
   artifactGraphManifestSchema,
@@ -216,6 +222,8 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   facetViewSchema,
   itemViewSchema,
   pageViewSchema,
+  javascriptModuleReferencesRequestSchema,
+  javascriptFactsViewRequestSchema,
   nativeViewSchema,
   inventoryViewSchema,
   wasmViewRequestSchema,
@@ -379,6 +387,26 @@ export const javascriptApplicationSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("analyze_javascript_application"),
 });
 
+/** Typed reference page; full item observations remain available separately. */
+export const javascriptModuleReferencesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("javascript"),
+  view: javascriptModuleReferencesRequestSchema,
+  parent_operation: z.literal("analyze_javascript_application"),
+  rows: z.array(javascriptModuleReferenceSchema),
+  source_coverage: javascriptApplicationSourceCoverageSchema,
+});
+
+/** Paged retained observations with exact selected properties and provenance. */
+const javascriptFactsViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("javascript-facts"),
+  view: javascriptFactsViewRequestSchema,
+  parent_operation: z.literal("analyze_javascript_application"),
+  rows: z.array(javascriptFactRowSchema),
+  source_coverage: javascriptApplicationSourceCoverageSchema,
+});
+
 /** Exact summary carrier for artifact inspection's optional delivery contract. */
 export const artifactInventorySummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
@@ -527,6 +555,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     items: z.array(jsonValueSchema),
     ...viewResultBase,
   }),
+  javascriptModuleReferencesViewResultSchema,
+  javascriptFactsViewResultSchema,
   z.strictObject({
     kind: z.literal("native"),
     view: nativeViewSchema,
@@ -648,6 +678,14 @@ export type UnsignedAnalysisView =
   | Omit<Extract<AnalysisViewResult, { readonly kind: "item" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "page" }>, "view_digest">
   | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "javascript" }>,
+      "view_digest"
+    >
+  | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "javascript-facts" }>,
+      "view_digest"
+    >
+  | Omit<
       Extract<AnalysisViewResult, { readonly kind: "native" }>,
       "view_digest"
     >
@@ -700,8 +738,8 @@ const parseJavaScriptParent = (
   input: unknown,
 ): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
   try {
-    // Only the existing realm-private graph proofs permit reuse. Imported or
-    // merely frozen graphs still receive full canonical validation.
+    // The format owner authenticates imported results completely before reuse;
+    // mutable or merely frozen inputs still receive canonical validation.
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     let step = steps.next();
     while (!step.done) step = steps.next();
@@ -800,7 +838,7 @@ export const projectAnalysisView = (
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = binaryLayoutSchema.safeParse(parent.normalizedResult);
+    const layout = safeParseOwnedBinaryLayout(parent.normalizedResult);
     if (!layout.success)
       return err(
         analysisViewInputError([

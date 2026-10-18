@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · **简体中文** · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA：逆向一切
 
@@ -170,7 +170,7 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-不同提供方支持的原生格式和主机系统有所不同。请参阅 [Hopper 与 Ghidra 设置](../installation.md#hopper)、[IDA 指南](../ida-provider.md)和[实验性 Windows Ghidra 支持](../windows-ghidra-p0.md)。Ghidra 也支持 [16 位 DOS 分析](../ghidra-dos.md)。提供方选择见 [CLI 指南](../cli.md#choose-a-provider)。对于最新 npm 版本发布后新增的功能，请查看[发布可用性](../installation.md#released-package-and-main)。
+不同提供方支持的原生格式和主机系统有所不同。请参阅 [Hopper 与 Ghidra 设置](../installation.md#hopper)、[IDA 指南](../ida-provider.md)、[Kuna](../kuna-provider.md)和[实验性 Windows Ghidra 支持](../windows-ghidra-p0.md)。Ghidra 也支持 [16 位 DOS 分析](../ghidra-dos.md)。提供方选择见 [CLI 指南](../cli.md#choose-a-provider)。对于最新 npm 版本发布后新增的功能，请查看[发布可用性](../installation.md#released-package-and-main)。
 
 ## 案例
 
@@ -278,7 +278,7 @@ npx rea-agents@latest setup
 
 ## Star 历史
 
-🎉 **GitHub Star 达到 200,000 个，感谢大家！**
+🎉 **GitHub Star 达到 300,000 个，感谢大家！**
 
 感谢每一位使用 REA、报告错误、提出功能需求、测试构建和贡献修复的朋友。
 

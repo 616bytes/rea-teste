@@ -431,10 +431,6 @@ def _procedure_map(document):
     return result
 
 
-def _strings(document):
-    return {address: record["value"] for address, record in _string_inventory(document).items()}
-
-
 def _string_record(segment, address, display):
     """Read one native typed object, retaining its shortened display separately."""
     length = segment.getObjectLength(address)
@@ -521,7 +517,7 @@ def _search_inventory(document, kind):
         if kind == "procedure":
             values = _procedure_map(document)
         elif kind == "string":
-            values = _strings(document)
+            values = _string_inventory(document)
         elif kind == "name":
             values = {_hex(address): value for address, value in _name_map(document).items()}
         else:
@@ -548,23 +544,17 @@ def _search_results(document, kind, params):
     else:
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
-    selected = []
-    for item in _search_inventory(document, kind):
-        if not matches(item[1]):
-            continue
-        selected.append(item)
-    if not selected:
-        return []
     if kind == "string":
-        records = _string_inventory(document)
-        return [{"address": address, **records[address]} for address, _ in selected]
-    return [
-            {
-                "address": address,
-                "value": value,
-            }
-            for address, value in selected
+        return [
+            {"address": address, **record}
+            for address, record in _search_inventory(document, kind)
+            if matches(record["value"])
         ]
+    return [
+        {"address": address, "value": value}
+        for address, value in _search_inventory(document, kind)
+        if matches(value)
+    ]
 
 
 def _unavailable(reason):
@@ -1057,6 +1047,10 @@ def _serve_connection(connection):
                 ):
                     raise PermissionError("Invalid bridge capability")
                 authenticated = True
+                # The connection grace period only bounds unauthenticated idle
+                # clients. Native analysis and a connected owner's idle time
+                # remain unbounded after capability validation.
+                connection.settimeout(None)
                 _write_message(file, {"id": request_id, "event": {
                     "type": "progress",
                     "phase": "hopper_bridge",
@@ -1148,13 +1142,17 @@ def _run():
     server.bind(REA_SOCKET)
     os.chmod(REA_SOCKET, 0o600)
     server.listen(1)
+    # A bridge can start after its caller's startup/cleanup deadline. Bound
+    # the first accept as well as reconnects so an orphan cannot pin Hopper's
+    # dedicated Python thread and prevent later documents from starting REA.
+    server.settimeout(REA_RECONNECT_TIMEOUT_SECONDS)
     try:
         while True:
             try:
                 connection, _ = server.accept()
             except socket.timeout:
                 break
-            connection.settimeout(None)
+            connection.settimeout(REA_RECONNECT_TIMEOUT_SECONDS)
             if _serve_connection(connection):
                 break
             # Match REA's cleanup handshake budget without pinning Hopper's

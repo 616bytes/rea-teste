@@ -17,6 +17,8 @@ import {
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
+const OUTPUT_CLOSE_GRACE_MS = 1_000;
+const MAX_LATE_OUTPUT_BYTES = 64 * 1024;
 
 /** Spawn coordinates shared by owned, long-lived provider processes. */
 export interface OwnedProviderProcessSpawnOptions {
@@ -126,6 +128,28 @@ export interface ProviderProcessSnapshot {
   readonly outputIncomplete?: true;
 }
 
+declare const processOutputCheckpointBrand: unique symbol;
+/** Opaque cursor into one supervisor's raw, byte-counted output history. */
+export interface ProviderProcessOutputCheckpoint {
+  readonly [processOutputCheckpointBrand]: true;
+}
+
+/** Output produced after a checkpoint; incomplete when bytes were not retained or drained. */
+export interface ProviderProcessOutputSince {
+  readonly snapshot: ProviderProcessSnapshot;
+  readonly complete: boolean;
+}
+
+const outputCheckpoints = new WeakMap<
+  ProviderProcessOutputCheckpoint,
+  {
+    readonly owner: ProviderProcessSupervisor;
+    readonly epoch: number;
+    readonly stdout: number;
+    readonly stderr: number;
+  }
+>();
+
 /** Resource-safe events emitted without imposing provider protocol semantics. */
 export type ProviderProcessDiagnostic =
   | {
@@ -141,7 +165,11 @@ export type ProviderProcessDiagnostic =
       readonly signal: NodeJS.Signals | null;
       readonly snapshot: ProviderProcessSnapshot;
     }
-  | { readonly type: "error"; readonly message: string };
+  | {
+      readonly type: "error";
+      readonly message: string;
+      readonly cause?: Error;
+    };
 
 /** Options for process lifecycle diagnostics. */
 export interface ProviderProcessSupervisorOptions {
@@ -277,6 +305,7 @@ export class ProviderProcessSupervisor {
   readonly #exit = deferred<ProviderProcessExitObservation>();
   readonly #outputClose = deferred<void>();
   #outputClosed = false;
+  #outputIncomplete = false;
   #stdoutObservedBytes = 0;
   #stderrObservedBytes = 0;
   #diagnosticTruncated = false;
@@ -307,12 +336,17 @@ export class ProviderProcessSupervisor {
     this.#outputClose.resolve(undefined);
   };
   readonly #onError = (cause: Error): void => {
-    this.#options.onDiagnostic?.({ type: "error", message: cause.message });
+    this.#options.onDiagnostic?.({
+      type: "error",
+      message: cause.message,
+      cause,
+    });
   };
   #exitObservation: ProviderProcessExitObservation | undefined;
   #stopPromise: Promise<ProviderProcessStopResult> | undefined;
   #disposed = false;
   #maxDiagnosticBytes: number | undefined;
+  #outputEpoch = 0;
 
   constructor(
     readonly launch: ProviderProcessLaunch,
@@ -340,9 +374,15 @@ export class ProviderProcessSupervisor {
     return { code: exit.code, signal: exit.signal };
   }
 
+  /** Whether the process owner acknowledged output closure, separately from exit. */
+  observedOutputClose(): boolean {
+    return this.#outputClosed;
+  }
+
   /** Latest retained output and exit observation, with explicit configured truncation. */
   snapshot(): ProviderProcessSnapshot {
-    const outputIncomplete = this.launch.process.outputIncomplete === true;
+    const outputIncomplete =
+      this.#outputIncomplete || this.launch.process.outputIncomplete === true;
     return {
       ...(this.#diagnosticTruncated || outputIncomplete
         ? { diagnosticTruncated: true }
@@ -358,8 +398,76 @@ export class ProviderProcessSupervisor {
     };
   }
 
+  /** Mark the current raw-byte position without copying or retaining output. */
+  checkpointOutput(): ProviderProcessOutputCheckpoint {
+    const checkpoint = Object.freeze({}) as ProviderProcessOutputCheckpoint;
+    outputCheckpoints.set(checkpoint, {
+      owner: this,
+      epoch: this.#outputEpoch,
+      stdout: this.#stdoutObservedBytes,
+      stderr: this.#stderrObservedBytes,
+    });
+    return checkpoint;
+  }
+
+  /** Snapshot only bytes produced after a valid checkpoint on this supervisor. */
+  snapshotOutputSince(
+    checkpoint: ProviderProcessOutputCheckpoint,
+  ): ProviderProcessOutputSince {
+    const position =
+      typeof checkpoint === "object" && checkpoint !== null
+        ? outputCheckpoints.get(checkpoint)
+        : undefined;
+    if (
+      position === undefined ||
+      position.owner !== this ||
+      position.epoch !== this.#outputEpoch
+    )
+      return {
+        snapshot: {
+          stdout: { text: "", bytes: 0, observedBytes: 0 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: this.#exitObservation?.code,
+          signal: this.#exitObservation?.signal,
+          outputIncomplete: true,
+          diagnosticTruncated: true,
+        },
+        complete: false,
+      };
+    const stdout = this.#stdout.snapshotRange(
+      position.stdout,
+      this.#stdoutObservedBytes,
+    );
+    const stderr = this.#stderr.snapshotRange(
+      position.stderr,
+      this.#stderrObservedBytes,
+    );
+    const incomplete =
+      stdout.complete === false ||
+      stderr.complete === false ||
+      this.#outputIncomplete ||
+      this.launch.process.outputIncomplete === true;
+    return {
+      snapshot: {
+        ...(incomplete || this.#diagnosticTruncated
+          ? { diagnosticTruncated: true }
+          : {}),
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        exitCode: this.#exitObservation?.code,
+        signal: this.#exitObservation?.signal,
+        ...(this.launch.process.memoryLimitReached === true
+          ? { memoryLimitReached: true }
+          : {}),
+        ...(incomplete ? { outputIncomplete: true } : {}),
+      },
+      complete: !incomplete && !this.#diagnosticTruncated,
+    };
+  }
+
   /** Begin a new observation on a retained process without retaining earlier output. */
   resetOutput(): void {
+    this.#outputEpoch += 1;
     this.#stdout.reset();
     this.#stderr.reset();
     this.#stdoutObservedBytes = 0;
@@ -376,12 +484,18 @@ export class ProviderProcessSupervisor {
     );
   }
 
-  /** Wait until output streams close; WindowsOwnedProcess closes only after its whole Job Object settles. */
-  async waitForOutputClose(timeoutMs: number): Promise<boolean> {
+  /** Wait until output streams close; omit the timeout to await physical completion.
+   * WindowsOwnedProcess closes only after its whole Job Object settles.
+   */
+  async waitForOutputClose(
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     return waitForProcessEvent(
       this.#outputClosed,
       this.#outputClose.promise,
       timeoutMs,
+      signal,
     );
   }
 
@@ -428,6 +542,8 @@ export class ProviderProcessSupervisor {
   /** Detach capture and process listeners after an adapter releases ownership. */
   dispose(): void {
     if (this.#disposed) return;
+    // Releasing capture before close cannot establish a complete output history.
+    if (!this.#outputClosed) this.#outputIncomplete = true;
     this.#disposed = true;
     this.launch.process.stdout?.off("data", this.#onStdout);
     this.launch.process.stdout?.off("error", this.#onStdoutError);
@@ -459,11 +575,23 @@ export class ProviderProcessSupervisor {
   async #stop(
     options: ProviderProcessStopOptions,
   ): Promise<ProviderProcessStopResult> {
-    this.ref();
+    if (this.launch.ownsProcessLifetime) {
+      this.ref();
+      // Bound retention throughout termination and failed cleanup, including retries.
+      this.limitAdditionalOutputBytes(MAX_LATE_OUTPUT_BYTES);
+    }
     let completed = false;
     try {
       const result = await this.#stopWithin(options);
       completed = result.status !== "incomplete";
+      if (completed && result.status !== "not-owned" && !this.#outputClosed) {
+        // Exit proves process lifetime only. Bound final retention while draining
+        // inherited pipes; a lost output tail does not revoke verified cleanup.
+        if (!(await this.waitForOutputClose(OUTPUT_CLOSE_GRACE_MS))) {
+          this.#outputIncomplete = true;
+          this.unref();
+        }
+      }
       if (!completed) this.unref();
       return result;
     } finally {
@@ -559,9 +687,11 @@ export class ProviderProcessSupervisor {
   }
 
   #recordStreamError(stream: "stdout" | "stderr", cause: Error): void {
+    this.#outputIncomplete = true;
     this.#options.onDiagnostic?.({
       type: "error",
       message: `${stream} stream failed: ${cause.message}`,
+      cause,
     });
   }
 
@@ -627,7 +757,39 @@ class ProcessOutputCapture {
   }
 
   snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
-    const buffer = Buffer.concat(this.#chunks, this.#bytes);
+    return this.#snapshotBuffer(
+      Buffer.concat(this.#chunks, this.#bytes),
+      observedBytes,
+    );
+  }
+
+  snapshotRange(
+    start: number,
+    end: number,
+  ): { stream: ProviderProcessSnapshot["stdout"]; complete: boolean } {
+    const availableEnd = Math.min(end, this.#bytes);
+    const availableStart = Math.min(start, availableEnd);
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    for (const chunk of this.#chunks) {
+      const chunkEnd = offset + chunk.byteLength;
+      const from = Math.max(availableStart, offset);
+      const to = Math.min(availableEnd, chunkEnd);
+      if (to > from) chunks.push(chunk.subarray(from - offset, to - offset));
+      offset = chunkEnd;
+      if (offset >= availableEnd) break;
+    }
+    const buffer = Buffer.concat(chunks, availableEnd - availableStart);
+    return {
+      stream: this.#snapshotBuffer(buffer, Math.max(0, end - start)),
+      complete: start <= this.#bytes && end <= this.#bytes,
+    };
+  }
+
+  #snapshotBuffer(
+    buffer: Buffer,
+    observedBytes: number,
+  ): ProviderProcessSnapshot["stdout"] {
     const text = buffer.toString("utf8");
     let invalidUtf8 = false;
     try {
@@ -637,7 +799,7 @@ class ProcessOutputCapture {
     }
     return {
       text,
-      bytes: this.#bytes,
+      bytes: buffer.byteLength,
       observedBytes,
       ...(invalidUtf8 ? { invalidUtf8: true } : {}),
     };
@@ -679,18 +841,27 @@ const waitForSpawn = (child: ChildProcess): Promise<void> =>
 const waitForProcessEvent = async (
   observed: boolean,
   event: Promise<unknown>,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
+  signal?: AbortSignal,
 ): Promise<boolean> => {
   if (observed) return true;
+  if (signal?.aborted === true) return false;
   let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       event.then(() => true),
       new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+        if (timeoutMs !== undefined)
+          timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+        if (signal !== undefined) {
+          onAbort = () => resolve(false);
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
   }
 };

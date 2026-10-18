@@ -205,8 +205,20 @@ async function validateBundle(root, manifest) {
   );
   if (owner.error || owner.status !== 0)
     fail("Could not determine which Git repository owns the Evidence bundle");
+  const project = spawnSync(
+    "git",
+    ["-C", root, "rev-parse", "--show-toplevel"],
+    {
+      encoding: "utf8",
+      shell: false,
+      maxBuffer: 4096,
+    },
+  );
+  if (project.error || project.status !== 0)
+    fail("Could not determine which Git repository owns the selected project");
   const ownerRoot = await realpath(owner.stdout.trim());
-  if (ownerRoot !== root)
+  const projectRoot = await realpath(project.stdout.trim());
+  if (ownerRoot !== projectRoot)
     fail(
       "The Evidence bundle is inside a nested Git repository; select a bundle owned by the Coordo project",
     );

@@ -10,6 +10,7 @@ does for /tmp/.X<n>-lock on a clean exit.
 
 import importlib.util
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,11 @@ lock.write_text(f"{os.getpid():10d}\n")
 if os.environ.get("REA_FIXTURE_IGNORE_SHUTDOWN") == "1":
     while True:
         time.sleep(60)
+
+if os.environ.get("REA_FIXTURE_SIGNAL_DEATH") == "1":
+    # Die from a signal before the launcher asks for cleanup: teardown must
+    # notice the signal exit instead of waiting out the orderly grace period.
+    os.kill(os.getpid(), signal.SIGKILL)
 
 owner = helper.OwnerLifetime(True)
 while owner.alive():

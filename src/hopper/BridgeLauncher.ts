@@ -603,7 +603,11 @@ const cleanupHopperLauncherSession = async (input: {
   readonly orderlyShutdownGraceMs: number;
 }): Promise<ProcessCleanupResult> => {
   const helper = input.helper;
-  if (helper !== undefined && helper.exitCode === null) {
+  if (
+    helper !== undefined &&
+    helper.exitCode === null &&
+    helper.signalCode === null
+  ) {
     try {
       helper.stdin?.end();
     } catch {
@@ -620,7 +624,8 @@ const waitForHelperExit = (
   timeoutMs: number,
 ): Promise<void> =>
   new Promise((resolve) => {
-    if (helper.exitCode !== null) return resolve();
+    if (helper.exitCode !== null || helper.signalCode !== null)
+      return resolve();
     const timer = setTimeout(
       () => {
         helper.off("exit", onExit);

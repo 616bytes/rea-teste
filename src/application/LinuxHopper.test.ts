@@ -219,7 +219,11 @@ describe("Linux Hopper host classification", () => {
 
 describe("Linux Hopper installation", () => {
   it.each([
-    ["deb", "apt-get", ["xvfb", "xauth", "python3", "libx11-6", "libxtst6"]],
+    [
+      "deb",
+      "apt-get",
+      ["xvfb", "xauth", "python3", "libpython3.12t64", "libx11-6", "libxtst6"],
+    ],
     [
       "rpm",
       "dnf",
@@ -227,6 +231,7 @@ describe("Linux Hopper installation", () => {
         "xorg-x11-server-Xvfb",
         "xorg-x11-xauth",
         "python3",
+        "python3.12-libs",
         "libX11",
         "libXtst",
       ],

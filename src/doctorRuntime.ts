@@ -106,7 +106,7 @@ const inspectLinuxPrivateDisplay = async (
       value.failure_code === "x11_socket_directory_unusable"
         ? "Enable unprivileged user and mount namespaces, or provide a writable mode-1777 /tmp/.X11-unix directory. Do not mutate the current host mount with sudo; then rerun rea doctor --provider hopper."
         : missingDependency
-          ? "Install Xvfb, xauth, Python 3, libX11, and libXtst, then rerun rea doctor --provider hopper."
+          ? "Install Xvfb, xauth, Python 3, the matching Hopper 6.6 embedded Python 3.12 runtime (libpython3.12t64 on Ubuntu 24.04 or python3.12-libs on Fedora 41), libX11, and libXtst, then rerun rea doctor --provider hopper."
           : "Inspect the private-display diagnostic, correct the reported local condition, and rerun rea doctor --provider hopper.",
   };
 };

@@ -557,12 +557,13 @@ export const linuxPackageManagerCommands = (
 }[] => {
   const runtimeDependencies =
     family === "deb"
-      ? ["xvfb", "xauth", "python3", "libx11-6", "libxtst6"]
+      ? ["xvfb", "xauth", "python3", "libpython3.12t64", "libx11-6", "libxtst6"]
       : family === "rpm"
         ? [
             "xorg-x11-server-Xvfb",
             "xorg-x11-xauth",
             "python3",
+            "python3.12-libs",
             "libX11",
             "libXtst",
           ]

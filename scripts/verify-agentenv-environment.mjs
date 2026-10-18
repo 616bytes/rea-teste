@@ -26,6 +26,9 @@ for (const key of ["REA_AGENT_ENV_COMMAND", "REA_DOCKER_COMMAND"])
     );
 const agentEnv = process.env.REA_AGENT_ENV_COMMAND;
 const docker = process.env.REA_DOCKER_COMMAND;
+// The framework's local image store keeps its registry:2 helper running across runs; a first
+// run on a fresh host creates it, so it is reported separately rather than counted as a leak.
+const IMAGE_STORE_HELPER = /^agentenv-registry(?:-\d+)?$/u;
 await Promise.all([access(agentEnv), access(docker)]);
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
@@ -237,10 +240,6 @@ function packedFilename(report) {
 }
 
 // Containers are not verifier descendants, so leaks are checked by id against the pre-run set.
-// The framework's local image store keeps its registry:2 helper running across runs; a first
-// run on a fresh host creates it, so it is reported separately rather than counted as a leak.
-const IMAGE_STORE_HELPER = /^agentenv-registry(?:-\d+)?$/u;
-
 async function containers() {
   const { stdout } = await execFileAsync(
     docker,

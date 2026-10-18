@@ -183,7 +183,11 @@ sandbox.") but the first form of the leak check counted the helper and failed.
 The check now lists containers with their names, excludes
 `agentenv-registry[-<port>]` and reports it under `image_store_helpers`; the
 local receipt gained `image_store_helpers: []` because the helper already
-existed before the run here. Without `REA_DOCKER_COMMAND` the verifier exited 1 before
+existed before the run here. Removing that helper (`docker rm -f
+agentenv-registry`) and running the verifier again reproduced the fresh-host
+path locally: the run recreated it and the receipt passed with
+`image_store_helpers: ["agentenv-registry"]`, `new_containers: []`
+(`agent_env_run: {exit_code: 0, seconds: 33}`). Without `REA_DOCKER_COMMAND` the verifier exited 1 before
 touching anything with "verify:agentenv:environment requires absolute
 REA_DOCKER_COMMAND; see docs/testing.md. No dependencies are installed by this
 verifier."; with a relative `REA_AGENT_ENV_COMMAND=agent-env` it exited 1 with

@@ -18,6 +18,12 @@ import {
 } from "./application/LinuxHopper.js";
 import { execFileOutput } from "./process/ExecFileOutput.js";
 
+const LDCONFIG_CANDIDATES = [
+  "/sbin/ldconfig",
+  "/usr/sbin/ldconfig",
+  "ldconfig",
+];
+
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -80,24 +86,30 @@ export const inspectLinuxEmbeddedPythonRuntime = async (
 ): Promise<DoctorCheck> => {
   const distribution = await readDistribution();
   const packageName = linuxHopperEmbeddedPythonPackage(distribution);
-  if (packageName === undefined)
-    return {
-      name: "hopper-embedded-python",
-      ok: true,
-      classification: "healthy",
-      detail: `${distribution?.id ?? "unknown"} ${distribution?.versionId ?? "unknown"} has no verified fixed Python ABI package`,
-    };
   try {
-    const linked = await run("ldconfig", ["-p"], {
-      env: environment,
-    });
+    let linked: Awaited<ReturnType<typeof execFileOutput>> | undefined;
+    let lastFailure: unknown;
+    for (const command of LDCONFIG_CANDIDATES) {
+      try {
+        linked = await run(command, ["-p"], { env: environment });
+        break;
+      } catch (cause: unknown) {
+        lastFailure = cause;
+      }
+    }
+    if (linked === undefined) throw lastFailure;
     const available = /\blibpython3\.12\.so\.1\.0\b/u.test(linked.stdout);
     return {
       name: "hopper-embedded-python",
       ok: available,
-      classification: available ? "healthy" : "missing_dependency",
-      detail: `${packageName} (${available ? "available" : "missing"})`,
-      ...(available
+      classification:
+        available || packageName !== undefined
+          ? available
+            ? "healthy"
+            : "missing_dependency"
+          : "unknown",
+      detail: `${packageName ?? "libpython3.12.so.1.0"} (${available ? "available" : "missing"})`,
+      ...(available || packageName === undefined
         ? {}
         : {
             remediation: `Install ${packageName}, then rerun rea doctor --provider hopper.`,

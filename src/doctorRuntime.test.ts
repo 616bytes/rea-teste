@@ -40,7 +40,7 @@ test("reports a missing Ubuntu 24.04 embedded Python runtime", async () => {
     classification: "missing_dependency",
     remediation: expect.stringContaining("libpython3.12t64"),
   });
-  expect(run).toHaveBeenCalledWith("ldconfig", ["-p"], { env: {} });
+  expect(run).toHaveBeenCalledWith("/sbin/ldconfig", ["-p"], { env: {} });
 });
 
 test("accepts a verified embedded Python runtime", async () => {
@@ -67,6 +67,55 @@ test("accepts a verified embedded Python runtime", async () => {
     ok: true,
     classification: "healthy",
   });
+});
+
+test("uses an absolute ldconfig path before the caller PATH", async () => {
+  const distribution: LinuxDistribution = {
+    id: "ubuntu",
+    versionId: "25.04",
+    packageFamily: "deb",
+    hopperSetupSupported: false,
+  };
+  const run = vi.fn().mockResolvedValue({
+    stdout:
+      "libpython3.12.so.1.0 (libc6,x86-64) => /opt/python/libpython3.12.so.1.0",
+    stderr: "",
+    stdoutBytes: 0,
+    stderrBytes: 0,
+  });
+  await expect(
+    inspectLinuxEmbeddedPythonRuntime(
+      { PATH: "/usr/bin:/bin" },
+      () => Promise.resolve(distribution),
+      run,
+    ),
+  ).resolves.toMatchObject({ ok: true, classification: "healthy" });
+  expect(run).toHaveBeenCalledWith("/sbin/ldconfig", ["-p"], {
+    env: { PATH: "/usr/bin:/bin" },
+  });
+});
+
+test("reports unknown remediation when no verified package mapping exists", async () => {
+  const distribution: LinuxDistribution = {
+    id: "arch",
+    packageFamily: "arch",
+    hopperSetupSupported: true,
+  };
+  const result = await inspectLinuxEmbeddedPythonRuntime(
+    {},
+    () => Promise.resolve(distribution),
+    vi.fn().mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      stdoutBytes: 0,
+      stderrBytes: 0,
+    }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    classification: "unknown",
+  });
+  expect(result).not.toHaveProperty("remediation");
 });
 
 it("exposes jadx through the doctor provider selector", () => {

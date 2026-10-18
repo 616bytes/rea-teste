@@ -24,21 +24,44 @@ export const windowsFileIdentitySchema = z.strictObject({
   directory: z.boolean(),
 });
 
-/** Metadata bound to one packaged Windows x64 Node-API artifact. */
+const windowsNativeArchitectures = ["x64", "arm64"] as const;
+
+/** Packaged addon selected for the Windows host that loads it. */
+export const windowsNativeArtifactName = (
+  architecture: (typeof windowsNativeArchitectures)[number],
+): "rea-windows-x64.node" | "rea-windows-arm64.node" =>
+  architecture === "arm64" ? "rea-windows-arm64.node" : "rea-windows-x64.node";
+
+const windowsNativeArtifactEntrySchema = z.strictObject({
+  artifact: z.enum(["rea-windows-x64.node", "rea-windows-arm64.node"]),
+  artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
+/** Metadata bound to packaged Windows Node-API artifacts. */
 export const windowsNativeManifestSchema = z.strictObject({
   packageVersion: z.string(),
   platform: z.literal("win32"),
-  architecture: z.literal("x64"),
+  architecture: z.enum(windowsNativeArchitectures),
   abiVersion: z.literal(1),
   nodeApiVersion: z.literal(8),
-  artifact: z.literal("rea-windows-x64.node"),
+  artifact: z.enum(["rea-windows-x64.node", "rea-windows-arm64.node"]),
   artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  sourceSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+  artifacts: z
+    .strictObject({
+      x64: windowsNativeArtifactEntrySchema.optional(),
+      arm64: windowsNativeArtifactEntrySchema.optional(),
+    })
+    .optional(),
 });
 
 const inspectionSchema = z.strictObject({
   abiVersion: z.literal(1),
   nodeApiVersion: z.literal(8),
-  architecture: z.literal("x64"),
+  architecture: z.enum(windowsNativeArchitectures),
   filesystem: windowsFileIdentitySchema,
   privateDacl: z.literal(true),
   privateBridgeDescriptorAccess: z.literal(true),
@@ -87,10 +110,17 @@ export interface WindowsNativeLoadHost {
   loadArtifact(): unknown;
 }
 
-const missingWindowsNativeFileReason = (file: string): string =>
-  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
+const missingWindowsNativeFileReason = (
+  file: string,
+  architecture: (typeof windowsNativeArchitectures)[number],
+): string =>
+  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/${windowsNativeArtifactName(architecture)} from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
 
-const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
+const readPackagedWindowsNativeFile = <T>(
+  file: string,
+  architecture: (typeof windowsNativeArchitectures)[number],
+  read: () => T,
+): T => {
   try {
     return read();
   } catch (cause: unknown) {
@@ -100,7 +130,9 @@ const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
       "code" in cause &&
       cause.code === "ENOENT"
     )
-      throw new Error(missingWindowsNativeFileReason(file), { cause });
+      throw new Error(missingWindowsNativeFileReason(file, architecture), {
+        cause,
+      });
     throw cause;
   }
 };
@@ -109,11 +141,15 @@ const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
 export const loadWindowsNativeAuthority = (
   host: WindowsNativeLoadHost,
 ): WindowsNativeLoadResult => {
-  if (host.platform !== "win32" || host.architecture !== "x64")
+  if (
+    host.platform !== "win32" ||
+    (host.architecture !== "x64" && host.architecture !== "arm64")
+  )
     return {
       available: false,
       failureStage: "host",
-      reason: "REA Windows native controls require a Windows x64 host.",
+      reason:
+        "REA Windows native controls require a Windows x64 or ARM64 host.",
     };
   const nodeApiVersion = Number(host.nodeApiVersion);
   if (!Number.isSafeInteger(nodeApiVersion) || nodeApiVersion < 8)
@@ -124,21 +160,50 @@ export const loadWindowsNativeAuthority = (
     };
   try {
     const manifest = windowsNativeManifestSchema.parse(
-      readPackagedWindowsNativeFile("manifest.json", () => host.readManifest()),
+      readPackagedWindowsNativeFile("manifest.json", host.architecture, () =>
+        host.readManifest(),
+      ),
     );
     if (manifest.packageVersion !== host.packageVersion)
       throw new Error("Windows native artifact belongs to another REA version");
-    const artifact = readPackagedWindowsNativeFile("rea-windows-x64.node", () =>
-      host.readArtifact(),
+    if (manifest.artifacts !== undefined) {
+      const primary = manifest.artifacts[manifest.architecture];
+      if (
+        primary === undefined ||
+        primary.artifact !== manifest.artifact ||
+        primary.artifactSha256 !== manifest.artifactSha256
+      )
+        throw new Error(
+          "Windows native manifest artifacts table does not match top-level metadata",
+        );
+    }
+    const expectedArtifact = windowsNativeArtifactName(host.architecture);
+    const targetEntry =
+      manifest.artifacts !== undefined
+        ? manifest.artifacts[host.architecture]
+        : manifest.architecture === host.architecture
+          ? {
+              artifact: manifest.artifact,
+              artifactSha256: manifest.artifactSha256,
+            }
+          : undefined;
+    if (targetEntry === undefined || targetEntry.artifact !== expectedArtifact)
+      throw new Error(
+        "Windows native artifact does not match the host architecture",
+      );
+    const artifact = readPackagedWindowsNativeFile(
+      targetEntry.artifact,
+      host.architecture,
+      () => host.readArtifact(),
     );
     if (
       createHash("sha256").update(artifact).digest("hex") !==
-      manifest.artifactSha256
+      targetEntry.artifactSha256
     )
       throw new Error(
         "Windows native artifact SHA-256 does not match package metadata",
       );
-    assertWindowsX64Artifact(artifact);
+    assertWindowsNativeArtifact(artifact, host.architecture);
     const binding = bindingSchema.parse(host.loadArtifact());
     let observed: unknown;
     try {
@@ -159,6 +224,13 @@ export const loadWindowsNativeAuthority = (
         reason: `REA Windows native inspection is invalid: ${parsed.error.message}`,
       };
     const inspection = parsed.data;
+    if (inspection.architecture !== host.architecture)
+      return {
+        available: false,
+        failureStage: "inspection",
+        reason:
+          "REA Windows native inspection does not match the host architecture.",
+      };
     return { available: true, authority: { call: binding.call, inspection } };
   } catch (cause: unknown) {
     return {
@@ -169,17 +241,31 @@ export const loadWindowsNativeAuthority = (
   }
 };
 
-const assertWindowsX64Artifact = (bytes: Buffer): void => {
+const assertWindowsNativeArtifact = (
+  bytes: Buffer,
+  architecture: (typeof windowsNativeArchitectures)[number],
+): void => {
+  const machine = architecture === "arm64" ? 0xaa64 : 0x8664;
   if (bytes.length < 64 || bytes.toString("latin1", 0, 2) !== "MZ")
     throw new Error("Windows native artifact is not a PE image");
   const offset = bytes.readUInt32LE(0x3c);
   if (
     offset > bytes.length - 26 ||
     bytes.toString("latin1", offset, offset + 4) !== "PE\0\0" ||
-    bytes.readUInt16LE(offset + 4) !== 0x8664 ||
+    bytes.readUInt16LE(offset + 4) !== machine ||
     bytes.readUInt16LE(offset + 24) !== 0x20b
   )
-    throw new Error("Windows native artifact is not a Windows x64 PE32+ image");
+    throw new Error(
+      "Windows native artifact is not a Windows x64 or ARM64 PE32+ image",
+    );
+};
+
+const windowsNativeArtifactUrl = (): string => {
+  const name =
+    process.arch === "arm64"
+      ? "rea-windows-arm64.node"
+      : "rea-windows-x64.node";
+  return `../../native/windows/build/${name}`;
 };
 
 let cached: WindowsNativeLoadResult | undefined;
@@ -202,20 +288,10 @@ export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
       return value;
     },
     readArtifact: () =>
-      readFileSync(
-        new URL(
-          "../../native/windows/build/rea-windows-x64.node",
-          import.meta.url,
-        ),
-      ),
+      readFileSync(new URL(windowsNativeArtifactUrl(), import.meta.url)),
     loadArtifact: () => {
       const value: unknown = createRequire(import.meta.url)(
-        fileURLToPath(
-          new URL(
-            "../../native/windows/build/rea-windows-x64.node",
-            import.meta.url,
-          ),
-        ),
+        fileURLToPath(new URL(windowsNativeArtifactUrl(), import.meta.url)),
       );
       return value;
     },

@@ -19,6 +19,7 @@ import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPath
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticEffectTiming,
+  semanticBindingAtRead,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
@@ -264,6 +265,54 @@ const moduleRequireWrites = new WeakMap<
   readonly t.Node[]
 >();
 
+const isCommonJsModuleObject = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const pending = [node];
+  // Cache by source read, not binding: the same binding can have a different
+  // value before/after assignment. Shared diamonds and cycles visit each read
+  // once, without recursively copying paths or expanding alias histories.
+  const examined = new WeakSet<t.Node>();
+  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+    value = unwrapJavaScriptExpression(value).node;
+    if (examined.has(value)) continue;
+    examined.add(value);
+    if (!t.isIdentifier(value)) continue;
+    const binding = resolveSemanticBindingState(state, value, value.name);
+    if (value.name === "module" && binding === undefined) {
+      if (!semanticResolutionBlocked(state, value, "module")) return true;
+      continue;
+    }
+    if (binding === undefined) continue;
+    const read = semanticBindingAtRead(binding, value, state.parentsByNode);
+    if (
+      value.name === "module" &&
+      commonJsWrapperBindingDeclaration(value, "module", state) !== undefined &&
+      !read.hasDefiniteInitializer
+    )
+      return true;
+    // A possible direct module origin requires an ownership gap. Destructured
+    // members (such as module.exports) are separate object identities.
+    for (const initializer of read.binding.initializers)
+      if (initializer.projection.length === 0) pending.push(initializer.node);
+  }
+  return false;
+};
+
+/** Recognize an unchecked module loader without asserting its current delegate. */
+export const semanticModuleRequireCallAt = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  return (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) === "require" &&
+    isCommonJsModuleObject(callee.object, state)
+  );
+};
+
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
 ): readonly t.Node[] => {
@@ -274,24 +323,8 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, []);
   const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
-  const isModuleObject = (
-    node: t.Node,
-    visited = new Set<string>(),
-  ): boolean => {
-    const value = unwrapJavaScriptExpression(node).node;
-    if (!t.isIdentifier(value)) return false;
-    if (value.name === "module")
-      return resolveSemanticBindingState(state, value, "module") === undefined
-        ? !semanticResolutionBlocked(state, value, "module")
-        : isUnmodifiedCommonJsWrapperBinding(value, "module", state);
-    const binding = resolveSemanticBindingState(state, value, value.name);
-    if (binding === undefined || visited.has(binding.bindingId)) return false;
-    const next = new Set(visited).add(binding.bindingId);
-    return (
-      binding.initializers.length > 0 &&
-      binding.initializers.every(({ node: init }) => isModuleObject(init, next))
-    );
-  };
+  const isModuleObject = (node: t.Node): boolean =>
+    isCommonJsModuleObject(node, state);
   traverseJavaScriptAst(state.program, {
     enter: (node) => {
       const target = t.isAssignmentExpression(node)

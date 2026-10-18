@@ -66,9 +66,45 @@ const candidateSources = {
     'class Run extends Function("Map.prototype.get = fetch") {} Run.call(null); new Map().get("/generated-class-call");',
   "frozen-generated.mjs":
     'Object.freeze(Function("Map.prototype.get = fetch")); new Map().get("/frozen-generated");',
+  "frozen-generated-executed.mjs":
+    'const run = Object.freeze(Function("Map.prototype.get = fetch")); run(); new Map().get("/frozen-generated-executed");',
+  "dynamic-apply.mjs":
+    'const callbacks = [Function("Map.prototype.get = fetch")]; Reflect.apply(consume, null, callbacks); new Map().get("/dynamic-apply");',
+  "factory-coercion.mjs":
+    'const source = { toString: Function("Map.prototype.get = fetch; return 1") }; Function(source); new Map().get("/factory-coercion");',
   "mixed-destination.mjs":
     'function expose(external) { const box = condition ? {} : external; box.p = Map.prototype; } expose(holder); patch(holder); new Map().get("/mixed-destination");',
 };
+
+const candidateEndpoints = [
+  "/api/items",
+  "/assignment",
+  "/awaited-generated",
+  "/bound-eval",
+  "/constructor",
+  "/dynamic-apply",
+  "/escaped",
+  "/escaped-class",
+  "/escaped-generated",
+  "/factory-coercion",
+  "/frozen-generated-executed",
+  "/generated",
+  "/generated-constructor",
+  "/generated-superclass",
+  "/getter",
+  "/indirect",
+  "/inherited-factory",
+  "/late-link",
+  "/logical-assignment",
+  "/method",
+  "/mixed-callable",
+  "/mixed-destination",
+  "/opaque",
+  "/prototype",
+  "/returned",
+  "/returned-write",
+  "/stored-eval",
+];
 
 it("reports a candidate endpoint through the worker boundary in the public CLI", async () => {
   const root = await createTestTempDirectory("rea-endpoint-candidate-cli-");
@@ -124,9 +160,12 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       "/awaited-generated",
       "/bound-eval",
       "/constructor",
+      "/dynamic-apply",
       "/escaped",
       "/escaped-class",
       "/escaped-generated",
+      "/factory-coercion",
+      "/frozen-generated-executed",
       "/generated",
       "/generated-constructor",
       "/generated-superclass",
@@ -146,32 +185,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
       "/stored-eval",
       "session",
     ]);
-  for (const value of [
-    "/api/items",
-    "/assignment",
-    "/awaited-generated",
-    "/bound-eval",
-    "/constructor",
-    "/escaped",
-    "/escaped-class",
-    "/escaped-generated",
-    "/generated",
-    "/generated-constructor",
-    "/generated-superclass",
-    "/getter",
-    "/indirect",
-    "/inherited-factory",
-    "/late-link",
-    "/logical-assignment",
-    "/method",
-    "/mixed-callable",
-    "/mixed-destination",
-    "/opaque",
-    "/prototype",
-    "/returned",
-    "/returned-write",
-    "/stored-eval",
-  ]) {
+  for (const value of candidateEndpoints) {
     const escaped = result.graph.nodes.find(
       ({ kind, observations }) =>
         kind === "endpoint" &&

@@ -5,6 +5,20 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 
 it.each([
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const args = [source]; Function(...args); new Map().get("/accounts");',
+  'const args = [Function("Map.prototype.get=fetch")]; const run = Reflect.apply(Object.freeze, null, args); run(); new Map().get("/accounts");',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; consume.apply(null, callbacks); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; const args = [source]; Function.apply(null, args); new Map().get("/accounts");',
+  'const source = { toString() { return {}; }, valueOf: Function("Map.prototype.get=fetch; return 0") }; Function(source); new Map().get("/accounts");',
+  'const source = { [Symbol.toPrimitive]: Function("Map.prototype.get=fetch; return 0") }; Function(source); new Map().get("/accounts");',
+  'const source = {}; source.toString = Function("Map.prototype.get=fetch; return 0"); Function(source); new Map().get("/accounts");',
+  'const callbacks = [Function("Map.prototype.get=fetch")]; Reflect.apply(consume, null, callbacks); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; Function(source); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; new Function(source); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; Reflect.construct(Function, [source]); new Map().get("/accounts");',
+  'const run = Object.freeze(Function("Map.prototype.get=fetch")); run.call(null); new Map().get("/accounts");',
+  'const Run = Object.freeze(Function("Map.prototype.get=fetch")); new Run(); new Map().get("/accounts");',
+  'Object.freeze(Function("Map.prototype.get=fetch")).bind(null)(); new Map().get("/accounts");',
   'Function.constructor = () => () => {}; Function.constructor("Map.prototype.get=fetch")(); new Map().get("/accounts");',
 
   'const make = Function.constructor; Function.constructor = safe; make("Map.prototype.get=fetch")(); new Map().get("/accounts");',
@@ -137,6 +151,13 @@ it.each([
   'function* make() {} make.constructor("Map.prototype.get=fetch")(); new Map().get("/accounts");',
 
   'Object.freeze(Function("Map.prototype.get=fetch")); new Map().get("/accounts");',
+  'Function(Function("Map.prototype.get=fetch")); new Map().get("/accounts");',
+  'const source = { unused: Function("Map.prototype.get=fetch"), toString() { return ""; } }; Function(source); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; Function.bind(null, source); new Map().get("/accounts");',
+  'const source = { toString: Function("Map.prototype.get=fetch; return 0") }; Object.freeze(source); new Map().get("/accounts");',
+
+  'Object.freeze(Function("Map.prototype.get=fetch")).bind(null); new Map().get("/accounts");',
+  'const make = Object.freeze(Function); make("Map.prototype.get=fetch"); new Map().get("/accounts");',
   'const box = {}; box.run = eval.bind(null, "Map.prototype.get=fetch"); new Map().get("/accounts");',
   'const run = eval.bind(null, "Map.prototype.get=fetch"); new Map().get("/accounts"); consume(run);',
 

@@ -3,6 +3,57 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  'const run = Object.freeze(Function("Map.prototype.get=fetch")); run();',
+  'const freeze = Object.freeze; const run = freeze(Function("Map.prototype.get=fetch")); run();',
+  'const freeze = Object.freeze; Object.freeze = other; const run = freeze(Function("Map.prototype.get=fetch")); run();',
+  'function inspect(consume, condition) { const freeze = condition ? Object.freeze : consume; const run = freeze(Function("Map.prototype.get=fetch")); run(); } inspect(run => run, false);',
+  'const freeze = Object.freeze.bind(null); const run = freeze(Function("Map.prototype.get=fetch")); run();',
+  'const run = Reflect.apply(Object.freeze, null, [Function("Map.prototype.get=fetch")]); run();',
+  'const box = Object.freeze({ run: Function("Map.prototype.get=fetch") }); box.run();',
+  "const box = Object.freeze({ prototype: Map.prototype }); patch(box);",
+  "const box = Object.freeze({ prototype: Map.prototype }); box.prototype.get = fetch;",
+  'const Run = Object.freeze(class extends Function("Map.prototype.get=fetch") {}); new Run();',
+])("preserves the returned identity of a known freeze call: %s", (prefix) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+      .endpoints,
+  ).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});
+
+it.each([
+  'Object.freeze(Function("Map.prototype.get=fetch"));',
+  'const freeze = Object.freeze; Object.freeze = consume; freeze(Function("Map.prototype.get=fetch"));',
+  'const box = Object.freeze({ run: Function("Map.prototype.get=fetch") });',
+  "const box = Object.freeze({ prototype: Map.prototype });",
+  'const Run = Object.freeze(class extends Function("Map.prototype.get=fetch") {}); try { Run(); } catch {}',
+])("keeps an unused or nonexecuting frozen value inert: %s", (prefix) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${prefix} new Map().get('/accounts');`)
+      .endpoints,
+  ).toEqual([]);
+});
+
+it("does not trust a replaced freeze helper to return a private destination", () => {
+  expect(
+    analyzeJavaScriptStaticSource(`
+    Object.freeze = externalFactory;
+    const box = Object.freeze({}); box.p = Map.prototype;
+    patch(holder); new Map().get('/accounts');
+  `).endpoints,
+  ).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});
+
+it.each([
   'class Run extends Function("Map.prototype.get=fetch") {} new Run();',
   'const Base = Function("Map.prototype.get=fetch"); class Run extends Base {} const Alias = Run; new Alias();',
   'class Base extends Function("Map.prototype.get=fetch") {} class Run extends Base {} new Run();',

@@ -9,6 +9,7 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { javaScriptIntrinsicResultReference } from "./javascriptIntrinsicInvocation.js";
 import {
   isUnshadowedGlobal,
   resolveSemanticBindingState,
@@ -94,6 +95,7 @@ interface AmbientReferenceFacts {
     Map<SemanticIterationSource, AmbientProjection>
   >;
   readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
+  readonly returnedReference: (node: t.Node) => t.Expression | undefined;
   readonly freshObject: (node: t.Node) => boolean;
   readonly superConstructors: WeakSet<t.Class>;
   readonly callableResult?: (
@@ -360,6 +362,13 @@ export const createAmbientPathResolver = (
             ? ["prototype", ...suffix.slice(1)]
             : suffix.slice(1),
         );
+        continue;
+      }
+      const returnedReference = possibleWrites
+        ? facts?.returnedReference(root)
+        : undefined;
+      if (returnedReference !== undefined) {
+        continueWith(returnedReference);
         continue;
       }
       const prototypeTarget = possibleWrites
@@ -639,6 +648,12 @@ export function* indexJavaScriptAmbientWritesSteps(
       stores,
       superConstructors,
       freshObject: interop.isFreshObject,
+      returnedReference: (node) =>
+        t.isCallExpression(node) || t.isOptionalCallExpression(node)
+          ? javaScriptIntrinsicResultReference(
+              interop.intrinsicInvocation(node),
+            )
+          : undefined,
       ...(opaqueObserver?.callableResult === undefined
         ? {}
         : {
@@ -811,6 +826,23 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
+  for (const { node, path } of writes) {
+    const target =
+      path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
+    const paths =
+      target === undefined
+        ? [path]
+        : ambientWrites(target.node, target.capture).map((identity) => [
+            ...identity,
+            ...path.slice(2),
+          ]);
+    for (const resolved of paths) {
+      state.ambientWrites.retain(resolved);
+      state.ambientWriteEffects.push({ path: resolved, node });
+      if (resolved[0] === "global")
+        interop.retainWrite(node, ["intrinsic", ...resolved.slice(1)]);
+    }
+  }
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
     let privateDestination = false;
@@ -838,24 +870,16 @@ export function* indexJavaScriptAmbientWritesSteps(
         ],
       });
   }
-  for (const { node, path } of writes) {
-    const target =
-      path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
-    const paths =
-      target === undefined
-        ? [path]
-        : ambientWrites(target.node, target.capture).map((identity) => [
-            ...identity,
-            ...path.slice(2),
-          ]);
-    for (const resolved of paths) {
-      state.ambientWrites.retain(resolved);
-      state.ambientWriteEffects.push({ path: resolved, node });
-    }
-  }
   for (const { node, invocation, targets } of escapes) {
     const handledHandoffs =
       invocation && opaqueObserver?.observeInvocation(node, ambientWrites);
+    if (
+      invocation &&
+      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+      javaScriptIntrinsicResultReference(interop.intrinsicInvocation(node)) !==
+        undefined
+    )
+      continue;
     for (const { target, browserReceiver, projection, receiver } of targets)
       for (const path of ambientWrites(target, node, true, projection)) {
         if (

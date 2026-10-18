@@ -6,6 +6,18 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
+/** A known intrinsic may return an argument without copying its identity. */
+export const javaScriptIntrinsicResultReference = (
+  invocation: JavaScriptIntrinsicInvocation | undefined,
+): t.Expression | undefined => {
+  const argument = invocation?.arguments?.[0];
+  return invocation?.kind === "known" &&
+    invocation.path.join(".") === "intrinsic.Object.freeze" &&
+    t.isExpression(argument)
+    ? argument
+    : undefined;
+};
+
 /** Expand only literal array spreads whose positional arguments are all known. */
 export const expandJavaScriptInvocationArguments = (
   arguments_: readonly t.CallExpression["arguments"][number][],

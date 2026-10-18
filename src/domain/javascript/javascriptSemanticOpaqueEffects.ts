@@ -7,7 +7,11 @@ import type {
   AmbientInvocationObserver,
   AmbientPathResolver,
 } from "./javascriptSemanticAmbientWrites.js";
-import { resolveJavaScriptIntrinsicInvocations } from "./javascriptIntrinsicInvocation.js";
+import {
+  expandJavaScriptInvocationArguments,
+  javaScriptIntrinsicResultReference,
+  resolveJavaScriptIntrinsicInvocations,
+} from "./javascriptIntrinsicInvocation.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
@@ -209,6 +213,9 @@ export const createSemanticOpaqueGlobalObserver = (
             return ["intrinsic", "class", "constructor"];
           }
           const invocation = strictInvocation(node);
+          const reference = javaScriptIntrinsicResultReference(invocation);
+          if (reference !== undefined)
+            return strictInterop.intrinsicPath(reference);
           const path =
             invocation?.kind === "known" ? invocation.path : undefined;
           return path?.join(".") === "intrinsic.Function"
@@ -269,7 +276,19 @@ export const createSemanticOpaqueGlobalObserver = (
         interop.intrinsicReadChanged,
       );
     const callee = t.isTaggedTemplateExpression(node) ? node.tag : node.callee;
-    return identities(callee, t.isNewExpression(node));
+    const targets = identities(callee, t.isNewExpression(node));
+    return t.isNewExpression(node)
+      ? targets.map((target) => ({
+          ...target,
+          arguments:
+            target.arguments === undefined
+              ? undefined
+              : expandJavaScriptInvocationArguments([
+                  ...target.arguments,
+                  ...node.arguments,
+                ]),
+        }))
+      : targets;
   };
   // Reflect.construct executes only its first target; newTarget selects the
   // resulting prototype without executing that constructor's body.
@@ -373,18 +392,24 @@ export const createSemanticOpaqueGlobalObserver = (
     return path === undefined ||
       strictInterop.intrinsicReadChanged(callee, path)
       ? undefined
-      : { kind: "known", path, arguments: [] };
+      : {
+          kind: "known",
+          path,
+          arguments: t.isNewExpression(node)
+            ? expandJavaScriptInvocationArguments(node.arguments)
+            : undefined,
+        };
   };
   const escapedCode = (path: readonly (string | null)[]): boolean => {
     if (
-      path[0] === "generated-function" ||
+      (path[0] === "generated-function" && path.length === 1) ||
       (path[0] === "global" &&
         path.length === 2 &&
         ["eval", "Function"].includes(path[1] ?? ""))
     )
       return true;
     const bound =
-      path[0] === "bound-global-callable"
+      path[0] === "bound-global-callable" && path.length === 2
         ? boundValues[Number(path[1])]
         : undefined;
     return (
@@ -409,6 +434,23 @@ export const createSemanticOpaqueGlobalObserver = (
           site,
           true,
         ).some(escapedCode),
+    ) ?? false;
+  const argumentsCoerceCode = (
+    arguments_: readonly t.Node[] | undefined,
+    site: t.Node,
+    list = false,
+  ): boolean =>
+    arguments_?.some(
+      (argument) =>
+        t.isNode(argument) &&
+        ["toString", "valueOf"].some((method) =>
+          ambientPaths(
+            t.isSpreadElement(argument) ? argument.argument : argument,
+            site,
+            true,
+            list ? [null, method] : [method],
+          ).some(escapedCode),
+        ),
     ) ?? false;
   return {
     callableResult: (node, resolve, constructing = false) => {
@@ -504,6 +546,23 @@ export const createSemanticOpaqueGlobalObserver = (
         );
       });
 
+      const coercedCode = outcomes.some((invocation) => {
+        const path = invocation.path.join(".");
+        if (path === "intrinsic.global.Function") {
+          const arguments_ = t.isTaggedTemplateExpression(node)
+            ? [...(invocation.arguments ?? []), ...node.quasi.expressions]
+            : invocation.arguments;
+          return argumentsCoerceCode(arguments_, node);
+        }
+        if (
+          path !== "intrinsic.Reflect.construct" ||
+          !isFunctionFactory(invocation.arguments?.[0])
+        )
+          return false;
+        const list = invocation.arguments?.[1];
+        return t.isExpression(list) && argumentsCoerceCode([list], node, true);
+      });
+
       const handedOff = outcomes.some((invocation) => {
         const path = invocation.path.join(".");
         if (provenNonCalling) return false;
@@ -519,12 +578,22 @@ export const createSemanticOpaqueGlobalObserver = (
         }
         return argumentsEscapeCode(invocation.arguments, node);
       });
-      if (directExecution || handedOff)
+      if (directExecution || handedOff || coercedCode)
         state.opaqueEffects.globalSites.push(node);
       // Possible identities may omit unresolved alternatives; only the strict
       // owner can exempt all argument and receiver handoffs.
-      if (provenNonCalling) return "all";
+      const completeArguments =
+        !t.isTaggedTemplateExpression(node) &&
+        outcomes.every(
+          (invocation) =>
+            invocation.arguments !== undefined &&
+            invocation.arguments.every(
+              (argument) => !t.isSpreadElement(argument),
+            ),
+        );
+      if (provenNonCalling && completeArguments) return "all";
       return outcomes.length > 0 &&
+        completeArguments &&
         (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         ? "arguments"
         : undefined;

@@ -186,7 +186,12 @@ function* indexSemanticMemberMutationFactsSteps(
 ): Generator<void, void> {
   if (indexedMemberMutationStates.has(state)) return;
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(state.program, state);
+  yield* collectSemanticMemberMutationsSteps(
+    state.program,
+    state,
+    (site, reference, path) =>
+      referenceEffectsMayHaveChanged(state, site, reference, path),
+  );
   indexedMemberMutationStates.add(state);
 }
 
@@ -244,17 +249,38 @@ const visitSemanticReferenceEffectsAtSite = (
       if (!retain("escape", node, [])) return metadata;
     for (const node of state.bindingWrites.get(binding.bindingId) ?? [])
       if (!retain("binding-write", node)) return metadata;
-    if (indexedMemberMutationStates.has(state)) {
-      for (const effect of binding.memberWrites)
-        if (!retain("member-write", effect.node, effect.path)) return metadata;
-      for (const effect of binding.escapedPaths)
-        if (!retain("escape", effect.node, effect.path)) return metadata;
-    }
+    // The mutation producer also queries its growing facts during convergence.
+    // Completion stays explicit in metadata; callers cannot infer readiness.
+    for (const effect of binding.memberWrites)
+      if (!retain("member-write", effect.node, effect.path)) return metadata;
+    for (const effect of binding.escapedPaths)
+      if (!retain("escape", effect.node, effect.path)) return metadata;
   } else if (lookup.kind === "ambient" || lookup.kind === "uncertain-ambient") {
     for (const node of state.ambientBindingWrites.get(root.name) ?? [])
       if (!retain("ambient-write", node)) return metadata;
   }
   return metadata;
+};
+
+/** Query current producer facts; public consumers additionally require completion. */
+const referenceEffectsMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  site: t.Node,
+  referenceNode: t.Node,
+  propertyPath?: JavaScriptSemanticPropertyPath,
+): boolean => {
+  let changed = false;
+  const metadata = visitSemanticReferenceEffectsAtSite(
+    state,
+    site,
+    referenceNode,
+    (effect) => {
+      changed = effect.timing !== "after";
+      return !changed;
+    },
+    propertyPath,
+  );
+  return metadata.resolution !== "resolved" || changed;
 };
 
 /** Preserve the complete diagnostic contract for consumers needing every effect. */
@@ -484,18 +510,12 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
     },
     referenceMayHaveChangedAt(site, referenceNode, propertyPath) {
       if (!indexedMemberMutationStates.has(state)) return true;
-      let changed = false;
-      const metadata = visitSemanticReferenceEffectsAtSite(
+      return referenceEffectsMayHaveChanged(
         state,
         site,
         referenceNode,
-        (effect) => {
-          changed = effect.timing !== "after";
-          return !changed;
-        },
         propertyPath,
       );
-      return metadata.resolution !== "resolved" || changed;
     },
     *referencesSteps() {
       references ??= yield* collectSemanticReferencesSteps(program, state);

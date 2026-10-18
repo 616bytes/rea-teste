@@ -64,6 +64,55 @@ it.each([
   },
 );
 
+it.each([
+  [
+    "const records = new Map(); const alias = records; alias.get('/accounts');",
+    false,
+  ],
+  ["new Map().delete('/accounts');", false],
+  [
+    "const records = new Map(); records.get('/accounts'); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); records.get = fetch; records.get('/accounts');",
+    true,
+  ],
+  [
+    "Object.getPrototypeOf = () => Map.prototype; Object.getPrototypeOf({}).get = fetch; new Map().get('/accounts');",
+    true,
+  ],
+  ["client.get('/accounts');", true],
+  ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
+] as const)(
+  "shares Map receiver certainty with application analysis: %s",
+  (source, candidate) => {
+    const input = source + " fetch('/network');";
+    const result = analyzeCapturedWebBundle(inspection(input));
+    expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+      "/network",
+    ]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value),
+    ).toEqual(candidate ? ["/accounts"] : []);
+    const staticResult = analyzeJavaScriptStaticSource(input);
+    expect(
+      staticResult.endpoints
+        .map(({ value, interpretation }) => [value, interpretation ?? null])
+        .sort(),
+    ).toEqual(
+      candidate
+        ? [
+            ["/accounts", "candidate"],
+            ["/network", null],
+          ]
+        : [["/network", null]],
+    );
+  },
+);
+
 describe("web bundle analyzer", () => {
   it("extracts graph, route, endpoint, vendor, and WebMCP evidence", () => {
     const source = `

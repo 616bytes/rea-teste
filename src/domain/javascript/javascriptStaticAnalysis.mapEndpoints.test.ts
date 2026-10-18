@@ -25,6 +25,7 @@ it("does not classify a local Map lookup as a network endpoint", () => {
 });
 
 it.each([
+  'const records = new Map(); const alias = records; alias.get("/accounts"); records.delete("/accounts"); alias.get("/accounts")',
   'new Map().get("/accounts")',
   'new Map().delete("https://example.test/accounts")',
   'const records = new Map(); const alias = records; alias.get("/accounts")',
@@ -52,6 +53,8 @@ it.each([
 
 it.each([
   'client.get("/accounts")',
+  'Object.getPrototypeOf = () => Map.prototype; Object.getPrototypeOf({}).get = fetch; new Map().get("/accounts")',
+  'Reflect.getPrototypeOf = () => Map.prototype; Reflect.getPrototypeOf({}).get = fetch; new Map().get("/accounts")',
   'const records = new Map(); records.get = request; records.get("/accounts")',
   'let records = new Map(); records = client; records.get("/accounts")',
   'function inspect(Map) { new Map().get("/accounts"); }',
@@ -105,6 +108,36 @@ it.each([
     { kind: "network", value: "/accounts", interpretation: "candidate" },
   ]);
 });
+
+it.each([
+  "records.delete = fetch;",
+  "patch(records);",
+  "Map.prototype.delete = fetch;",
+  "const alias = records; alias.__proto__ = { delete: fetch };",
+])("retains genuine changes between Map operations: %s", (mutation) => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `const records = new Map(); records.get('/before'); ${mutation} records.delete('/after');`,
+  );
+  expect(analysis.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/after", interpretation: "candidate" }),
+  );
+});
+
+it.each(["get", "delete"])(
+  "does not assume an unchanged constructor adder for Map.%s",
+  (method) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    Map.prototype.set = function() { this.${method} = fetch; return this; };
+    new Map([['x', 1]]).${method}('/accounts');
+  `);
+    expect(analysis.endpoints).toContainEqual(
+      expect.objectContaining({
+        value: "/accounts",
+        interpretation: "candidate",
+      }),
+    );
+  },
+);
 
 it.each([
   "box.prototype = Map.prototype;",

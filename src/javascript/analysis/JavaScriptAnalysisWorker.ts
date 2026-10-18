@@ -27,6 +27,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ok, err, type Result } from "../../domain/result.js";
+import { JAVASCRIPT_ANALYSIS_HEAP_MB_BOUNDS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PrivateRuntimeRootUnavailableError } from "../../process/PrivateRuntimeRootUnavailableError.js";
@@ -119,8 +120,8 @@ export class JavaScriptAnalysisWorker {
   ) {
     if (
       !Number.isSafeInteger(limits.heapMb) ||
-      limits.heapMb < 128 ||
-      limits.heapMb > 16_384 ||
+      limits.heapMb < JAVASCRIPT_ANALYSIS_HEAP_MB_BOUNDS.minimum ||
+      limits.heapMb > JAVASCRIPT_ANALYSIS_HEAP_MB_BOUNDS.maximum ||
       !Number.isSafeInteger(limits.timeoutMs) ||
       limits.timeoutMs <= 0 ||
       limits.timeoutMs > 2_147_483_647
@@ -537,7 +538,7 @@ export class JavaScriptAnalysisWorker {
             ? new AnalysisResourceConstraintError(
                 OPERATION,
                 "memory",
-                `Owned JavaScript worker exhausted its heap while analyzing ${path} during ${this.#phase}`,
+                this.#heapExhaustedReason(path),
                 this.#limits(),
                 { capturedOutput: this.#captured() },
               )
@@ -646,6 +647,15 @@ export class JavaScriptAnalysisWorker {
   }
   #memoryLimitReached(): boolean {
     return this.#supervisor?.launch.process.memoryLimitReached === true;
+  }
+  /** Name the exhausted budget and the caller setting that raises it. */
+  #heapExhaustedReason(path: string): string {
+    const heapMb = this.limits.heapMb;
+    return `Owned JavaScript worker exhausted its ${String(heapMb)} MiB heap while analyzing ${path} in the ${this.#phase} phase${
+      heapMb < JAVASCRIPT_ANALYSIS_HEAP_MB_BOUNDS.maximum
+        ? `; retry with a larger max_heap_mb (at most ${String(JAVASCRIPT_ANALYSIS_HEAP_MB_BOUNDS.maximum)})`
+        : ""
+    }`;
   }
   #memoryFailure(path: string): AnalysisResourceConstraintError {
     return new AnalysisResourceConstraintError(

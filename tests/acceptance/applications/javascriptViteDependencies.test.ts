@@ -2424,6 +2424,38 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: ["first.js"],
     unknown: false,
   },
+  ...(["Object", "Reflect"] as const).map((namespace) => ({
+    file: `late-${namespace.toLowerCase()}-prototype-replacement.js`,
+    source: mapDependenciesWithEffects(
+      `const getProto = ${namespace}.getPrototypeOf; const proto = {}; const box = {}; box.object = Object.create(proto); Object.setPrototypeOf(box.object, Array.prototype); getProto(box.object).map = function () { return ["./last.js"]; }; __vite__mapDeps([0]);`,
+    ),
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "late-created-object-escape.js",
+    source: mapDependenciesWithEffects(
+      'const getProto = Object.getPrototypeOf; const proto = {}; const box = {}; box.object = Object.create(proto); mutate(box.object); getProto(box.object).map = function () { return ["./last.js"]; }; __vite__mapDeps([0]);',
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "late-independent-prototype-write.js",
+    source: mapDependenciesWithEffects(
+      "const getProto = Object.getPrototypeOf; const proto = {}; const box = {}; box.object = Object.create(proto); getProto(box.object).label = 1; __vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  {
+    file: "late-captured-prototype-before-replacement.js",
+    source: mapDependenciesWithEffects(
+      "const getProto = Object.getPrototypeOf; const proto = {}; const box = {}; box.object = Object.create(proto); const captured = getProto(box.object); Object.setPrototypeOf(box.object, Array.prototype); captured.label = 1; __vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  },
 ];
 
 const batches = Array.from(

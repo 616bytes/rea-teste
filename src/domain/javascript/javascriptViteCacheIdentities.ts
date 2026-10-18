@@ -11,7 +11,6 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
-import { semanticReadPrecedesWrite } from "./javascriptSemanticMutationInitializers.js";
 import {
   hasJavaScriptViteInheritedIndex,
   isJavaScriptViteDefaultUndefined,
@@ -112,6 +111,11 @@ export class ViteCacheIdentities {
   private readonly writeReceivers = new Map<Vertex, ViteCacheWrite[]>();
   private readonly retainedWrites = new Map<
     ViteCacheWrite,
+    ViteCacheAllocation
+  >();
+  private readonly exposureReceivers = new Map<Vertex, ViteCacheExposure[]>();
+  private readonly retainedExposures = new Map<
+    ViteCacheExposure,
     ViteCacheAllocation
   >();
 
@@ -406,17 +410,11 @@ export class ViteCacheIdentities {
         "inputs" in escape.value
           ? escape.value
           : this.vertices.get(escape.value);
-      const allocation = source?.fact?.allocation;
-      if (source === undefined || allocation?.kind !== "container") continue;
-      let retained = this.properties.escapes.get(allocation);
-      if (retained === undefined) {
-        const family = this.vertex({});
-        family.seed = UNKNOWN;
-        retained = { nodes: [], family };
-        this.properties.escapes.set(allocation, retained);
-      }
-      retained.nodes.push(escape.node);
-      this.connect(retained.family, { kind: "family", source });
+      if (source === undefined) continue;
+      const receivers = this.exposureReceivers.get(source) ?? [];
+      receivers.push(escape);
+      this.exposureReceivers.set(source, receivers);
+      yield* this.retainExposureSteps(source, escape);
     }
     this.snapshots = true;
     this.reads.clear();
@@ -452,6 +450,20 @@ export class ViteCacheIdentities {
     this.retainedWrites.set(write, allocation);
     this.properties.writes.set(allocation, retained);
     if (write.value !== undefined) this.normalize(write.value);
+  }
+
+  private *retainExposureSteps(
+    source: Vertex,
+    exposure: ViteCacheExposure,
+  ): Generator<void> {
+    const allocation = source.fact?.allocation;
+    if (
+      allocation?.kind !== "container" ||
+      this.retainedExposures.get(exposure) === allocation
+    )
+      return;
+    this.retainedExposures.set(exposure, allocation);
+    yield* this.properties.retainEscapeSteps(allocation, exposure.node, source);
   }
 
   *solveSteps(): Generator<void> {
@@ -497,13 +509,18 @@ export class ViteCacheIdentities {
             )
               continue;
             this.retainedWrites.set(write, next.allocation);
-            this.properties.retainLateWrite(next.allocation, write);
+            yield* this.properties.retainLateWriteSteps(next.allocation, write);
             const container = this.allocationVertices.get(next.allocation);
             if (container !== undefined && write.value !== undefined)
               this.connect(container, {
                 kind: "family",
                 source: this.normalize(write.value),
               });
+          }
+        if (this.snapshots)
+          for (const exposure of this.exposureReceivers.get(vertex) ?? []) {
+            if (examined++ % 1024 === 0) yield;
+            yield* this.retainExposureSteps(vertex, exposure);
           }
         for (const listener of vertex.listeners) {
           if (examined++ % 1024 === 0) yield;
@@ -962,22 +979,8 @@ export class ViteCacheIdentities {
       viteCacheObjectOperation(allocation.node, this.invocation) !== "create"
     )
       return sharedUnknown;
-    let examined = 0;
-    for (const effect of this.properties.writes.get(allocation) ?? []) {
-      if (examined++ % 1024 === 0) yield;
-      if (
-        !semanticReadPrecedesWrite(read, effect.node, this.state.parentsByNode)
-      )
-        return sharedUnknown;
-    }
-    for (const effect of this.properties.escapes.get(allocation)?.nodes ?? []) {
-      if (examined++ % 1024 === 0) yield;
-      if (
-        effect !== read &&
-        !semanticReadPrecedesWrite(read, effect, this.state.parentsByNode)
-      )
-        return sharedUnknown;
-    }
+    if (yield* this.properties.prototypeChangedSteps(allocation, read, target))
+      return sharedUnknown;
     const prototype = this.invocation(allocation.node)?.arguments?.[0];
     if (prototype === undefined || t.isSpreadElement(prototype))
       return sharedUnknown;

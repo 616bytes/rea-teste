@@ -53,6 +53,14 @@ export class ViteCacheProperties {
     ViteCacheAllocation,
     Map<Key, Vertex>
   >();
+  private readonly lateWriteEffects = new Map<
+    ViteCacheAllocation,
+    Set<ViteCacheWrite>
+  >();
+  private readonly prototypeReaders = new Map<
+    ViteCacheAllocation,
+    Set<Vertex>
+  >();
   private readonly slots = new Map<ViteCacheAllocation, Map<Key, Vertex>>();
   private readonly snapshotReads = new Map<
     ViteCacheAllocation,
@@ -165,10 +173,14 @@ export class ViteCacheProperties {
     return group;
   }
 
-  retainLateWrite(
+  *retainLateWriteSteps(
     allocation: ViteCacheAllocation,
     write: ViteCacheWrite,
-  ): void {
+  ): Generator<void> {
+    const effects =
+      this.lateWriteEffects.get(allocation) ?? new Set<ViteCacheWrite>();
+    this.lateWriteEffects.set(allocation, effects);
+    effects.add(write);
     const group = this.lateGroup(allocation, write.key);
     if (write.value === undefined) group.seed = UNKNOWN;
     else {
@@ -179,6 +191,74 @@ export class ViteCacheProperties {
       });
     }
     this.graph.enqueue(group);
+    yield* this.notifyPrototypeReadersSteps(allocation);
+  }
+
+  *retainEscapeSteps(
+    allocation: ViteCacheAllocation,
+    node: t.Node,
+    source: Vertex,
+  ): Generator<void> {
+    let retained = this.escapes.get(allocation);
+    if (retained === undefined) {
+      const family = this.graph.vertex();
+      family.seed = UNKNOWN;
+      retained = { nodes: [], family };
+      this.escapes.set(allocation, retained);
+    }
+    retained.nodes.push(node);
+    this.graph.connect(retained.family, { kind: "family", source });
+    yield* this.notifyPrototypeReadersSteps(allocation);
+  }
+
+  /** prototype proofs observe initial and late effects through the same owner. */
+  *prototypeChangedSteps(
+    allocation: ViteCacheAllocation,
+    read: t.Node,
+    target: Vertex,
+  ): Generator<void, boolean> {
+    const readers = this.prototypeReaders.get(allocation) ?? new Set<Vertex>();
+    this.prototypeReaders.set(allocation, readers);
+    readers.add(target);
+    let examined = 0;
+    for (const effects of [
+      this.writes.get(allocation) ?? [],
+      this.lateWriteEffects.get(allocation) ?? [],
+    ])
+      for (const effect of effects) {
+        if (examined++ % 1024 === 0) yield;
+        if (
+          !semanticReadPrecedesWrite(
+            read,
+            effect.node,
+            this.state.parentsByNode,
+          )
+        ) {
+          readers.delete(target);
+          return true;
+        }
+      }
+    for (const effect of this.escapes.get(allocation)?.nodes ?? []) {
+      if (examined++ % 1024 === 0) yield;
+      if (
+        effect !== read &&
+        !semanticReadPrecedesWrite(read, effect, this.state.parentsByNode)
+      ) {
+        readers.delete(target);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private *notifyPrototypeReadersSteps(
+    allocation: ViteCacheAllocation,
+  ): Generator<void> {
+    let examined = 0;
+    for (const reader of this.prototypeReaders.get(allocation) ?? []) {
+      if (examined++ % 1024 === 0) yield;
+      this.graph.enqueue(reader);
+    }
   }
 
   private readonly writeGroups = new Map<

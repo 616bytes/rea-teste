@@ -227,3 +227,25 @@ describe("JSON client configuration with repeated members", () => {
     });
   });
 });
+
+describe("JSON client configuration with many repeated members", () => {
+  it("removes many repeats from one syntax tree", () => {
+    // Repeats alternate with peers and comments, so every separator case occurs.
+    const members = Array.from(
+      { length: 2_000 },
+      (_, index) =>
+        `"rea": ${String(index)}, /* ${String(index)} */ "p${String(index)}": ${String(index)}`,
+    );
+    const text = `{"mcpServers": {"rea": -1, ${members.join(",\n")}, "rea": -2}}`;
+    const { remaining, result } = removeRea(text, "json", {
+      removeShadowedMembers: true,
+    });
+    if (!result.ok) throw new Error("removal refused");
+    expect(Object.keys(remaining)).toHaveLength(2_000);
+    expect(parseClientConfiguration(result.value, "json").document).toEqual({
+      mcpServers: remaining,
+    });
+    expect(result.value).not.toContain('"rea"');
+    expect(result.value).toContain("/* 1999 */");
+  });
+});

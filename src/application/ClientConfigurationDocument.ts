@@ -1471,10 +1471,9 @@ const applyFormattedJsonEdit = (text: string, edit: Edit): string => {
  */
 const deleteJsonProperty = (
   text: string,
-  object: Node,
+  siblings: readonly Node[],
   property: Node,
 ): string => {
-  const siblings = object.children ?? [];
   const propertyIndex = siblings.indexOf(property);
   const previous = siblings[propertyIndex - 1];
   const next = siblings[propertyIndex + 1];
@@ -1507,27 +1506,26 @@ export interface ClientConfigurationShadowedMember {
 }
 
 /**
- * Delete every member named by the last key of `path` from the object a client
- * reads. Removing the effective member makes the previous duplicate effective,
- * so each pass removes the new effective member until none remains.
+ * Delete every member named `key` from `object`, parsed from `text`. Removing
+ * only the effective member would make the previous repeat effective. Members
+ * are deleted from the last one back: each deletion edits text at or after the
+ * end of the member before it, so the earlier offsets in this one syntax tree
+ * stay valid, and separators are judged against the members still present.
  */
 const deleteRepeatedJsonMember = (
   text: string,
-  path: readonly string[],
+  object: Node,
+  key: string,
 ): string => {
-  const key = path.at(-1);
-  if (key === undefined) throw new TypeError("JSON edit path is empty");
-  let remaining = text;
-  for (;;) {
-    const object = effectiveJsonObject(
-      parseTree(remaining, [], { allowTrailingComma: true }),
-      path.slice(0, -1),
-    );
-    const property =
-      object === undefined ? undefined : effectiveJsonProperty(object, key);
-    if (object === undefined || property === undefined) return remaining;
-    remaining = deleteJsonProperty(remaining, object, property);
+  const siblings = [...(object.children ?? [])];
+  let edited = text;
+  for (const property of siblings
+    .filter((member) => isJsonMember(member, key))
+    .reverse()) {
+    edited = deleteJsonProperty(edited, siblings, property);
+    siblings.splice(siblings.indexOf(property), 1);
   }
+  return edited;
 };
 
 /**
@@ -1588,9 +1586,9 @@ const editJsonMember = (
       )
     )
       return removeShadowedMembers
-        ? ok(deleteRepeatedJsonMember(text, path))
+        ? ok(deleteRepeatedJsonMember(text, object, key))
         : err({ kind: "shadowed_member", path });
-    return ok(deleteJsonProperty(text, object, property));
+    return ok(deleteJsonProperty(text, object.children ?? [], property));
   }
   throw new TypeError("JSON edit path is empty");
 };

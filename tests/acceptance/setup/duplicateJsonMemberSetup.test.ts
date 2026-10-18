@@ -143,6 +143,8 @@ cliTest(
   },
 );
 
+// Spelled at run time so the fixture file keeps the JSON escape.
+const BACKSLASH = "\\";
 const ownedLauncher = (version: string) =>
   `{"command": "npx", "args": ["-y", "rea-agents@${version}", "mcp"]}`;
 const openCodeOwned =
@@ -160,7 +162,8 @@ cliTest(
     const home = await createTestTempDirectory("rea-json-duplicate-");
     const config = join(home, ".claude.json");
     // The escaped spelling names the same member for JSON.parse.
-    const original = `{\n  "mcpServers": {"rea": ${ownedLauncher("6.6.0")}, "peer": {"command": "/usr/bin/true"}, "r\u0065a": ${ownedLauncher("6.5.0")}}\n}\n`;
+    const original = `{\n  "mcpServers": {"rea": ${ownedLauncher("6.6.0")}, "peer": {"command": "/usr/bin/true"}, "r${BACKSLASH}u0065a": ${ownedLauncher("6.5.0")}}\n}\n`;
+    expect(original).toContain(`"r${BACKSLASH}u0065a"`);
     await writeFile(config, original);
 
     const removed = await runIn(cli, home)(["uninstall", "--json"]);

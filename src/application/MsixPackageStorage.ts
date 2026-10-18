@@ -25,13 +25,17 @@ export interface MsixPackageView {
   readonly processView: "redirected" | "direct" | "unknown";
 }
 
-/** Windows' roaming and local application data roots; empty means unset. */
+/** A set value names its exact root; a blank one is treated as unset. */
+const appDataRoot = (value: string | undefined, fallback: string): string =>
+  value === undefined || value.trim() === "" ? fallback : value;
+
+/** Windows' roaming and local application data roots. */
 export const windowsAppDataRoots = (
   home: string,
   env: Readonly<NodeJS.ProcessEnv>,
 ): { readonly roaming: string; readonly local: string } => ({
-  roaming: env.APPDATA || join(home, "AppData", "Roaming"),
-  local: env.LOCALAPPDATA || join(home, "AppData", "Local"),
+  roaming: appDataRoot(env.APPDATA, join(home, "AppData", "Roaming")),
+  local: appDataRoot(env.LOCALAPPDATA, join(home, "AppData", "Local")),
 });
 
 /** The per-user root of MSIX package data containers. */

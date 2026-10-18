@@ -294,6 +294,124 @@ it("preserves explicit AppData root whitespace throughout setup, doctor and unin
   expect(await readJson(`${privateConfig}.rea.backup`)).toEqual(original);
 });
 
+describe("Windows AppData roots for client configuration", () => {
+  const clientPath = (
+    home: string,
+    env: Readonly<Record<string, string>>,
+    name: string,
+  ): string | undefined =>
+    supportedClients(home, "win32", env).find((client) => client.name === name)
+      ?.configPath;
+
+  it("keeps nonblank APPDATA and LOCALAPPDATA values exactly as set", async () => {
+    const { home, env: profile } = await windowsProfile();
+    // `Roaming ` and `Local ` (trailing space) are directories distinct from
+    // the profile's `Roaming` and `Local`; the environment selects the former.
+    const env = {
+      APPDATA: `${profile.APPDATA} `,
+      LOCALAPPDATA: `${profile.LOCALAPPDATA} `,
+    };
+    const container = join(
+      env.LOCALAPPDATA,
+      "Packages",
+      CLAUDE_DESKTOP_PACKAGE_FAMILY,
+    );
+    const privateConfig = join(
+      container,
+      "LocalCache",
+      "Roaming",
+      "Claude",
+      CONFIG,
+    );
+    const appDataConfig = join(env.APPDATA, "Claude", CONFIG);
+    await writeJson(privateConfig, { preferences: {} });
+
+    const client = claudeDesktop(home, env);
+
+    expect(client.configPath).toBe(privateConfig);
+    expect(client.markerPath).toBe(container);
+    expect(client.msixPackage).toMatchObject({
+      appDataConfigPath: appDataConfig,
+      virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
+    });
+    expect(clientPath(home, env, "vscode")).toBe(
+      join(env.APPDATA, "Code", "User", "mcp.json"),
+    );
+    expect(clientPath(home, env, "trae")).toBe(
+      join(env.APPDATA, "Trae", "User", "mcp.json"),
+    );
+    expect(clientPath(home, env, "devin")).toBe(
+      join(env.APPDATA, "devin", "mcp_config.json"),
+    );
+    expect(clientPath(home, env, "hermes")).toBe(
+      join(env.LOCALAPPDATA, "hermes", "config.yaml"),
+    );
+    const hermesHome = join(home, "custom-hermes");
+    expect(
+      clientPath(home, { ...env, HERMES_HOME: hermesHome }, "hermes"),
+    ).toBe(join(hermesHome, "config.yaml"));
+  });
+
+  it("discovers the package under the exact LOCALAPPDATA, not its trimmed form", async () => {
+    const { home, env: profile } = await windowsProfile();
+    // The trimmed `Local` holds a Claude package too; trimming would select it.
+    const exactLocal = `${profile.LOCALAPPDATA} `;
+    const privateIn = (localAppData: string): string =>
+      join(
+        localAppData,
+        "Packages",
+        CLAUDE_DESKTOP_PACKAGE_FAMILY,
+        "LocalCache",
+        "Roaming",
+        "Claude",
+        CONFIG,
+      );
+    const exactPrivate = privateIn(exactLocal);
+    const trimmedPrivate = privateIn(profile.LOCALAPPDATA);
+    await writeJson(exactPrivate, { preferences: { root: "exact" } });
+    await writeJson(trimmedPrivate, { preferences: { root: "trimmed" } });
+
+    const client = claudeDesktop(home, {
+      APPDATA: profile.APPDATA,
+      LOCALAPPDATA: exactLocal,
+    });
+
+    expect(client.configPath).not.toBe(trimmedPrivate);
+    expect(client.configPath).toBe(exactPrivate);
+    expect(await readJson(client.configPath)).toEqual({
+      preferences: { root: "exact" },
+    });
+  });
+
+  it.each([
+    ["empty", { APPDATA: "", LOCALAPPDATA: "" }],
+    ["whitespace-only", { APPDATA: " \t ", LOCALAPPDATA: "  " }],
+  ])("uses the profile AppData roots when values are %s", async (_, values) => {
+    const { home, env: profile, privateConfig } = await windowsProfile();
+    await writeJson(privateConfig, { preferences: {} });
+
+    const client = claudeDesktop(home, values);
+
+    expect(client.configPath).toBe(privateConfig);
+    expect(client.msixPackage?.virtualizedRoots).toEqual([
+      profile.APPDATA,
+      profile.LOCALAPPDATA,
+    ]);
+    expect(clientPath(home, values, "vscode")).toBe(
+      join(profile.APPDATA, "Code", "User", "mcp.json"),
+    );
+    expect(clientPath(home, values, "trae")).toBe(
+      join(profile.APPDATA, "Trae", "User", "mcp.json"),
+    );
+    expect(clientPath(home, values, "devin")).toBe(
+      join(profile.APPDATA, "devin", "mcp_config.json"),
+    );
+    expect(clientPath(home, values, "hermes")).toBe(
+      join(profile.LOCALAPPDATA, "hermes", "config.yaml"),
+    );
+  });
+});
+
 describe("MSIX Claude Desktop registration lifecycle", () => {
   it("registers in the private copy and reports an AppData-only entry as missing", async () => {
     const { home, env, appDataConfig, privateConfig } = await windowsProfile();

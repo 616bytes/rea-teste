@@ -340,6 +340,7 @@ it("keeps an archive readable while preserving a known non-finite real", async (
   expect(result.objects).toContainEqual(
     expect.objectContaining({
       id: 1,
+      kind: "scalar",
       status: "observed",
       value: { $plist_type: "real", value: "nan" },
     }),

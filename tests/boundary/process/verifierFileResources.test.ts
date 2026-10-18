@@ -265,8 +265,7 @@ it("Ghidra verifier awaits native prerequisite rejection before creating target 
       encoding: "utf8",
       timeout: 10_000,
       env: {
-        // Keep host ownership tools available. Explicit provider paths below
-        // prevent a system Ghidra or JDK from satisfying this missing fixture.
+        // Keep native process inspectors available; the selected JDK and Ghidra are absent.
         PATH: process.env.PATH ?? "",
         HOME: root,
         USERPROFILE: root,

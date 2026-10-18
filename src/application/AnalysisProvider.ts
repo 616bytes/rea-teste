@@ -9,9 +9,13 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import type { EvidenceLocation } from "../domain/evidence.js";
-import type { EvidenceSubjectTarget } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceLocation,
+  type EvidenceSubjectTarget,
+} from "../domain/evidence.js";
+import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
@@ -40,6 +44,9 @@ export type AnalysisOperation =
   | NativeToolName
   | ArtifactAnalysisOperation
   | ManagedToolName
+  // Provider aggregate and composed public overview have distinct Evidence and
+  // snapshot identities. This capability does not add a CLI/MCP tool.
+  | "read_binary_inventory_summary"
   | "health";
 
 /** Atomic successful provider observation with exact producing provenance. */
@@ -120,6 +127,26 @@ export function createAnalysisExecution(
   };
 }
 
+/**
+ * Compose one completed provider execution into its caller-visible Evidence,
+ * so success and a late cancellation that retains it carry identical facts.
+ */
+export const createAnalysisExecutionEvidence = (
+  operation: string,
+  input: unknown,
+  execution: AnalysisExecution,
+  confidence: "observed" | "derived",
+): Evidence =>
+  createEvidence(execution.subject ?? undefined, execution.provider, {
+    operation,
+    parameters: jsonObjectSchema.parse(input),
+    result: execution.result,
+    rawResult: execution.rawResult,
+    limitations: execution.limitations,
+    locations: execution.locations,
+    confidence,
+  });
+
 /** Provider-neutral application capability for one analysis operation. */
 export interface AnalysisOperationPort {
   execute(
@@ -178,7 +205,14 @@ export interface AnalysisClientContext {
 
 /** One lifecycle owner for descriptor cleanup and abortable inspection work. */
 export interface FileCloseResourceOwner {
-  retain(owner: { close(): Promise<void> }, resource: string): void;
+  retain(
+    owner: {
+      close(): Promise<void>;
+      /** Complete labels authored by this exact owner; the display label is only a fallback. */
+      readonly cleanupResources?: readonly string[] | undefined;
+    },
+    resource: string,
+  ): void;
   run<T>(operation: () => Promise<T>): Promise<T>;
 }
 

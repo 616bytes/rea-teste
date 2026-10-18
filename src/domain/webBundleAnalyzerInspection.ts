@@ -11,6 +11,7 @@ import {
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
+import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
@@ -73,11 +74,22 @@ export const analyzeScript = (
     indexJavaScriptBindingsWithReceiversSteps(file.program),
   );
   const { bindings, receivers } = index;
-  if (receivers.hasWebSocketEndpointCandidate)
-    completeSemanticSteps(index.indexAmbientWritesSteps());
+  completeSemanticSteps(index.indexAmbientWritesSteps());
   if (receivers.requiresWebSocketValueEffects)
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   const openReceiverFacts = receivers.openReceivers;
+  let mutationFactsIndexed = receivers.requiresWebSocketValueEffects;
+  const isMapLookup = (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ): boolean => {
+    const proof = isIntrinsicMapLookup(node, index.bindings);
+    if (proof !== undefined) return proof;
+    if (!mutationFactsIndexed) {
+      completeSemanticSteps(index.indexMemberMutationFactsSteps());
+      mutationFactsIndexed = true;
+    }
+    return isIntrinsicMapLookup(node, index.bindings, index) === true;
+  };
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
     receivers.rpcClientRoots,
@@ -86,7 +98,14 @@ export const analyzeScript = (
   traverseJavaScriptAst(file, {
     enter: (node) => {
       accumulator.visitedNodes += 1;
-      inspectNode(script, node, accumulator, bindings, openReceiverFacts);
+      inspectNode(
+        script,
+        node,
+        accumulator,
+        bindings,
+        openReceiverFacts,
+        isMapLookup,
+      );
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
         addFinding({
@@ -117,6 +136,9 @@ const inspectNode = (
   accumulator: AnalysisAccumulator,
   bindings: JavaScriptSemanticAnalysisState,
   openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  isMapLookup: (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ) => boolean,
 ): void => {
   if (
     (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
@@ -154,7 +176,14 @@ const inspectNode = (
     t.isOptionalCallExpression(node) ||
     t.isNewExpression(node)
   )
-    inspectCall(script, node, accumulator, bindings, openReceiverFacts);
+    inspectCall(
+      script,
+      node,
+      accumulator,
+      bindings,
+      openReceiverFacts,
+      isMapLookup,
+    );
 };
 
 const inspectCall = (
@@ -163,6 +192,9 @@ const inspectCall = (
   accumulator: AnalysisAccumulator,
   bindings: JavaScriptSemanticAnalysisState,
   openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  isMapLookup: (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ) => boolean,
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
@@ -207,13 +239,21 @@ const inspectCall = (
     bindings,
     openReceiverFacts.get(node.start ?? -1),
   );
-  if (endpoint?.kind === "candidate")
-    addEndpointCandidate(script, node, name, endpoint.value, accumulator);
-  else if (endpoint !== undefined)
+  const networkEndpoint =
+    endpoint !== undefined && !isMapLookup(node) ? endpoint : undefined;
+  if (networkEndpoint?.kind === "candidate")
+    addEndpointCandidate(
+      script,
+      node,
+      name,
+      networkEndpoint.value,
+      accumulator,
+    );
+  else if (networkEndpoint !== undefined)
     addFinding({
       collection: accumulator.endpoints,
       script,
-      rawValue: endpoint.value,
+      rawValue: networkEndpoint.value,
       mechanism: `call:${name}`,
       node,
       accumulator,

@@ -690,6 +690,7 @@ export const semanticBindingAtRead = (
     !repeating &&
     origin !== undefined &&
     binding.initializers.length + binding.referenceInitializers.length === 1 &&
+    binding.directOrigins.length === 0 &&
     sourcePosition !== null &&
     position !== null &&
     positionPrecedes(sourcePosition, position)
@@ -740,7 +741,7 @@ const selectInitializers = (
   | {
       readonly binding: Pick<
         JavaScriptSemanticBindingState,
-        "initializers" | "referenceInitializers"
+        "initializers" | "referenceInitializers" | "directOrigins"
       >;
       readonly hasDefiniteInitializer: boolean;
     }
@@ -786,6 +787,7 @@ const selectInitializers = (
   // can then reuse the binding's dependency-aware provenance memo rather than
   // treating every equivalent read as a new temporal snapshot.
   if (
+    !(replacesEntry && binding.directOrigins.length > 0) &&
     binding.initializers.every((initializer) => retained.has(initializer)) &&
     binding.referenceInitializers.every((initializer) =>
       retained.has(initializer),
@@ -795,6 +797,7 @@ const selectInitializers = (
   return {
     hasDefiniteInitializer: replacesEntry,
     binding: {
+      directOrigins: replacesEntry ? [] : binding.directOrigins,
       initializers: binding.initializers.filter((initializer) =>
         retained.has(initializer),
       ),
@@ -911,6 +914,21 @@ export const semanticBindingPrecedesCapture = (
     sourcePosition !== null &&
     capturePosition !== null &&
     positionPrecedes(sourcePosition, capturePosition)
+  );
+};
+
+/** A preceding initializer and capture in one body precede its later effect. */
+export const semanticBindingEffectFollowsCapture = (
+  binding: JavaScriptSemanticBindingState,
+  capture: t.Node,
+  effect: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (!semanticBindingPrecedesCapture(binding, capture, parents)) return false;
+  const captured = semanticCapturePosition(capture, parents);
+  const written = directMutationPosition(effect, parents);
+  return (
+    captured !== null && written !== null && positionPrecedes(captured, written)
   );
 };
 

@@ -65,6 +65,28 @@ it("classifies the cache maintenance error envelope as a command failure", async
   }
 });
 
+it("does not let a custom failure predicate mask an error envelope", async () => {
+  const envelope = {
+    error: "Cache verification failed",
+    ...projectAnalysisError(
+      new ConfigurationError("Invalid REA environment configuration"),
+    ),
+  };
+  expect(isCliOperationFailure(envelope)).toBe(true);
+  const previousExitCode = process.exitCode;
+  try {
+    await logCliCommand(
+      silentLogger,
+      CLI_COMMANDS.cacheVerify,
+      async () => envelope,
+      () => false,
+    );
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+});
+
 describe("CLI command outcome classification", () => {
   it("returns nonzero for the UpdateResult failure variant", async () => {
     const installation = {

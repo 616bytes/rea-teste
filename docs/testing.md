@@ -1566,9 +1566,13 @@ registry package, and runs `agent-env run` on the bundle. It checks that the
 export reports the planned file set with the inputs copied byte-exact, that
 the runner exits `0` with `tasks/smoke.json` reported as passed and the
 verifier's description naming the tool count, and that no container exists
-after the run that did not exist before; images built by the run remain and are
-counted in the receipt. Pass an installed package entrypoint as the script's
-first argument for package coverage.
+after the run that did not exist before. The one exception is the framework's
+own image-store helper, `agentenv-registry` (or `agentenv-registry-<port>`),
+a `registry:2` container the local provider starts on first use and keeps
+running across runs; a first run on a fresh host creates it, so the receipt
+lists it under `image_store_helpers` instead of counting it as a leak. Images
+built by the run remain and are counted in the receipt. Pass an installed
+package entrypoint as the script's first argument for package coverage.
 
 ## Agent evaluation and conformance records
 

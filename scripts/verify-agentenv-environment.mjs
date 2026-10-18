@@ -41,7 +41,8 @@ const failures = [];
 let cases = 0;
 const receipt = {};
 try {
-  const containersBefore = await containerIds();
+  const containersBefore = await containers();
+  const knownContainers = new Set(containersBefore.map((entry) => entry.id));
   receipt.docker_before = {
     containers: containersBefore.length,
     images: (await imageIds()).length,
@@ -160,12 +161,17 @@ try {
     ),
   );
   cases++;
-  const containersAfter = await containerIds();
-  const leaked = containersAfter.filter((id) => !containersBefore.includes(id));
+  const containersAfter = await containers();
+  const added = containersAfter.filter(
+    (entry) => !knownContainers.has(entry.id),
+  );
+  const helpers = added.filter((entry) => IMAGE_STORE_HELPER.test(entry.name));
+  const leaked = added.filter((entry) => !IMAGE_STORE_HELPER.test(entry.name));
   receipt.docker_after = {
     containers: containersAfter.length,
     images: (await imageIds()).length,
-    new_containers: leaked,
+    image_store_helpers: helpers.map((entry) => entry.name),
+    new_containers: leaked.map((entry) => `${entry.id} ${entry.name}`),
   };
   assert.deepEqual(leaked, []);
   cases++;
@@ -231,14 +237,24 @@ function packedFilename(report) {
 }
 
 // Containers are not verifier descendants, so leaks are checked by id against the pre-run set.
-async function containerIds() {
-  const { stdout } = await execFileAsync(docker, ["ps", "-aq"], {
-    env: environment,
-  });
+// The framework's local image store keeps its registry:2 helper running across runs; a first
+// run on a fresh host creates it, so it is reported separately rather than counted as a leak.
+const IMAGE_STORE_HELPER = /^agentenv-registry(?:-\d+)?$/u;
+
+async function containers() {
+  const { stdout } = await execFileAsync(
+    docker,
+    ["ps", "-a", "--format", "{{.ID}}\t{{.Names}}"],
+    { env: environment },
+  );
   return stdout
     .split("\n")
     .filter((line) => line.length > 0)
-    .sort();
+    .map((line) => {
+      const [id, name = ""] = line.split("\t");
+      return { id, name };
+    })
+    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 async function imageIds() {

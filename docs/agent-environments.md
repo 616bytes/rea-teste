@@ -237,7 +237,8 @@ described in [testing](testing.md#exported-environment-bundles). It projects
 the Grafana-shaped source-owned capture through the built CLI, packs the
 checkout, exports a bundle with `--package-tarball`, runs it with the pinned
 `agentenv-framework` release on the runner's Docker and requires the smoke task
-to pass with no container left behind. It proves that one exported bundle runs
+to pass with no container left behind other than the framework's own
+image-registry helper, which the receipt reports. It proves that one exported bundle runs
 on one framework release; it does not claim any hosted platform or other
 framework versions.
 

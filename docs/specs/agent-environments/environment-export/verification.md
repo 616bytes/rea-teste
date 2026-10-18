@@ -175,7 +175,15 @@ the receipt `status: passed`, `public_cases: 5`, `upstream: agentenv-framework
 3, images: 20}`, `agent_env_run: {exit_code: 0, seconds: 32}` with the same
 passed summary in its stdout tail, `docker_after: {containers: 3, images: 21,
 new_containers: []}` and `process_lineage.status: verified` with no
-descendants. Without `REA_DOCKER_COMMAND` the verifier exited 1 before
+descendants. The first hosted run of the lane, on a runner with no prior
+framework state, created the framework's image-store helper `agentenv-registry`
+(`registry:2`, container `b2e047f4c6cd`) during `agent-env run`; the run itself
+passed (`exit_code: 0`, 354 s, `tasks/smoke.json v1: passed`, "Tore down 1
+sandbox.") but the first form of the leak check counted the helper and failed.
+The check now lists containers with their names, excludes
+`agentenv-registry[-<port>]` and reports it under `image_store_helpers`; the
+local receipt gained `image_store_helpers: []` because the helper already
+existed before the run here. Without `REA_DOCKER_COMMAND` the verifier exited 1 before
 touching anything with "verify:agentenv:environment requires absolute
 REA_DOCKER_COMMAND; see docs/testing.md. No dependencies are installed by this
 verifier."; with a relative `REA_AGENT_ENV_COMMAND=agent-env` it exited 1 with

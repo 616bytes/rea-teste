@@ -12,6 +12,10 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
@@ -88,7 +92,7 @@ export const clientRegistrationEnvironmentDetails = (
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.
-  const environment = { ...existing.data, ...overrides };
+  const environment = mergeEnvironmentOverrides(existing.data, overrides);
   return validatedDetails(
     environment,
     validation,
@@ -101,15 +105,16 @@ const validatedDetails = (
   validation: "fragment" | "effective",
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
+  const runtimeEnvironment = snapshotEnvironment(environment);
   const validated =
     validation === "fragment"
-      ? parseEnvironmentValues(environment)
-      : parseEnvironment(environment);
+      ? parseEnvironmentValues(runtimeEnvironment)
+      : parseEnvironment(runtimeEnvironment);
   if (!validated.ok) return validated;
   const providerRequestBudget =
     resolveProviderRequestBudget?.(
       validated.value.REA_ANALYSIS_PROVIDER,
-      environment,
+      runtimeEnvironment,
     ) ?? ok(undefined);
   if (!providerRequestBudget.ok) return providerRequestBudget;
   return ok({

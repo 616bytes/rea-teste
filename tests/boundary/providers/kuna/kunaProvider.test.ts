@@ -91,8 +91,8 @@ it("discovers configuration without probing and admits only verified targets", a
     configured.inspectTargetSupport(executable("pe", "x86_64")).status,
   ).toBe("supported");
   expect(
-    configured.inspectTargetSupport(executable("pe", "arm64")).status,
-  ).toBe("supported");
+    configured.inspectTargetSupport(executable("pe", "arm64")),
+  ).toMatchObject({ code: "architecture_unsupported" });
   expect(
     configured.inspectTargetSupport(executable("mach-o-universal", "arm64")),
   ).toMatchObject({ code: "target_format_unsupported" });

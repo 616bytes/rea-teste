@@ -160,6 +160,13 @@ export class KunaProvider implements AnalysisProviderCandidate {
             : `REA verified the Kuna provider on ELF, thin Mach-O and PE images; ${target.format} is not admitted yet.`,
         diagnostics,
       };
+    if (target.format === "pe" && target.architecture !== "x86_64")
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: `REA verified the Kuna provider on PE images for x86-64 only; ${target.architecture} PE is not admitted yet.`,
+        diagnostics: { ...diagnostics, architecture: target.architecture },
+      };
     if (!VERIFIED_ARCHITECTURES.has(target.architecture))
       return {
         status: "unsupported",

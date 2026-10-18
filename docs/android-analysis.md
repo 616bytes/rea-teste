@@ -363,6 +363,12 @@ export REA_ANDROID_TEST_APK="$PWD/_reference/apk-integration/ApiDemos-debug.apk"
 npm run verify:android
 ```
 
+The main lane and Windows Java-selection checks validate the selected JDK and
+engine archive through `validateVerifierJadxConfiguration`. This shared verifier
+boundary supplies the production validator's resource owner and waits for
+retained cleanup before proceeding. Failed closes retain their exact owners for
+retry; prerequisite failures must not be mistaken for completed bridge tests.
+
 The lane also uses the selected full JDK's `jlink` to create a disposable JRE
 without the compiler module. It checks real Java startup failures, missing
 selectors, recovery after failures, and CLI cancellation with owned cleanup.
